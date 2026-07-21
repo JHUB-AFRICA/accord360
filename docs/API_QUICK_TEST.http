@@ -1,0 +1,27 @@
+### Login
+POST http://localhost:8000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@accord360.app",
+  "password": "Admin@123"
+}
+
+### Paste the returned token below
+@token = REPLACE_WITH_ACCESS_TOKEN
+
+### Current user
+GET http://localhost:8000/api/auth/me
+Authorization: Bearer {{token}}
+
+### Dashboard
+GET http://localhost:8000/api/dashboard/stats
+Authorization: Bearer {{token}}
+
+### Partners
+GET http://localhost:8000/api/partners
+Authorization: Bearer {{token}}
+
+### Agreements
+GET http://localhost:8000/api/agreements
+Authorization: Bearer {{token}}

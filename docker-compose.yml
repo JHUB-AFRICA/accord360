@@ -1,0 +1,45 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: accord360
+      POSTGRES_USER: accord360
+      POSTGRES_PASSWORD: accord360_change_me
+    volumes:
+      - accord360_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U accord360"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      APP_NAME: Accord 360
+      SECRET_KEY: change-this-in-production-use-at-least-32-characters
+      DATABASE_URL: postgresql+psycopg://accord360:accord360_change_me@database:5432/accord360
+      UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: http://localhost:8080
+    volumes:
+      - accord360_uploads:/app/uploads
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+        VITE_UPLOAD_URL: /uploads
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  accord360_postgres:
+  accord360_uploads:

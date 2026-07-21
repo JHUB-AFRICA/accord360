@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+backend/accord360.db
+backend/test_accord360.db
+backend/test_uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Environment and IDE
+.env
+.vscode/
+.idea/
+.DS_Store
