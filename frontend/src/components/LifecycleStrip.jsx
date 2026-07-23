@@ -1,20 +1,19 @@
 import { CheckCircle2 } from "lucide-react";
 
 export const lifecycleStages = [
-  { key: "initiation", short: "Initiation", detail: "Request and expected outputs" },
-  { key: "department_approval", short: "Department", detail: "Academic fit and support" },
+  { key: "initiation", short: "Initiation", detail: "Champion request and outputs" },
   { key: "linkages_review", short: "Linkages", detail: "Completeness and partner check" },
-  { key: "legal_review", short: "Legal", detail: "Drafting, review and versioning" },
-  { key: "validation_signing", short: "Signing", detail: "VC and partner signatures" },
-  { key: "activation", short: "Activation", detail: "Signed record, champion and dates" },
-  { key: "active", short: "Monitoring & Evaluation", detail: "Targets, actuals and evidence" },
+  { key: "legal_review", short: "Legal", detail: "Review, feedback and approval" },
+  { key: "dvc_signoff", short: "DVC RPE", detail: "Post-legal endorsement gate" },
+  { key: "vc_submission", short: "VC package", detail: "Gated submission assembly" },
+  { key: "signing", short: "Signing", detail: "VC and partner signatures" },
+  { key: "active", short: "Monitoring & Evaluation", detail: "Six-month reports and evidence" },
   { key: "renewal_closure", short: "Renewal / Closure / Archive", detail: "Decision and institutional record" }
 ];
 
 function stageIndex(currentStage, status) {
   if (currentStage === "active") return 6;
   if (["renewal_closure", "archived"].includes(currentStage)) return 7;
-  if (currentStage === "validation_signing" && status === "fully_signed") return 5;
   return lifecycleStages.findIndex((stage) => stage.key === currentStage);
 }
 

@@ -9,8 +9,9 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
 const roleControls = {
-  researcher: ["Create and save partnership requests", "Respond to corrections", "Track status and next action"],
-  approver: ["Validate academic fit", "Approve, return or reject with reasons", "Act only within departmental scope"],
+  champion: ["Initiate and push collaboration agreements", "Respond to corrections and legal feedback", "Report activities for active agreements"],
+  dvc: ["Review legally approved packages", "Sign/endorse or return with remarks", "Control the pre-VC gate"],
+  vc_office: ["Receive complete submission packages", "Track VC and partner signature milestones", "Confirm signing completion"],
   linkages: ["Verify completeness and partner data", "Route legal and signing actions", "Manage renewals and lifecycle exceptions"],
   legal: ["Review assigned drafts and versions", "Record legal decisions and risks", "Complete review within the 21-day threshold"],
   executive: ["Review escalations and portfolio risk", "Track signing and renewal decisions", "Use drill-down evidence for decisions"],

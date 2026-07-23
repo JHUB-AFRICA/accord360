@@ -10,32 +10,38 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Agreement, Deliverable, Document, User, ValueRecord
-from ..services import STAGE_ORDER, refresh_risk_status
+from ..models import Agreement, Deliverable, Document, MEReportSchedule, User, ValueRecord
+from ..services import STAGE_ORDER, refresh_me_alerts, refresh_risk_status
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 STAGE_LABELS = {
     "initiation": "Initiation",
-    "department_approval": "Department Approval",
     "linkages_review": "Linkages Review",
     "legal_review": "Legal Review",
-    "validation_signing": "Validation & Signing",
+    "dvc_signoff": "DVC RPE Sign-off",
+    "vc_submission": "VC Submission",
+    "signing": "Signing",
     "active": "Active",
     "renewal_closure": "Renewal / Closure",
     "archived": "Archive",
 }
 
 ROLE_CONTEXT = {
-    "researcher": {
-        "title": "My partnership requests",
-        "subtitle": "Create requests, respond to corrections and track progress without manual follow-up.",
+    "champion": {
+        "title": "Champion workspace",
+        "subtitle": "Initiate agreements, respond to corrections, act on legal feedback and report M&E activities.",
         "queue_label": "Requests needing my attention",
     },
-    "approver": {
-        "title": "Department approval workspace",
-        "subtitle": "Review academic fit, strategic alignment and departmental support within your scope.",
-        "queue_label": "Pending department decisions",
+    "dvc": {
+        "title": "DVC RPE sign-off gate",
+        "subtitle": "Endorse legally approved packages before VC submission, or return them with remarks.",
+        "queue_label": "Packages awaiting endorsement",
+    },
+    "vc_office": {
+        "title": "VC Office submissions",
+        "subtitle": "Receive complete packages and track VC and partner signature milestones.",
+        "queue_label": "Submissions and signatures in progress",
     },
     "linkages": {
         "title": "Linkages operations centre",
@@ -72,10 +78,12 @@ ROLE_CONTEXT = {
 
 def _scoped_statement(user: User):
     stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.owner))
-    if user.role == "researcher":
+    if user.role == "champion":
         stmt = stmt.where(Agreement.owner_id == user.id)
-    elif user.role == "approver":
-        stmt = stmt.where((Agreement.assigned_approver_id == user.id) | (Agreement.department == user.department))
+    elif user.role == "dvc":
+        stmt = stmt.where(Agreement.stage.in_(["dvc_signoff", "vc_submission", "signing"]))
+    elif user.role == "vc_office":
+        stmt = stmt.where(Agreement.stage.in_(["vc_submission", "signing", "active"]))
     elif user.role == "legal":
         stmt = stmt.where((Agreement.legal_reviewer_id == user.id) | (Agreement.stage == "legal_review"))
     return stmt
@@ -91,9 +99,10 @@ def _priority_score(agreement: Agreement, user: User) -> int:
         score += 30
 
     role_stages = {
-        "researcher": {"initiation"},
-        "approver": {"department_approval"},
-        "linkages": {"linkages_review", "validation_signing", "renewal_closure"},
+        "champion": {"initiation"},
+        "dvc": {"dvc_signoff"},
+        "vc_office": {"vc_submission", "signing"},
+        "linkages": {"linkages_review", "vc_submission", "signing", "renewal_closure"},
         "legal": {"legal_review"},
         "executive": {"renewal_closure", "active"},
         "me": {"active"},
@@ -102,7 +111,7 @@ def _priority_score(agreement: Agreement, user: User) -> int:
     }
     if agreement.stage in role_stages.get(user.role, set()):
         score += 50
-    if user.role == "researcher" and agreement.status == "correction_required":
+    if user.role == "champion" and agreement.status == "correction_required":
         score += 80
     score += min(agreement.days_in_stage, 30)
     return score
@@ -124,6 +133,7 @@ def stats(
     agreements = db.scalars(stmt).all()
     for item in agreements:
         refresh_risk_status(item)
+    refresh_me_alerts(db)  # FR-025: due/overdue report alerts
     db.commit()
 
     agreement_ids = [a.id for a in agreements]
@@ -152,7 +162,7 @@ def stats(
             dormant_ids.add(agreement.id)
 
     active = [a for a in agreements if a.stage == "active" and a.status not in {"expired", "archived", "closed"}]
-    pipeline = [a for a in agreements if a.stage in {"initiation", "department_approval", "linkages_review", "legal_review", "validation_signing"}]
+    pipeline = [a for a in agreements if a.stage in {"initiation", "linkages_review", "legal_review", "dvc_signoff", "vc_submission", "signing"}]
     at_risk = [a for a in agreements if a.status_color in {"orange", "red"} or a.id in dormant_ids]
 
     total_value = Decimal("0")
@@ -179,6 +189,9 @@ def stats(
     priority = [a for a in priority if _priority_score(a, user) >= 50][:8]
 
     legal_stalled = sum(1 for a in agreements if a.stage == "legal_review" and a.days_in_stage > 21)
+    schedules = db.scalars(select(MEReportSchedule).where(MEReportSchedule.agreement_id.in_(agreement_ids))).all() if agreement_ids else []
+    reports_due = sum(1 for sc in schedules if sc.status in {"pending", "returned"} and sc.days_to_due <= 30)
+    reports_overdue = sum(1 for sc in schedules if sc.is_overdue)
     renewal_warning = sum(1 for a in active if a.expiry_days is not None and 91 <= a.expiry_days <= 183)
     expiry_critical = sum(1 for a in active if a.expiry_days is not None and a.expiry_days <= 90)
     evidence_documents = sum(1 for d in documents if d.document_type == "evidence")
@@ -187,7 +200,7 @@ def stats(
     attainment = round((total_actual / total_target) * 100, 1) if total_target else 0
 
     return {
-        "role_context": ROLE_CONTEXT.get(user.role, ROLE_CONTEXT["researcher"]),
+        "role_context": ROLE_CONTEXT.get(user.role, ROLE_CONTEXT["champion"]),
         "filters": {
             "departments": sorted({a.department for a in agreements}),
             "agreement_types": sorted({a.agreement_type for a in agreements}),
@@ -205,6 +218,7 @@ def stats(
             {"key": "legal_stalled", "label": "Legal stagnation", "value": legal_stalled, "level": "red", "rule": "Review exceeds 21 days"},
             {"key": "renewal_warning", "label": "Proactive renewal", "value": renewal_warning, "level": "orange", "rule": "Expiry within six months"},
             {"key": "dormant", "label": "Dormancy trigger", "value": len(dormant_ids), "level": "red", "rule": "No M&E update for 180 days"},
+            {"key": "reports_due", "label": "Six-month reports", "value": reports_due, "level": "orange", "rule": "Report due within 30 days or returned"},
             {"key": "expiry_critical", "label": "Critical expiry", "value": expiry_critical, "level": "red", "rule": "Expiry within 90 days"},
         ],
         "me_summary": {
@@ -212,14 +226,16 @@ def stats(
             "evidence_documents": evidence_documents,
             "attainment_percent": attainment,
             "dormant_agreements": len(dormant_ids),
+            "reports_due": reports_due,
+            "reports_overdue": reports_overdue,
         },
         "by_stage": [
             {"key": "initiation", "name": "Initiation", "value": stage_counts.get("initiation", 0)},
-            {"key": "department_approval", "name": "Department Approval", "value": stage_counts.get("department_approval", 0)},
             {"key": "linkages_review", "name": "Linkages Review", "value": stage_counts.get("linkages_review", 0)},
             {"key": "legal_review", "name": "Legal Review", "value": stage_counts.get("legal_review", 0)},
-            {"key": "validation_signing", "name": "Validation & Signing", "value": sum(1 for a in agreements if a.stage == "validation_signing" and a.status != "fully_signed")},
-            {"key": "activation", "name": "Activation", "value": sum(1 for a in agreements if a.stage == "validation_signing" and a.status == "fully_signed")},
+            {"key": "dvc_signoff", "name": "DVC RPE Sign-off", "value": stage_counts.get("dvc_signoff", 0)},
+            {"key": "vc_submission", "name": "VC Submission", "value": stage_counts.get("vc_submission", 0)},
+            {"key": "signing", "name": "Signing", "value": stage_counts.get("signing", 0)},
             {"key": "active", "name": "Monitoring & Evaluation", "value": stage_counts.get("active", 0)},
             {"key": "renewal_closure", "name": "Renewal / Closure / Archive", "value": stage_counts.get("renewal_closure", 0) + stage_counts.get("archived", 0)},
         ],

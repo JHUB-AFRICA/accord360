@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
-from .routers import agreements, auth, dashboard, documents, me, monitoring, notifications, partners, reports, users
+from .routers import agreements, auth, chatbot, dashboard, documents, legal, me, monitoring, notifications, partners, reports, requests, scorecard, templates, users
 from .seed import seed
 
 Base.metadata.create_all(bind=engine)
@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 
-for router in [auth.router, users.router, partners.router, agreements.router, documents.router, me.router, monitoring.router, dashboard.router, notifications.router, reports.router]:
+for router in [auth.router, users.router, partners.router, requests.router, templates.router, agreements.router, documents.router, legal.router, me.router, monitoring.router, dashboard.router, notifications.router, reports.router, scorecard.router, chatbot.router]:
     app.include_router(router, prefix="/api")
 
 

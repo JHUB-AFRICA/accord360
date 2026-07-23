@@ -66,7 +66,7 @@ export default function Dashboard() {
   if (loading || !data) return <div className="panel page-loading"><RefreshCw className="spin" /> Loading dashboard...</div>;
 
   const { kpis, role_context: context, me_summary: meSummary } = data;
-  const canCreate = ["researcher", "linkages", "admin"].includes(user?.role);
+  const canCreate = ["champion", "linkages", "admin"].includes(user?.role);
   const canFilter = ["linkages", "executive", "admin", "auditor"].includes(user?.role);
 
   return (

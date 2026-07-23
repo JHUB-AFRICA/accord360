@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import mimetypes
-import shutil
 import uuid
 from pathlib import Path
 
@@ -48,14 +48,20 @@ def upload_document(
         raise HTTPException(status_code=404, detail="Agreement not found")
     if not _can_access_agreement(user, agreement):
         raise HTTPException(status_code=403, detail="Access denied")
-    if user.role in {"executive", "auditor", "approver"}:
+    if user.role in {"executive", "auditor", "vc_office"}:
         raise HTTPException(status_code=403, detail="Your role has read-only document access")
+    if agreement.legal_approved_at and document_type in {"draft", "official"} and agreement.stage in {"dvc_signoff", "vc_submission", "signing"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Draft versions are locked after legal approval (BR-005). A DVC return or correction reopens drafting.",
+        )
     suffix = Path(file.filename or "document").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported file type")
     stored_name = f"{agreement.reference_number}_{uuid.uuid4().hex}{suffix}"
     destination = settings.upload_path / stored_name
     total = 0
+    digest = hashlib.sha256()
     with destination.open("wb") as buffer:
         while chunk := file.file.read(1024 * 1024):
             total += len(chunk)
@@ -63,6 +69,7 @@ def upload_document(
                 buffer.close()
                 destination.unlink(missing_ok=True)
                 raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
+            digest.update(chunk)
             buffer.write(chunk)
     document = Document(
         agreement_id=agreement_id,
@@ -72,6 +79,7 @@ def upload_document(
         stored_name=stored_name,
         mime_type=file.content_type or mimetypes.guess_type(stored_name)[0],
         size_bytes=total,
+        checksum_sha256=digest.hexdigest(),
         uploaded_by_id=user.id,
         is_official=is_official,
         confidentiality=confidentiality,
@@ -87,10 +95,12 @@ def upload_document(
 def _can_access_agreement(user: User, agreement: Agreement) -> bool:
     if user.role in {"admin", "linkages", "executive", "auditor"}:
         return True
-    if user.role == "researcher":
+    if user.role == "champion":
         return agreement.owner_id == user.id
-    if user.role == "approver":
-        return agreement.assigned_approver_id == user.id or agreement.department == user.department
+    if user.role == "dvc":
+        return agreement.stage in {"dvc_signoff", "vc_submission", "signing"}
+    if user.role == "vc_office":
+        return agreement.stage in {"vc_submission", "signing", "active"}
     if user.role == "legal":
         return agreement.legal_reviewer_id == user.id or agreement.stage == "legal_review"
     if user.role == "me":

@@ -4,17 +4,17 @@ import PageHeader from "../components/PageHeader";
 import Toast from "../components/Toast";
 import { api } from "../lib/api";
 
-const roles = ["admin", "researcher", "approver", "linkages", "legal", "executive", "me", "auditor"];
+const roles = ["admin", "champion", "linkages", "legal", "dvc", "vc_office", "executive", "me", "auditor"];
 
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "researcher", department: "" });
+  const [form, setForm] = useState({ full_name: "", email: "", password: "", role: "champion", department: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   async function load() { setUsers(await api("/users")); }
   useEffect(() => { load().catch((err) => setError(err.message)); }, []);
-  async function create(event) { event.preventDefault(); try { await api("/users", { method: "POST", body: JSON.stringify(form) }); setMessage("User created."); setShow(false); setForm({ full_name: "", email: "", password: "", role: "researcher", department: "" }); await load(); } catch (err) { setError(err.message); } }
+  async function create(event) { event.preventDefault(); try { await api("/users", { method: "POST", body: JSON.stringify(form) }); setMessage("User created."); setShow(false); setForm({ full_name: "", email: "", password: "", role: "champion", department: "" }); await load(); } catch (err) { setError(err.message); } }
   async function changeRole(user, role) { try { await api(`/users/${user.id}`, { method: "PATCH", body: JSON.stringify({ role }) }); setMessage("Role updated."); await load(); } catch (err) { setError(err.message); } }
   return (
     <>

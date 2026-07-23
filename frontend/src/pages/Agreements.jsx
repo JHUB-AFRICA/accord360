@@ -39,7 +39,7 @@ export default function Agreements() {
     URL.revokeObjectURL(url);
   }
 
-  const canCreate = ["researcher", "linkages", "admin"].includes(user?.role);
+  const canCreate = ["champion", "linkages", "admin"].includes(user?.role);
 
   return (
     <>
@@ -54,7 +54,7 @@ export default function Agreements() {
 
       <div className="panel filter-panel">
         <label className="search-field"><Search size={18} /><input placeholder="Search title or reference..." value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-        <label className="select-field"><Filter size={17} /><select value={stage} onChange={(e) => setStage(e.target.value)}><option value="">All stages</option><option value="initiation">Initiation</option><option value="department_approval">Department approval</option><option value="linkages_review">Linkages review</option><option value="legal_review">Legal review</option><option value="validation_signing">Validation & signing</option><option value="active">Active / M&E</option><option value="renewal_closure">Renewal / closure</option><option value="archived">Archived</option></select></label>
+        <label className="select-field"><Filter size={17} /><select value={stage} onChange={(e) => setStage(e.target.value)}><option value="">All stages</option><option value="initiation">Initiation</option><option value="linkages_review">Linkages review</option><option value="legal_review">Legal review</option><option value="dvc_signoff">DVC RPE sign-off</option><option value="vc_submission">VC submission</option><option value="signing">Signing</option><option value="active">Active / M&E</option><option value="renewal_closure">Renewal / closure</option><option value="archived">Archived</option></select></label>
         <label className="select-field"><select value={type} onChange={(e) => setType(e.target.value)}><option value="">All types</option><option>MoU</option><option>CRA</option><option>CA</option><option>Other</option></select></label>
       </div>
 

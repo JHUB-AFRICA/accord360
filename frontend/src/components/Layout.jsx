@@ -8,24 +8,29 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileBarChart,
+  FileStack,
   FileText,
+  Inbox,
   Gauge,
   LogOut,
   Menu,
   Settings,
   ShieldCheck,
+  Trophy,
   Users,
   X
 } from "lucide-react";
+import ChatbotWidget from "./ChatbotWidget";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
 const roleLabels = {
   admin: "System administrator",
-  researcher: "Researcher portal",
-  approver: "Department approver",
+  champion: "Champion workspace",
   linkages: "Linkages operations",
   legal: "Legal workspace",
+  dvc: "DVC RPE sign-off",
+  vc_office: "VC Office",
   executive: "Executive intelligence",
   me: "M&E workspace",
   auditor: "Assurance review"
@@ -49,14 +54,23 @@ export default function Layout() {
       { to: "/work", label: "My work", icon: ClipboardCheck },
       { to: "/agreements", label: "Agreements", icon: ClipboardList }
     ];
+    if (["admin", "linkages", "champion", "executive", "auditor"].includes(user?.role)) {
+      items.push({ to: "/requests", label: "Partner requests", icon: Inbox });
+    }
     if (["admin", "linkages", "executive"].includes(user?.role)) {
       items.push({ to: "/partners", label: "Partners", icon: Building2 });
+    }
+    if (["admin", "linkages", "champion", "legal", "executive"].includes(user?.role)) {
+      items.push({ to: "/templates", label: "Template library", icon: FileStack });
     }
     if (["admin", "linkages", "me", "executive", "auditor"].includes(user?.role)) {
       items.push({ to: "/monitoring", label: "Monitoring & Evaluation", icon: Activity });
     }
     if (["admin", "linkages", "executive", "auditor"].includes(user?.role)) {
       items.push({ to: "/reports", label: "Reports", icon: FileBarChart });
+    }
+    if (["admin", "linkages", "me", "executive", "auditor"].includes(user?.role)) {
+      items.push({ to: "/scorecard", label: "Scorecard", icon: Trophy });
     }
     return items;
   }, [user?.role]);
@@ -164,6 +178,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="content"><Outlet /></main>
+        <ChatbotWidget />
       </div>
     </div>
   );

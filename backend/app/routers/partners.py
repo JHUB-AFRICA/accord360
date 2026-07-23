@@ -20,7 +20,7 @@ def create_partner(
     payload: PartnerCreate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin", "linkages", "researcher")),
+    actor: User = Depends(require_roles("admin", "linkages", "champion")),
 ):
     if db.scalar(select(Partner).where(Partner.name == payload.name)):
         raise HTTPException(status_code=409, detail="Partner already exists")

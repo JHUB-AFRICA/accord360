@@ -40,11 +40,12 @@ export default function Monitoring() {
         {error ? <div className="form-error">{error}</div> : rows.length === 0 ? <EmptyState title="No active agreements" text="M&E records become available after an agreement is signed and activated." /> : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Agreement</th><th>Champion</th><th>Attainment</th><th>Evidence</th><th>Last update</th><th>Risk</th></tr></thead>
+              <thead><tr><th>Agreement</th><th>Champion</th><th>Six-month reports</th><th>Attainment</th><th>Evidence</th><th>Last update</th><th>Risk</th></tr></thead>
               <tbody>{rows.map((row) => (
                 <tr key={row.id}>
                   <td data-label="Agreement"><Link className="table-title" to={`/agreements/${row.id}`}>{row.title}</Link><span>{row.reference_number} · {row.partner}</span></td>
                   <td data-label="Champion">{row.internal_champion || "Not assigned"}<span>{row.partner_liaison || "Partner liaison missing"}</span></td>
+                  <td data-label="Reports">{row.reports_total ? `${row.reports_validated}/${row.reports_total} validated` : "No schedule"}{row.reports_overdue ? <span className="gate-pending"> · {row.reports_overdue} overdue</span> : row.next_report_due ? <span> · next {row.next_report_due}</span> : null}</td>
                   <td data-label="Attainment"><div className="attainment-cell"><div><span style={{ width: `${Math.min(100, row.attainment_percent)}%` }} /></div><strong>{row.attainment_percent}%</strong></div></td>
                   <td data-label="Evidence">{row.evidence_count} file{row.evidence_count === 1 ? "" : "s"}</td>
                   <td data-label="Last update">{row.days_since_update === null ? "No update" : `${row.days_since_update} days ago`}</td>

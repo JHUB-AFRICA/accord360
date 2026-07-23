@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..deps import audit, get_current_user
-from ..models import Agreement, Notification, Partner, User, WorkflowEvent
+from ..models import Agreement, Document, Notification, Partner, PartnerRequest, Template, User, WorkflowEvent
 from ..schemas import AgreementCreate, AgreementDetailOut, AgreementListOut, AgreementUpdate, TransitionRequest
-from ..services import ALLOWED_BY_ROLE, ALLOWED_BY_STAGE, TRANSITIONS, create_reference, notify_roles, refresh_risk_status
+from ..services import ALLOWED_BY_ROLE, ALLOWED_BY_STAGE, TRANSITIONS, create_reference, generate_me_schedules, notify_roles, notify_user, refresh_risk_status
 
 router = APIRouter(prefix="/agreements", tags=["Agreements"])
 
@@ -25,26 +25,36 @@ LOAD_OPTIONS = (
 )
 
 
+def _load_detail(db: Session, agreement_id: int) -> Agreement:
+    return db.scalar(select(Agreement).where(Agreement.id == agreement_id).options(*LOAD_OPTIONS))
+
+
 def scoped_query(user: User):
     stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.owner))
-    if user.role == "researcher":
+    if user.role == "champion":
         stmt = stmt.where(Agreement.owner_id == user.id)
-    elif user.role == "approver":
-        stmt = stmt.where(or_(Agreement.assigned_approver_id == user.id, Agreement.department == user.department))
     elif user.role == "legal":
         stmt = stmt.where(or_(Agreement.legal_reviewer_id == user.id, Agreement.stage == "legal_review"))
+    elif user.role == "dvc":
+        stmt = stmt.where(Agreement.stage.in_(["dvc_signoff", "vc_submission", "signing"]))
+    elif user.role == "vc_office":
+        stmt = stmt.where(Agreement.stage.in_(["vc_submission", "signing", "active"]))
+    elif user.role == "me":
+        stmt = stmt.where(Agreement.stage == "active")
     return stmt
 
 
 def can_access_agreement(user: User, agreement: Agreement) -> bool:
     if user.role in {"admin", "linkages", "executive", "auditor"}:
         return True
-    if user.role == "researcher":
+    if user.role == "champion":
         return agreement.owner_id == user.id
-    if user.role == "approver":
-        return agreement.assigned_approver_id == user.id or agreement.department == user.department
     if user.role == "legal":
         return agreement.legal_reviewer_id == user.id or agreement.stage == "legal_review"
+    if user.role == "dvc":
+        return agreement.stage in {"dvc_signoff", "vc_submission", "signing"}
+    if user.role == "vc_office":
+        return agreement.stage in {"vc_submission", "signing", "active"}
     if user.role == "me":
         return agreement.stage == "active"
     return False
@@ -83,24 +93,67 @@ def create_agreement(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in {"researcher", "linkages", "admin"}:
-        raise HTTPException(status_code=403, detail="Only researchers, Linkages and administrators can create requests")
+    if user.role not in {"champion", "linkages", "admin"}:
+        raise HTTPException(status_code=403, detail="Only Champions, Linkages and administrators can create requests")
     partner = db.get(Partner, payload.partner_id)
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
+
+    data = payload.model_dump()
+    source = "champion"
+    partner_request: PartnerRequest | None = None
+    request_id = data.pop("partner_request_id", None)
+    if request_id:
+        # BR-002: partner-originated drafting requires an assigned JKUAT Champion.
+        partner_request = db.get(PartnerRequest, request_id)
+        if not partner_request:
+            raise HTTPException(status_code=404, detail="Partner request not found")
+        if partner_request.status == "converted":
+            raise HTTPException(status_code=400, detail="This partner request has already been converted")
+        if not partner_request.champion_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Drafting is blocked: Linkages must assign an internal JKUAT Champion to this partner request first (BR-002)",
+            )
+        if user.role == "champion" and partner_request.champion_id != user.id:
+            raise HTTPException(status_code=403, detail="Only the assigned JKUAT Champion can initiate drafting for this request")
+        source = "partner"
+
+    template_id = data.get("template_id")
+    template_version = None
+    if template_id:
+        template = db.get(Template, template_id)
+        if not template or not template.is_active:
+            raise HTTPException(status_code=404, detail="Template not found or inactive")
+        if template.agreement_type != data["agreement_type"]:
+            raise HTTPException(status_code=400, detail="Selected template does not match the agreement type")
+        template_version = template.version  # FR-008: pin exact version used
+        if not data.get("partner_category"):
+            data["partner_category"] = template.partner_category
+
+    owner_id = user.id
+    if partner_request and user.role in {"linkages", "admin"}:
+        owner_id = partner_request.champion_id
+
     agreement = Agreement(
-        **payload.model_dump(),
-        reference_number=create_reference(db, payload.agreement_type),
-        owner_id=user.id,
-        next_action="Complete the request and submit for departmental approval",
+        **data,
+        source=source,
+        template_version=template_version,
+        reference_number=create_reference(db, data["agreement_type"]),
+        owner_id=owner_id,
+        partner_request_id=partner_request.id if partner_request else None,
+        next_action="Complete the request and submit for Linkages review",
     )
     db.add(agreement)
     db.flush()
+    if partner_request:
+        partner_request.status = "converted"
+        partner_request.agreement_id = agreement.id
     db.add(WorkflowEvent(agreement_id=agreement.id, from_stage=None, to_stage="initiation", action="create", comment="Agreement request created", actor_id=user.id))
     audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.reference_number)
     notify_roles(db, {"admin", "linkages"}, "New agreement request", f"{agreement.reference_number} was created by {user.full_name}.", agreement.id)
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return _load_detail(db, agreement.id)
 
 
 @router.get("/{agreement_id}", response_model=AgreementDetailOut)
@@ -133,12 +186,12 @@ def update_agreement(
     if not can_access_agreement(user, agreement):
         raise HTTPException(status_code=403, detail="Access denied")
     changes = payload.model_dump(exclude_unset=True)
-    if user.role == "researcher":
+    if user.role == "champion":
         if agreement.stage != "initiation":
             raise HTTPException(status_code=403, detail="Submitted requests can only be changed after they are returned for correction")
-        allowed = {"title", "purpose", "expected_outcomes", "strategic_alignment", "department", "confidentiality"}
+        allowed = {"title", "purpose", "expected_outcomes", "strategic_alignment", "department", "confidentiality", "partner_category", "partner_liaison"}
         if set(changes) - allowed:
-            raise HTTPException(status_code=403, detail="Researchers cannot edit lifecycle administration fields")
+            raise HTTPException(status_code=403, detail="Champions cannot edit lifecycle administration fields")
     elif user.role not in {"admin", "linkages"}:
         raise HTTPException(status_code=403, detail="Your role has read-only access to these agreement details")
     old = json.dumps({"title": agreement.title, "stage": agreement.stage, "status": agreement.status})
@@ -146,7 +199,7 @@ def update_agreement(
         setattr(agreement, key, value)
     audit(db, user, "update_agreement", "agreement", agreement.id, request, old_value=old, new_value=json.dumps(changes, default=str))
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return _load_detail(db, agreement.id)
 
 
 @router.post("/{agreement_id}/transition", response_model=AgreementDetailOut)
@@ -167,6 +220,27 @@ def transition_agreement(
         raise HTTPException(status_code=403, detail=f"Role '{user.role}' cannot perform '{payload.action}'")
     if agreement.stage not in ALLOWED_BY_STAGE[payload.action]:
         raise HTTPException(status_code=400, detail=f"Action '{payload.action}' is not valid while the agreement is in '{agreement.stage}'")
+
+    now = datetime.utcnow()
+
+    # ---- BR-006 / FR-014..016: approval gate enforcement (server-side) ----
+    if payload.action == "dvc_sign" and not agreement.legal_approved_at:
+        raise HTTPException(
+            status_code=400,
+            detail="DVC RPE sign-off is blocked: Legal Office approval has not been recorded for this agreement (FR-015)",
+        )
+    if payload.action == "submit_vc":
+        missing = []
+        if not agreement.legal_approved_at:
+            missing.append("Legal Office approval")
+        if not agreement.dvc_signed_at:
+            missing.append("DVC RPE sign-off")
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"VC submission package is blocked until: {', '.join(missing)} (BR-006 / FR-016)",
+            )
+
     if payload.action == "activate" and agreement.status != "fully_signed":
         raise HTTPException(status_code=400, detail="Mark the agreement as fully signed before activation")
     if payload.action == "activate":
@@ -175,28 +249,61 @@ def transition_agreement(
             missing.append("effective date")
         if not agreement.expiry_date:
             missing.append("expiry date")
-        if not agreement.internal_champion:
-            missing.append("internal champion")
         if not agreement.partner_liaison:
-            missing.append("partner liaison")
+            missing.append("partner-side Champion/Liaison")
         if missing:
             raise HTTPException(status_code=400, detail=f"Activation requires: {', '.join(missing)}")
+
     from_stage = agreement.stage
     new_stage, new_status, color, next_action = TRANSITIONS[payload.action]
     agreement.stage = new_stage
     agreement.status = new_status
     agreement.status_color = color
     agreement.next_action = next_action
-    now = datetime.utcnow()
+
     if payload.action == "submit":
         agreement.submitted_at = now
-    elif payload.action in {"approve_linkages", "send_legal"} and not agreement.legal_review_started_at:
+    elif payload.action == "send_legal" and not agreement.legal_review_started_at:
         agreement.legal_review_started_at = now
+    elif payload.action == "approve_legal":
+        # FR-014: record reviewer, timestamp and the approved draft version.
+        agreement.legal_approved_at = now
+        agreement.legal_approved_by_id = user.id
+        official = db.scalars(select(Document).where(Document.agreement_id == agreement.id, Document.is_official.is_(True))).all()
+        agreement.legal_approved_version = official[-1].version if official else None
+        for doc in official:
+            doc.is_locked = True  # BR-005: approved versions are retained and locked
+    elif payload.action in {"dvc_return", "return_correction"}:
+        # Returning invalidates downstream gate records for the resubmitted draft.
+        if payload.action == "dvc_return":
+            agreement.dvc_signed_at = None
+            agreement.dvc_signed_by_id = None
+        agreement.legal_approved_at = None if payload.action == "dvc_return" else agreement.legal_approved_at
+        agreement.legal_review_started_at = now if payload.action == "dvc_return" else agreement.legal_review_started_at
+    elif payload.action == "dvc_sign":
+        agreement.dvc_signed_at = now
+        agreement.dvc_signed_by_id = user.id
+    elif payload.action == "submit_vc":
+        agreement.vc_submitted_at = now
+        agreement.date_sent_vc = now.date()
     elif payload.action == "activate":
         agreement.activated_at = now
+        created = generate_me_schedules(db, agreement)  # BR-007 six-month cycle
+        if created:
+            notify_user(db, agreement.owner_id, "M&E reporting schedule created",
+                        f"{agreement.reference_number}: {created} six-month reporting period(s) scheduled up to {agreement.expiry_date}.",
+                        agreement.id)
+
     db.add(WorkflowEvent(agreement_id=agreement.id, from_stage=from_stage, to_stage=new_stage, action=payload.action, comment=payload.comment, actor_id=user.id))
     audit(db, user, f"workflow_{payload.action}", "agreement", agreement.id, request, old_value=from_stage, new_value=new_stage)
-    db.add(Notification(user_id=agreement.owner_id, title="Agreement status updated", message=f"{agreement.reference_number} moved to {new_stage.replace('_', ' ')}.", level=color, agreement_id=agreement.id))
-    notify_roles(db, {"admin", "linkages"}, "Workflow update", f"{agreement.reference_number}: {payload.action.replace('_', ' ')} by {user.full_name}.", agreement.id, color)
+    notify_user(db, agreement.owner_id, "Agreement status updated", f"{agreement.reference_number} moved to {new_stage.replace('_', ' ')}.", agreement.id, color)
+    if payload.action == "approve_legal":
+        notify_roles(db, {"dvc"}, "DVC RPE sign-off required", f"{agreement.reference_number} is legally approved and awaits your endorsement.", agreement.id)
+    elif payload.action == "dvc_sign":
+        notify_roles(db, {"linkages"}, "VC package unlocked", f"{agreement.reference_number} has DVC RPE sign-off. Assemble and submit the VC package.", agreement.id)
+    elif payload.action == "submit_vc":
+        notify_roles(db, {"vc_office"}, "VC submission received", f"{agreement.reference_number} package submitted for VC signature tracking.", agreement.id)
+    else:
+        notify_roles(db, {"admin", "linkages"}, "Workflow update", f"{agreement.reference_number}: {payload.action.replace('_', ' ')} by {user.full_name}.", agreement.id, color)
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return _load_detail(db, agreement.id)

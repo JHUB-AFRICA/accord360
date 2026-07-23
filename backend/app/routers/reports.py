@@ -24,10 +24,10 @@ def export_agreements(
     user: User = Depends(get_current_user),
 ):
     stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.owner))
-    if user.role == "researcher":
+    if user.role == "champion":
         stmt = stmt.where(Agreement.owner_id == user.id)
-    elif user.role == "approver":
-        stmt = stmt.where(or_(Agreement.assigned_approver_id == user.id, Agreement.department == user.department))
+    elif user.role in {"dvc", "vc_office"}:
+        stmt = stmt.where(Agreement.stage.in_(["dvc_signoff", "vc_submission", "signing", "active"]))
     elif user.role == "legal":
         stmt = stmt.where(or_(Agreement.legal_reviewer_id == user.id, Agreement.stage == "legal_review"))
     elif user.role == "me":
@@ -40,7 +40,7 @@ def export_agreements(
     rows = db.scalars(stmt).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Reference", "Title", "Type", "Partner", "Department", "Owner", "Stage", "Status", "Effective Date", "Expiry Date"])
+    writer.writerow(["Reference", "Title", "Type", "Partner", "Department", "JKUAT Champion", "Stage", "Status", "Effective Date", "Expiry Date"])
     for item in rows:
         writer.writerow([
             item.reference_number,

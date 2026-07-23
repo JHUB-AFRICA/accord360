@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..deps import require_roles
-from ..models import Agreement, Document, User
+from sqlalchemy import select as _select
+
+from ..models import Agreement, Document, MEReportSchedule, User
 
 router = APIRouter(prefix="/monitoring", tags=["Monitoring and Evaluation"])
 
@@ -23,6 +25,7 @@ def portfolio(
         .where(Agreement.stage == "active")
         .options(
             selectinload(Agreement.partner),
+            selectinload(Agreement.owner),
             selectinload(Agreement.deliverables),
             selectinload(Agreement.documents),
         )
@@ -30,6 +33,10 @@ def portfolio(
     ).all()
 
     today = date.today()
+    all_schedules = db.scalars(_select(MEReportSchedule)).all()
+    by_agreement: dict[int, list[MEReportSchedule]] = {}
+    for sc in all_schedules:
+        by_agreement.setdefault(sc.agreement_id, []).append(sc)
     rows = []
     for agreement in agreements:
         target = sum(float(item.target_value or 0) for item in agreement.deliverables)
@@ -45,7 +52,7 @@ def portfolio(
                 "title": agreement.title,
                 "partner": agreement.partner.name,
                 "department": agreement.department,
-                "internal_champion": agreement.internal_champion,
+                "internal_champion": agreement.owner.full_name if agreement.owner else None,
                 "partner_liaison": agreement.partner_liaison,
                 "deliverable_count": len(agreement.deliverables),
                 "target_total": target,
@@ -56,6 +63,10 @@ def portfolio(
                 "days_since_update": days_since_update,
                 "expiry_date": agreement.expiry_date,
                 "expiry_days": agreement.expiry_days,
+                "reports_validated": sum(1 for sc in by_agreement.get(agreement.id, []) if sc.status == "validated"),
+                "reports_total": len(by_agreement.get(agreement.id, [])),
+                "reports_overdue": sum(1 for sc in by_agreement.get(agreement.id, []) if sc.is_overdue),
+                "next_report_due": min((sc.due_date for sc in by_agreement.get(agreement.id, []) if sc.status in {"pending", "returned"}), default=None),
                 "risk_level": "red" if days_since_update is not None and days_since_update >= 180 else agreement.status_color,
             }
         )
