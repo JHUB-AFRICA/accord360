@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import mimetypes
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from ..access import can_download_document, can_upload_document, ensure_can_view_agreement
 from ..config import settings
 from ..database import get_db
 from ..deps import audit, get_current_user
@@ -26,9 +26,9 @@ def list_documents(agreement_id: int, db: Session = Depends(get_db), user: User 
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
-    if not _can_access_agreement(user, agreement):
-        raise HTTPException(status_code=403, detail="Access denied")
-    return db.scalars(select(Document).where(Document.agreement_id == agreement_id).order_by(Document.created_at.desc())).all()
+    ensure_can_view_agreement(user, agreement)
+    documents = db.scalars(select(Document).where(Document.agreement_id == agreement_id).order_by(Document.created_at.desc())).all()
+    return [item for item in documents if can_download_document(user, agreement, item)]
 
 
 @router.post("", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -46,66 +46,60 @@ def upload_document(
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
-    if not _can_access_agreement(user, agreement):
-        raise HTTPException(status_code=403, detail="Access denied")
-    if user.role in {"executive", "auditor", "vc_office"}:
-        raise HTTPException(status_code=403, detail="Your role has read-only document access")
-    if agreement.legal_approved_at and document_type in {"draft", "official"} and agreement.stage in {"dvc_signoff", "vc_submission", "signing"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Draft versions are locked after legal approval (BR-005). A DVC return or correction reopens drafting.",
-        )
+    ensure_can_view_agreement(user, agreement)
+    if not can_upload_document(user, agreement):
+        raise HTTPException(status_code=403, detail="You cannot upload documents for this agreement")
+    if confidentiality not in {"public", "internal", "confidential"}:
+        raise HTTPException(status_code=400, detail="Invalid confidentiality level")
+    if is_official and user.role not in {"linkages", "director_linkages", "legal", "vc_office"}:
+        raise HTTPException(status_code=403, detail="Only Linkages, Legal or VC Office can mark an official version")
+    if document_type == "signed" and is_official and user.role not in {"linkages", "director_linkages", "vc_office"}:
+        raise HTTPException(status_code=403, detail="Only Linkages or VC Office can designate the official signed agreement")
+
     suffix = Path(file.filename or "document").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported file type")
     stored_name = f"{agreement.reference_number}_{uuid.uuid4().hex}{suffix}"
     destination = settings.upload_path / stored_name
     total = 0
-    digest = hashlib.sha256()
-    with destination.open("wb") as buffer:
-        while chunk := file.file.read(1024 * 1024):
-            total += len(chunk)
-            if total > MAX_FILE_SIZE:
-                buffer.close()
-                destination.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
-            digest.update(chunk)
-            buffer.write(chunk)
+    try:
+        with destination.open("wb") as buffer:
+            while chunk := file.file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_FILE_SIZE:
+                    raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
+                buffer.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        file.file.close()
+
+    if is_official:
+        db.execute(
+            update(Document)
+            .where(Document.agreement_id == agreement_id, Document.document_type == document_type, Document.is_official.is_(True))
+            .values(is_official=False)
+        )
+
     document = Document(
         agreement_id=agreement_id,
         document_type=document_type,
-        version=version,
+        version=version.strip() or "1.0",
         original_name=file.filename or stored_name,
         stored_name=stored_name,
         mime_type=file.content_type or mimetypes.guess_type(stored_name)[0],
         size_bytes=total,
-        checksum_sha256=digest.hexdigest(),
         uploaded_by_id=user.id,
         is_official=is_official,
         confidentiality=confidentiality,
     )
     db.add(document)
     db.flush()
-    audit(db, user, "upload_document", "document", document.id, request, new_value=document.original_name)
+    audit(db, user, "upload_document", "document", document.id, request, new_value=f"{document.original_name}; official={is_official}")
     db.commit()
     db.refresh(document)
     return document
-
-
-def _can_access_agreement(user: User, agreement: Agreement) -> bool:
-    if user.role in {"admin", "linkages", "executive", "auditor"}:
-        return True
-    if user.role == "champion":
-        return agreement.owner_id == user.id
-    if user.role == "dvc":
-        return agreement.stage in {"dvc_signoff", "vc_submission", "signing"}
-    if user.role == "vc_office":
-        return agreement.stage in {"vc_submission", "signing", "active"}
-    if user.role == "legal":
-        return agreement.legal_reviewer_id == user.id or agreement.stage == "legal_review"
-    if user.role == "me":
-        return agreement.stage == "active"
-    return False
 
 
 @router.get("/{document_id}/download")
@@ -117,18 +111,16 @@ def download_document(
     user: User = Depends(get_current_user),
 ):
     agreement = db.get(Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
     document = db.scalar(select(Document).where(Document.id == document_id, Document.agreement_id == agreement_id))
-    if not agreement or not document:
+    if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if not _can_access_agreement(user, agreement):
-        raise HTTPException(status_code=403, detail="Access denied")
-    file_path = settings.upload_path / document.stored_name
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Stored file is missing")
+    if not can_download_document(user, agreement, document):
+        raise HTTPException(status_code=403, detail="You cannot access this document")
+    path = settings.upload_path / document.stored_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Stored file is unavailable")
     audit(db, user, "download_document", "document", document.id, request, new_value=document.original_name)
     db.commit()
-    return FileResponse(
-        path=file_path,
-        filename=document.original_name,
-        media_type=document.mime_type or "application/octet-stream",
-    )
+    return FileResponse(path=path, media_type=document.mime_type or "application/octet-stream", filename=document.original_name)

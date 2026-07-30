@@ -21,7 +21,7 @@ export default function Reports() {
         ))}
       </div>
       {data && <div className="dashboard-grid">
-        <div className="panel chart-panel span-2"><div className="panel-head"><div><h3>Agreement volume by lifecycle stage</h3><p>Operational portfolio distribution</p></div></div><div className="chart-height"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.by_stage}><CartesianGrid strokeDasharray="4 4" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="value" fill="#0f766e" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
+        <div className="panel chart-panel span-2"><div className="panel-head"><div><h3>Agreement volume by lifecycle stage</h3><p>Operational portfolio distribution</p></div></div><div className="chart-height"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.by_stage}><CartesianGrid strokeDasharray="4 4" vertical={false} /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="value" fill="#96be4c" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
         <div className="panel risk-summary"><div className="risk-icon"><ShieldAlert size={25} /></div><h3>Risk snapshot</h3><strong>{data.kpis.at_risk}</strong><p>Agreements currently marked orange or red and requiring management attention.</p></div>
       </div>}
     </>

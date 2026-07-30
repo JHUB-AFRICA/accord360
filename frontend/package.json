@@ -1,7 +1,7 @@
 {
   "name": "accord360-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,13 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "react-router-dom": "latest",
-    "recharts": "latest",
-    "lucide-react": "latest"
+    "@vitejs/plugin-react": "6.0.3",
+    "vite": "8.1.5",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router-dom": "7.18.1",
+    "recharts": "3.10.0",
+    "lucide-react": "1.25.0"
   },
   "devDependencies": {}
 }

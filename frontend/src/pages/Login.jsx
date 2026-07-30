@@ -1,26 +1,27 @@
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { roleHome } from "../lib/roles";
 
 export default function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@accord360.app");
-  const [password, setPassword] = useState("Admin@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={roleHome(user.role)} replace />;
 
   async function submit(event) {
     event.preventDefault();
     setLoading(true);
     setError("");
     try {
-      await login(email, password);
-      navigate("/");
+      const loggedInUser = await login(email, password);
+      navigate(roleHome(loggedInUser.role), { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -54,20 +55,32 @@ export default function Login() {
           <h2>Welcome back</h2>
           <p>Sign in to your Accord 360 workspace.</p>
           {error && <div className="form-error">{error}</div>}
-          <label>Email address<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+          <label>Email address
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              placeholder="name@jkuat.ac.ke"
+              required
+            />
+          </label>
           <label>Password
             <div className="password-input">
-              <input type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <input
+                type={show ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                required
+              />
               <button type="button" onClick={() => setShow(!show)}>{show ? <EyeOff size={18} /> : <Eye size={18} />}</button>
             </div>
           </label>
           <button className="primary-button full-button" disabled={loading}>
             {loading ? "Signing in..." : "Sign in"}<ArrowRight size={18} />
           </button>
-          <div className="demo-credentials">
-            <LockKeyhole size={18} />
-            <div><strong>Demo administrator</strong><span>admin@accord360.app · Admin@123</span></div>
-          </div>
         </form>
       </section>
     </div>

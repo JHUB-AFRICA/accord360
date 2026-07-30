@@ -20,7 +20,7 @@ def create_partner(
     payload: PartnerCreate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin", "linkages", "champion")),
+    actor: User = Depends(require_roles("linkages", "director_linkages", "researcher")),
 ):
     if db.scalar(select(Partner).where(Partner.name == payload.name)):
         raise HTTPException(status_code=409, detail="Partner already exists")
@@ -39,7 +39,7 @@ def update_partner(
     payload: PartnerCreate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin", "linkages")),
+    actor: User = Depends(require_roles("linkages", "director_linkages")),
 ):
     partner = db.get(Partner, partner_id)
     if not partner:

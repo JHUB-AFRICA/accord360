@@ -1,40 +1,123 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  Activity,
+  BarChart3,
   Bell,
   Building2,
   ChevronDown,
   ClipboardCheck,
   ClipboardList,
   FileBarChart,
-  FileStack,
+  FileSignature,
   FileText,
-  Inbox,
   Gauge,
+  Gavel,
   LogOut,
   Menu,
+  MonitorCheck,
+  PlusCircle,
   Settings,
   ShieldCheck,
-  Trophy,
   Users,
   X
 } from "lucide-react";
-import ChatbotWidget from "./ChatbotWidget";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
+import { roleConfig } from "../lib/roles";
 
-const roleLabels = {
-  admin: "System administrator",
-  champion: "Champion workspace",
-  linkages: "Linkages operations",
-  legal: "Legal workspace",
-  dvc: "DVC RPE sign-off",
-  vc_office: "VC Office",
-  executive: "Executive intelligence",
-  me: "M&E workspace",
-  auditor: "Assurance review"
+const iconMap = {
+  home: Gauge,
+  agreements: ClipboardList,
+  new: PlusCircle,
+  partners: Building2,
+  reports: FileBarChart,
+  users: Users,
+  audit: ShieldCheck,
+  settings: Settings,
+  approvals: ClipboardCheck,
+  legal: Gavel,
+  signing: FileSignature,
+  monitoring: MonitorCheck,
+  executive: BarChart3
 };
+
+const roleNavigation = {
+  researcher: [
+    ["home", "My workspace"],
+    ["agreements", "My agreements"],
+    ["new", "New collaboration request"]
+  ],
+  approver: [
+    ["home", "Approval queue"],
+    ["agreements", "Department agreements"]
+  ],
+  linkages: [
+    ["home", "Operations workspace"],
+    ["agreements", "Agreement lifecycle"],
+    ["new", "Log new request"],
+    ["partners", "Partner registry"],
+    ["reports", "Operational reports"]
+  ],
+  director_linkages: [
+    ["home", "Directorate workspace"],
+    ["agreements", "Agreement lifecycle"],
+    ["new", "Log new request"],
+    ["partners", "Partner registry"],
+    ["reports", "Portfolio reports"],
+    ["audit", "Audit trail"]
+  ],
+  legal: [
+    ["home", "Legal review queue"],
+    ["agreements", "Legal matters"]
+  ],
+  dvc: [
+    ["home", "DVC endorsement queue"],
+    ["agreements", "Governance packages"],
+    ["reports", "Summary reports"]
+  ],
+  vc_office: [
+    ["home", "VC signing desk"],
+    ["agreements", "Signing packages"]
+  ],
+  me: [
+    ["home", "M&E workspace"],
+    ["agreements", "Active collaborations"],
+    ["reports", "Performance reports"]
+  ],
+  executive: [
+    ["home", "Executive dashboard"],
+    ["agreements", "Partnership portfolio"],
+    ["reports", "Executive reports"],
+    ["audit", "Audit summary"]
+  ],
+  admin: [
+    ["home", "Administration console"],
+    ["users", "Users and roles"],
+    ["settings", "System settings"],
+    ["audit", "Audit trail"],
+    ["agreements", "Read-only portfolio"]
+  ],
+  auditor: [
+    ["home", "Compliance workspace"],
+    ["agreements", "Authorized records"],
+    ["reports", "Compliance reports"],
+    ["audit", "Audit trail"]
+  ]
+};
+
+function navPath(key, home) {
+  const paths = {
+    home,
+    agreements: "/agreements",
+    new: "/agreements/new",
+    partners: "/partners",
+    reports: "/reports",
+    users: "/users",
+    audit: "/audit",
+    settings: "/settings"
+  };
+  return paths[key];
+}
 
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -42,43 +125,19 @@ export default function Layout() {
   const [showNotifications, setShowNotifications] = useState(false);
   const { user, logout } = useAuth();
   const location = useLocation();
+  const config = roleConfig(user?.role);
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
   useEffect(() => {
     api("/notifications").then(setNotifications).catch(() => {});
   }, [location.pathname]);
 
-  const nav = useMemo(() => {
-    const items = [
-      { to: "/", label: "Overview", icon: Gauge },
-      { to: "/work", label: "My work", icon: ClipboardCheck },
-      { to: "/agreements", label: "Agreements", icon: ClipboardList }
-    ];
-    if (["admin", "linkages", "champion", "executive", "auditor"].includes(user?.role)) {
-      items.push({ to: "/requests", label: "Partner requests", icon: Inbox });
-    }
-    if (["admin", "linkages", "executive"].includes(user?.role)) {
-      items.push({ to: "/partners", label: "Partners", icon: Building2 });
-    }
-    if (["admin", "linkages", "champion", "legal", "executive"].includes(user?.role)) {
-      items.push({ to: "/templates", label: "Template library", icon: FileStack });
-    }
-    if (["admin", "linkages", "me", "executive", "auditor"].includes(user?.role)) {
-      items.push({ to: "/monitoring", label: "Monitoring & Evaluation", icon: Activity });
-    }
-    if (["admin", "linkages", "executive", "auditor"].includes(user?.role)) {
-      items.push({ to: "/reports", label: "Reports", icon: FileBarChart });
-    }
-    if (["admin", "linkages", "me", "executive", "auditor"].includes(user?.role)) {
-      items.push({ to: "/scorecard", label: "Scorecard", icon: Trophy });
-    }
-    return items;
-  }, [user?.role]);
-
-  const systemNav = [];
-  if (user?.role === "admin") systemNav.push({ to: "/users", label: "Users & roles", icon: Users });
-  if (["admin", "auditor", "executive"].includes(user?.role)) systemNav.push({ to: "/audit", label: "Audit trail", icon: ShieldCheck });
-  if (user?.role === "admin") systemNav.push({ to: "/settings", label: "Settings", icon: Settings });
+  const nav = useMemo(() => (roleNavigation[user?.role] || [["home", "Workspace"]]).map(([key, label]) => ({
+    key,
+    label,
+    to: navPath(key, config.home),
+    icon: iconMap[key] || FileText
+  })), [user?.role, config.home]);
 
   const unread = notifications.filter((item) => !item.is_read).length;
 
@@ -104,23 +163,16 @@ export default function Layout() {
         <div className="workspace-chip">
           <div className="workspace-icon"><FileText size={18} /></div>
           <div>
-            <span>Current channel</span>
-            <strong>{roleLabels[user?.role] || "Partnership portfolio"}</strong>
+            <span>Signed in as</span>
+            <strong>{config.label}</strong>
           </div>
           <ChevronDown size={16} />
         </div>
 
         <nav className="side-nav">
-          <span className="nav-label">Workspace</span>
-          {nav.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => `side-link ${isActive ? "active" : ""}`}>
-              <Icon size={19} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-          {systemNav.length > 0 && <span className="nav-label nav-label-spaced">Governance</span>}
-          {systemNav.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `side-link ${isActive ? "active" : ""}`}>
+          <span className="nav-label">{config.workspace}</span>
+          {nav.map(({ key, to, label, icon: Icon }) => (
+            <NavLink key={`${key}-${to}`} to={to} end={key === "home"} className={({ isActive }) => `side-link ${isActive ? "active" : ""}`}>
               <Icon size={19} />
               <span>{label}</span>
             </NavLink>
@@ -132,7 +184,7 @@ export default function Layout() {
             <div className="avatar">{user?.full_name?.split(" ").map((word) => word[0]).slice(0, 2).join("")}</div>
             <div>
               <strong>{user?.full_name}</strong>
-              <span>{roleLabels[user?.role] || user?.role?.replace("_", " ")}</span>
+              <span>{config.label}</span>
             </div>
           </div>
           <button className="icon-button" onClick={logout} title="Sign out"><LogOut size={18} /></button>
@@ -145,12 +197,13 @@ export default function Layout() {
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
           <div className="topbar-title">
-            <strong>Agreement Lifecycle & Performance Management</strong>
-            <span>{roleLabels[user?.role]} · controlled access and shared accountability</span>
+            <strong>{config.workspace}</strong>
+            <span>{config.shortDescription}</span>
           </div>
           <div className="topbar-actions">
+            <span className="role-badge">{config.label}</span>
             <div className="notification-wrap">
-              <button className="icon-button notification-button" onClick={() => setShowNotifications((value) => !value)} aria-label="Open notifications">
+              <button className="icon-button notification-button" onClick={() => setShowNotifications((value) => !value)}>
                 <Bell size={20} />
                 {unread > 0 && <span className="notification-dot">{unread}</span>}
               </button>
@@ -178,7 +231,6 @@ export default function Layout() {
           </div>
         </header>
         <main className="content"><Outlet /></main>
-        <ChatbotWidget />
       </div>
     </div>
   );

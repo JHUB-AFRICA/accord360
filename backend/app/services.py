@@ -1,80 +1,107 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Agreement, MEReportSchedule, Notification, User
+from .models import Agreement, Notification, User
+from .timeutils import utc_now
 
-# Spec swimlane (Figure 3/4): Champion -> Linkages -> Legal -> DVC RPE -> VC -> signing.
-# The former department_approval stage was removed per Directorate validation.
 STAGE_ORDER = [
     "initiation",
+    "department_approval",
     "linkages_review",
     "legal_review",
-    "dvc_signoff",
+    "dvc_approval",
     "vc_submission",
-    "signing",
+    "validation_signing",
     "active",
     "renewal_closure",
     "archived",
 ]
 
-# action: (new_stage, new_status, color, next_action)
 TRANSITIONS = {
-    "submit": ("linkages_review", "pending_linkages", "yellow", "Linkages completeness and strategic-fit review"),
+    "submit": ("department_approval", "pending_department", "yellow", "Department/faculty approval required"),
+    "approve_department": ("linkages_review", "pending_linkages", "yellow", "Linkages completeness and strategic-fit review"),
     "return_correction": ("initiation", "correction_required", "yellow", "Champion to correct and resubmit"),
-    "send_legal": ("legal_review", "in_legal_review", "green", "Legal Office to review draft (21-day SLA)"),
-    "approve_legal": ("dvc_signoff", "pending_dvc_signoff", "green", "DVC RPE to endorse the legally approved package"),
-    "dvc_sign": ("vc_submission", "ready_for_vc_package", "green", "Linkages to assemble and submit the VC package"),
-    "dvc_return": ("legal_review", "returned_by_dvc", "yellow", "Address DVC RPE remarks and re-approve"),
-    "submit_vc": ("signing", "awaiting_signature", "yellow", "Track VC and partner signatures"),
-    "mark_signed": ("signing", "fully_signed", "green", "Complete activation information"),
-    "activate": ("active", "active", "green", "Update M&E deliverables and evidence"),
+    "approve_linkages": ("linkages_review", "linkages_approved", "green", "Route the approved request to Legal Office"),
+    "send_legal": ("legal_review", "in_legal_review", "green", "Legal Office review in progress"),
+    "approve_legal": ("dvc_approval", "legal_approved", "green", "DVC RPE endorsement required"),
+    "approve_dvc": ("vc_submission", "dvc_approved", "green", "Linkages to submit the endorsed package to VC Office"),
+    "return_dvc": ("legal_review", "dvc_returned", "yellow", "Address DVC RPE remarks and resubmit for endorsement"),
+    "submit_vc": ("validation_signing", "awaiting_vc_signature", "yellow", "VC Office to record signature milestone"),
+    "record_vc_signature": ("validation_signing", "awaiting_partner_signature", "yellow", "Await partner signature and complete execution"),
+    "mark_signed": ("validation_signing", "fully_signed", "green", "Complete activation information"),
+    "activate": ("active", "active", "green", "Update six-month M&E reports, deliverables and evidence"),
     "renew": ("renewal_closure", "renewal_review", "orange", "Complete renewal decision"),
     "close": ("renewal_closure", "closed", "green", "Archive completed agreement"),
-    "archive": ("archived", "archived", "green", "Read-only record"),
+    "archive": ("archived", "archived", "green", "Read-only institutional record"),
     "reject": ("renewal_closure", "rejected", "red", "No further action"),
 }
 
 ALLOWED_BY_STAGE = {
     "submit": {"initiation"},
-    "return_correction": {"linkages_review", "legal_review"},
+    "approve_department": {"department_approval"},
+    "return_correction": {"department_approval", "linkages_review", "legal_review"},
+    "approve_linkages": {"linkages_review"},
     "send_legal": {"linkages_review"},
     "approve_legal": {"legal_review"},
-    "dvc_sign": {"dvc_signoff"},
-    "dvc_return": {"dvc_signoff"},
+    "approve_dvc": {"dvc_approval"},
+    "return_dvc": {"dvc_approval"},
     "submit_vc": {"vc_submission"},
-    "mark_signed": {"signing"},
-    "activate": {"signing"},
+    "record_vc_signature": {"validation_signing"},
+    "mark_signed": {"validation_signing"},
+    "activate": {"validation_signing"},
     "renew": {"active"},
     "close": {"active", "renewal_closure"},
     "archive": {"renewal_closure"},
-    "reject": {"linkages_review", "legal_review", "dvc_signoff", "vc_submission", "signing"},
+    "reject": {"department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing"},
 }
 
+# Business approvals are intentionally separated from technical administration.
 ALLOWED_BY_ROLE = {
-    "submit": {"champion", "linkages", "admin"},
-    "return_correction": {"linkages", "legal", "admin"},
-    "send_legal": {"linkages", "admin"},
-    "approve_legal": {"legal", "admin"},
-    "dvc_sign": {"dvc", "admin"},
-    "dvc_return": {"dvc", "admin"},
-    "submit_vc": {"linkages", "admin"},
-    "mark_signed": {"linkages", "vc_office", "admin"},
-    "activate": {"linkages", "admin"},
-    "renew": {"linkages", "executive", "admin"},
-    "close": {"linkages", "executive", "admin"},
-    "archive": {"linkages", "admin"},
-    "reject": {"linkages", "legal", "dvc", "executive", "admin"},
+    "submit": {"researcher", "linkages", "director_linkages"},
+    "approve_department": {"approver"},
+    "return_correction": {"approver", "linkages", "director_linkages", "legal"},
+    "approve_linkages": {"linkages", "director_linkages"},
+    "send_legal": {"linkages", "director_linkages"},
+    "approve_legal": {"legal"},
+    "approve_dvc": {"dvc"},
+    "return_dvc": {"dvc"},
+    "submit_vc": {"linkages", "director_linkages"},
+    "record_vc_signature": {"vc_office"},
+    "mark_signed": {"vc_office", "linkages", "director_linkages"},
+    "activate": {"linkages", "director_linkages"},
+    "renew": {"linkages", "director_linkages"},
+    "close": {"linkages", "director_linkages"},
+    "archive": {"linkages", "director_linkages"},
+    "reject": {"approver", "linkages", "director_linkages", "legal", "dvc"},
 }
 
+REQUIRED_STATUS_BY_ACTION = {
+    "submit": {"draft", "correction_required"},
+    "approve_department": {"pending_department"},
+    "approve_linkages": {"pending_linkages"},
+    "send_legal": {"linkages_approved"},
+    "approve_legal": {"in_legal_review", "pending_legal", "legal_stalled", "dvc_returned"},
+    "approve_dvc": {"legal_approved"},
+    "return_dvc": {"legal_approved"},
+    "submit_vc": {"dvc_approved"},
+    "record_vc_signature": {"awaiting_vc_signature"},
+    "mark_signed": {"awaiting_vc_signature", "awaiting_partner_signature"},
+    "activate": {"fully_signed"},
+    "archive": {"closed"},
+}
 
-def create_reference(db: Session, agreement_type: str) -> str:
-    year = datetime.utcnow().year
-    count = db.scalar(select(func.count(Agreement.id)).where(Agreement.agreement_type == agreement_type)) or 0
-    return f"JKUAT-{agreement_type.upper()}-{year}-{count + 1:04d}"
+COMMENT_REQUIRED_ACTIONS = {"return_correction", "return_dvc", "reject", "close"}
+
+
+def create_reference(agreement_type: str, agreement_id: int) -> str:
+    """Build a unique, stable reference using the persisted database ID."""
+    year = utc_now().year
+    normalized_type = "".join(ch for ch in agreement_type.upper() if ch.isalnum()) or "AGR"
+    return f"JKUAT-{normalized_type}-{year}-{agreement_id:04d}"
 
 
 def notify_roles(db: Session, roles: set[str], title: str, message: str, agreement_id: int | None = None, level: str = "info") -> None:
@@ -83,94 +110,46 @@ def notify_roles(db: Session, roles: set[str], title: str, message: str, agreeme
         db.add(Notification(user_id=user.id, title=title, message=message, level=level, agreement_id=agreement_id))
 
 
-def notify_user(db: Session, user_id: int, title: str, message: str, agreement_id: int | None = None, level: str = "info") -> None:
-    db.add(Notification(user_id=user_id, title=title, message=message, level=level, agreement_id=agreement_id))
-
-
 def refresh_risk_status(agreement: Agreement) -> None:
+    """Apply legal SLA, expiry and M&E dormancy rules in priority order."""
+    if agreement.stage == "archived" or agreement.status in {"archived", "closed", "rejected"}:
+        return
+
+    now = utc_now()
     today = date.today()
+
     if agreement.stage == "legal_review" and agreement.legal_review_started_at:
-        if datetime.utcnow() - agreement.legal_review_started_at > timedelta(days=21):
+        if now - agreement.legal_review_started_at > timedelta(days=21):
             agreement.status_color = "red"
             agreement.status = "legal_stalled"
-            agreement.next_action = "Resolve legal review blocker or escalate"
+            agreement.next_action = "Legal Office to resolve the blocker or escalate"
             return
+
     if agreement.stage == "active" and agreement.expiry_date:
         days = (agreement.expiry_date - today).days
         if days <= 90:
             agreement.status_color = "red"
             agreement.status = "expiry_critical"
-            agreement.next_action = "Escalate renewal decision"
-        elif days <= 183:
-            agreement.status_color = "orange"
-            agreement.status = "expiry_warning"
-            agreement.next_action = "Review renewal, closure or extension"
-        elif agreement.status not in {"dormant", "expiry_critical", "expiry_warning"}:
-            agreement.status_color = "green"
-            agreement.status = "active"
+            agreement.next_action = "Linkages to escalate the renewal decision"
+            return
 
+    if agreement.stage == "active":
+        activity_dates = [item.last_updated_at for item in getattr(agreement, "deliverables", []) if item.last_updated_at]
+        baseline = max(activity_dates, default=agreement.activated_at)
+        if baseline and now - baseline >= timedelta(days=180):
+            agreement.status_color = "red"
+            agreement.status = "dormant"
+            agreement.next_action = "Champion to submit M&E actuals and supporting evidence"
+            return
 
-def generate_me_schedules(db: Session, agreement: Agreement) -> int:
-    """BR-007 / FR-021: create a six-month reporting schedule on activation.
+        if agreement.expiry_date:
+            days = (agreement.expiry_date - today).days
+            if days <= 183:
+                agreement.status_color = "orange"
+                agreement.status = "expiry_warning"
+                agreement.next_action = "Review renewal, closure or extension"
+                return
 
-    Periods run from the effective date to the expiry date. Existing schedules
-    are preserved (re-activation after renewal only appends missing periods).
-    """
-    if not agreement.effective_date or not agreement.expiry_date:
-        return 0
-    existing = {s.due_date for s in db.scalars(select(MEReportSchedule).where(MEReportSchedule.agreement_id == agreement.id)).all()}
-    created = 0
-    due = agreement.effective_date
-    index = 0
-    while index < 20:  # safety cap
-        index += 1
-        month = due.month + 6
-        year = due.year + (month - 1) // 12
-        month = (month - 1) % 12 + 1
-        day = min(due.day, 28)
-        due = date(year, month, day)
-        if due > agreement.expiry_date:
-            break
-        if due not in existing:
-            db.add(MEReportSchedule(
-                agreement_id=agreement.id,
-                period_label=f"Six-month report {index} ({due.strftime('%b %Y')})",
-                due_date=due,
-            ))
-            created += 1
-    return created
-
-
-def refresh_me_alerts(db: Session) -> int:
-    """FR-025: notify the JKUAT Champion when a six-month report is due or overdue.
-
-    Alerts fire from 30 days before the due date and repeat at most weekly.
-    """
-    now = datetime.utcnow()
-    horizon = date.today() + timedelta(days=30)
-    schedules = db.scalars(
-        select(MEReportSchedule).where(
-            MEReportSchedule.status.in_(["pending", "returned"]),
-            MEReportSchedule.due_date <= horizon,
-        )
-    ).all()
-    sent = 0
-    for schedule in schedules:
-        if schedule.alerted_at and (now - schedule.alerted_at) < timedelta(days=7):
-            continue
-        agreement = db.get(Agreement, schedule.agreement_id)
-        if not agreement or agreement.stage != "active":
-            continue
-        overdue = schedule.due_date < date.today()
-        title = "M&E report overdue" if overdue else "M&E report due soon"
-        level = "red" if overdue else "orange"
-        message = (
-            f"{agreement.reference_number}: {schedule.period_label} "
-            f"{'was due ' + schedule.due_date.isoformat() if overdue else 'is due by ' + schedule.due_date.isoformat()}. "
-            "Please submit the activity report."
-        )
-        notify_user(db, agreement.owner_id, title, message, agreement.id, level)
-        notify_roles(db, {"me", "linkages"}, title, message, agreement.id, level)
-        schedule.alerted_at = now
-        sent += 1
-    return sent
+        agreement.status_color = "green"
+        agreement.status = "active"
+        agreement.next_action = agreement.next_action or "Submit the next six-month M&E report"

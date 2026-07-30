@@ -5,16 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
-from .routers import agreements, auth, chatbot, dashboard, documents, legal, me, monitoring, notifications, partners, reports, requests, scorecard, templates, users
+from .routers import agreements, auth, dashboard, documents, me, notifications, partners, reports, users
 from .seed import seed
 
+settings.validate()
 Base.metadata.create_all(bind=engine)
-seed(reset=False, demo=True)
+if settings.seed_demo_data:
+    seed(reset=False, demo=True)
 
 app = FastAPI(
     title="Accord 360 API",
     description="MoU / CRA / CA lifecycle, workflow, M&E and partnership performance platform.",
-    version="1.0.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -25,16 +27,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-for router in [auth.router, users.router, partners.router, requests.router, templates.router, agreements.router, documents.router, legal.router, me.router, monitoring.router, dashboard.router, notifications.router, reports.router, scorecard.router, chatbot.router]:
+for router in [auth.router, users.router, partners.router, agreements.router, documents.router, me.router, dashboard.router, notifications.router, reports.router]:
     app.include_router(router, prefix="/api")
 
 
 @app.get("/")
 def root():
-    return {"name": settings.app_name, "status": "running", "docs": "/docs"}
+    return {"name": settings.app_name, "status": "running", "docs": "/docs", "version": "1.2.0"}
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "environment": settings.environment}

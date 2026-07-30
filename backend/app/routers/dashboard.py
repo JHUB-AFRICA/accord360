@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -8,255 +8,375 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from ..access import apply_agreement_scope
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Agreement, Deliverable, Document, MEReportSchedule, User, ValueRecord
-from ..services import STAGE_ORDER, refresh_me_alerts, refresh_risk_status
+from ..models import Agreement, AuditLog, User
+from ..services import refresh_risk_status
+from ..timeutils import utc_now
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
-STAGE_LABELS = {
-    "initiation": "Initiation",
-    "linkages_review": "Linkages Review",
-    "legal_review": "Legal Review",
-    "dvc_signoff": "DVC RPE Sign-off",
-    "vc_submission": "VC Submission",
-    "signing": "Signing",
-    "active": "Active",
-    "renewal_closure": "Renewal / Closure",
-    "archived": "Archive",
-}
-
-ROLE_CONTEXT = {
-    "champion": {
-        "title": "Champion workspace",
-        "subtitle": "Initiate agreements, respond to corrections, act on legal feedback and report M&E activities.",
-        "queue_label": "Requests needing my attention",
+ROLE_WORKSPACES = {
+    "researcher": {
+        "role_label": "JKUAT Champion",
+        "eyebrow": "Champion workspace",
+        "title": "My collaboration responsibilities",
+        "description": "Initiate requests, respond to workflow feedback, track your agreements and submit implementation evidence.",
+        "permission_summary": "You can create and edit your own requests, submit them for review, upload permitted documents and update M&E for your active collaborations.",
+        "capabilities": ["Create requests", "Track own agreements", "Respond to corrections", "Submit M&E evidence"],
+        "guidance": ["Complete and submit new collaboration requests.", "Respond to departmental, Linkages or Legal feedback.", "Upload supporting drafts and approved evidence.", "Submit six-month activity and deliverable updates."],
+        "queue_title": "My required actions",
+        "queue_description": "Only collaboration records assigned to you as Champion are shown.",
+        "primary_action": {"label": "New collaboration request", "path": "/agreements/new"},
+        "show_portfolio_analytics": False,
     },
-    "dvc": {
-        "title": "DVC RPE sign-off gate",
-        "subtitle": "Endorse legally approved packages before VC submission, or return them with remarks.",
-        "queue_label": "Packages awaiting endorsement",
-    },
-    "vc_office": {
-        "title": "VC Office submissions",
-        "subtitle": "Receive complete packages and track VC and partner signature milestones.",
-        "queue_label": "Submissions and signatures in progress",
+    "approver": {
+        "role_label": "Department / Faculty Approver",
+        "eyebrow": "Academic governance",
+        "title": "Department approval queue",
+        "description": "Review academic fit and departmental support before a collaboration proceeds to Linkages.",
+        "permission_summary": "You can view agreements in your department or assigned to you, and approve, return or reject only at the department approval stage.",
+        "capabilities": ["Review scoped requests", "Approve department gate", "Return with reasons", "Reject with reasons"],
+        "guidance": ["Open each request and verify academic fit.", "Check purpose, partner, department and expected outcomes.", "Approve suitable requests or return them with a clear reason.", "Do not edit Linkages, Legal, DVC or signing decisions."],
+        "queue_title": "Requests awaiting department decision",
+        "queue_description": "Requests are scoped to your department and explicit assignments.",
+        "primary_action": None,
+        "show_portfolio_analytics": False,
     },
     "linkages": {
-        "title": "Linkages operations centre",
-        "subtitle": "Control intake, completeness, routing, signing coordination, renewal and portfolio quality.",
-        "queue_label": "Operational actions due",
+        "role_label": "Linkages Officer",
+        "eyebrow": "Operational management",
+        "title": "Linkages workflow control centre",
+        "description": "Manage request intake, strategic-fit review, routing, signing follow-up, activation and renewal.",
+        "permission_summary": "You have operational access to the institutional portfolio but cannot issue Legal or DVC approvals on their behalf.",
+        "capabilities": ["Log requests", "Route workflow", "Coordinate signing", "Activate agreements"],
+        "guidance": ["Validate completeness and strategic alignment.", "Route approved requests to Legal Office.", "Submit DVC-endorsed packages to VC Office.", "Activate fully signed agreements and coordinate renewals."],
+        "queue_title": "Linkages operational queue",
+        "queue_description": "Records requiring Linkages routing, escalation, signing follow-up or lifecycle action.",
+        "primary_action": {"label": "Log new request", "path": "/agreements/new"},
+        "show_portfolio_analytics": True,
+    },
+    "director_linkages": {
+        "role_label": "Director, Linkages",
+        "eyebrow": "Directorate oversight",
+        "title": "Partnership governance and performance",
+        "description": "Oversee the full agreement portfolio, bottlenecks, risk, value, performance and renewal decisions.",
+        "permission_summary": "You have operational and strategic portfolio access while Legal, DVC and VC actions remain separated by institutional role.",
+        "capabilities": ["Portfolio oversight", "Escalation management", "Signing coordination", "Renewal decisions"],
+        "guidance": ["Review bottlenecks and overdue workflow actions.", "Coordinate Legal, DVC and VC Office follow-up.", "Track active partnership value and performance.", "Direct renewal, closure and archival decisions."],
+        "queue_title": "Directorate attention queue",
+        "queue_description": "High-priority operational, risk and renewal matters across the portfolio.",
+        "primary_action": {"label": "Log new request", "path": "/agreements/new"},
+        "show_portfolio_analytics": True,
     },
     "legal": {
-        "title": "Legal review workspace",
-        "subtitle": "Manage assigned drafting, version review, risk decisions and the 21-day legal SLA.",
-        "queue_label": "Legal matters requiring action",
+        "role_label": "Legal Office Reviewer",
+        "eyebrow": "Legal workspace",
+        "title": "Draft review and legal approval",
+        "description": "Review assigned agreement drafts, upload controlled versions, return feedback or issue Legal approval.",
+        "permission_summary": "You can act on legal-review records and retain version history; you cannot perform DVC endorsement, VC signing or activation.",
+        "capabilities": ["Review drafts", "Upload legal versions", "Return feedback", "Approve legal version"],
+        "guidance": ["Review the current draft and supporting records.", "Upload or identify the vetted legal version.", "Return the matter with clear comments when revision is required.", "Approve only when the draft is ready for DVC RPE endorsement."],
+        "queue_title": "Legal review queue",
+        "queue_description": "Assigned and unassigned matters currently at Legal Office review.",
+        "primary_action": None,
+        "show_portfolio_analytics": False,
     },
-    "executive": {
-        "title": "Executive portfolio intelligence",
-        "subtitle": "See portfolio health, flow, risk and institutional value in one governed view.",
-        "queue_label": "Escalations and strategic decisions",
+    "dvc": {
+        "role_label": "DVC RPE",
+        "eyebrow": "Governance endorsement",
+        "title": "DVC RPE endorsement queue",
+        "description": "Review legally approved collaboration packages before they are released to the Vice Chancellor.",
+        "permission_summary": "You can endorse or return only legally approved packages. The system blocks VC submission until your endorsement is recorded.",
+        "capabilities": ["Review approved package", "Endorse for VC", "Return with remarks", "View portfolio summary"],
+        "guidance": ["Confirm that Legal approval is recorded.", "Review strategic and institutional readiness.", "Endorse the package or return it with remarks.", "Do not modify Legal approval or signing milestones."],
+        "queue_title": "Packages awaiting DVC RPE endorsement",
+        "queue_description": "Only records that passed Legal Office approval appear as actionable items.",
+        "primary_action": None,
+        "show_portfolio_analytics": True,
+    },
+    "vc_office": {
+        "role_label": "VC Office",
+        "eyebrow": "Executive signing",
+        "title": "VC signing and execution desk",
+        "description": "Receive complete packages, track VC and partner signatures, and record final execution milestones.",
+        "permission_summary": "You can update signing dates, upload signed documents and record signature milestones; earlier approvals remain read-only.",
+        "capabilities": ["Receive VC package", "Track VC signature", "Track partner signature", "Upload signed document"],
+        "guidance": ["Confirm the package has Legal approval and DVC endorsement.", "Record VC signature progress and dates.", "Track the partner signature and ceremony details.", "Mark the agreement fully signed when execution is complete."],
+        "queue_title": "Signing packages requiring action",
+        "queue_description": "DVC-endorsed packages and agreements currently awaiting signatures.",
+        "primary_action": None,
+        "show_portfolio_analytics": False,
     },
     "me": {
+        "role_label": "M&E Officer",
+        "eyebrow": "Implementation accountability",
         "title": "Monitoring and evaluation workspace",
-        "subtitle": "Track targets, actual outputs, evidence and partnership implementation discipline.",
-        "queue_label": "M&E updates requiring attention",
+        "description": "Track six-month reports, deliverable targets, actual outputs, evidence, value and dormancy risk.",
+        "permission_summary": "You can update M&E data for active collaborations and propose value records; workflow approvals and legal documents remain read-only.",
+        "capabilities": ["Update deliverables", "Attach evidence", "Track dormancy", "Record partnership value"],
+        "guidance": ["Review active agreements and reporting periods.", "Validate target-versus-actual deliverables.", "Follow up overdue or dormant collaborations.", "Ensure value and evidence records are complete."],
+        "queue_title": "M&E follow-up queue",
+        "queue_description": "Active agreements with reporting, dormancy, expiry or data-quality attention.",
+        "primary_action": None,
+        "show_portfolio_analytics": True,
     },
-    "auditor": {
-        "title": "Governance and assurance overview",
-        "subtitle": "Review risk, records integrity, approvals and the institutional audit trail.",
-        "queue_label": "Records requiring assurance review",
+    "executive": {
+        "role_label": "Executive Viewer",
+        "eyebrow": "Executive intelligence",
+        "title": "Institutional partnership performance",
+        "description": "View portfolio health, pipeline, risk, value and implementation performance without changing operational records.",
+        "permission_summary": "You have read-only access to executive dashboards, authorized agreement records and reports.",
+        "capabilities": ["View executive KPIs", "Review portfolio risk", "Inspect score and value", "Export reports"],
+        "guidance": ["Monitor active partnership and pipeline trends.", "Review dormant, stalled and expiry-risk agreements.", "Inspect financial and resource value by currency.", "Use drill-down records and reports for management action."],
+        "queue_title": "Portfolio risks requiring management attention",
+        "queue_description": "Read-only view of red and orange portfolio matters.",
+        "primary_action": None,
+        "show_portfolio_analytics": True,
     },
     "admin": {
-        "title": "System administration overview",
-        "subtitle": "Monitor access, workflow health, auditability, risk signals and platform operations.",
-        "queue_label": "System and workflow exceptions",
+        "role_label": "System Administrator",
+        "eyebrow": "Technical administration",
+        "title": "Access and system administration",
+        "description": "Manage accounts, roles and technical configuration while preserving separation of business approval duties.",
+        "permission_summary": "You can administer users, settings and audit controls. Agreement approvals remain assigned to business roles and cannot be forged by administrators.",
+        "capabilities": ["Manage users", "Assign roles", "Review audit logs", "Configure system"],
+        "guidance": ["Provision and deactivate user accounts.", "Assign least-privilege institutional roles.", "Review system and access audit events.", "Maintain configuration without altering signed business records."],
+        "queue_title": "Recent records for administrative visibility",
+        "queue_description": "Read-only operational context; use Users, Settings and Audit for administration.",
+        "primary_action": None,
+        "show_portfolio_analytics": True,
+    },
+    "auditor": {
+        "role_label": "Auditor / Read-only Reviewer",
+        "eyebrow": "Compliance assurance",
+        "title": "Audit and records review",
+        "description": "Inspect authorized agreement records, workflow history, reports and audit events without editing data.",
+        "permission_summary": "Your access is read-only and intended for compliance, traceability and records assurance.",
+        "capabilities": ["Review records", "Inspect workflow history", "View audit trail", "Export compliance reports"],
+        "guidance": ["Trace material actions to the responsible user.", "Review document, workflow and status history.", "Confirm role separation and approval sequence.", "Export scoped evidence for formal review."],
+        "queue_title": "Recently changed records",
+        "queue_description": "Read-only list supporting audit sampling and traceability.",
+        "primary_action": None,
+        "show_portfolio_analytics": False,
     },
 }
 
 
-def _scoped_statement(user: User):
-    stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.owner))
-    if user.role == "champion":
-        stmt = stmt.where(Agreement.owner_id == user.id)
-    elif user.role == "dvc":
-        stmt = stmt.where(Agreement.stage.in_(["dvc_signoff", "vc_submission", "signing"]))
-    elif user.role == "vc_office":
-        stmt = stmt.where(Agreement.stage.in_(["vc_submission", "signing", "active"]))
-    elif user.role == "legal":
-        stmt = stmt.where((Agreement.legal_reviewer_id == user.id) | (Agreement.stage == "legal_review"))
-    return stmt
+def _shift_month(month_start: date, months: int) -> date:
+    index = month_start.year * 12 + (month_start.month - 1) + months
+    return date(index // 12, index % 12 + 1, 1)
 
 
-def _priority_score(agreement: Agreement, user: User) -> int:
-    score = 0
-    if agreement.status_color == "red":
-        score += 100
-    elif agreement.status_color == "orange":
-        score += 70
-    elif agreement.status_color == "yellow":
-        score += 30
+def _load_scoped_agreements(db: Session, user: User) -> list[Agreement]:
+    stmt = select(Agreement).options(
+        selectinload(Agreement.partner),
+        selectinload(Agreement.deliverables),
+        selectinload(Agreement.values),
+    )
+    agreements = list(db.scalars(apply_agreement_scope(stmt, user)).all())
+    for item in agreements:
+        refresh_risk_status(item)
+    db.commit()
+    return agreements
 
-    role_stages = {
-        "champion": {"initiation"},
-        "dvc": {"dvc_signoff"},
-        "vc_office": {"vc_submission", "signing"},
-        "linkages": {"linkages_review", "vc_submission", "signing", "renewal_closure"},
-        "legal": {"legal_review"},
-        "executive": {"renewal_closure", "active"},
-        "me": {"active"},
-        "auditor": set(STAGE_ORDER),
-        "admin": set(STAGE_ORDER),
-    }
-    if agreement.stage in role_stages.get(user.role, set()):
-        score += 50
-    if user.role == "champion" and agreement.status == "correction_required":
-        score += 80
-    score += min(agreement.days_in_stage, 30)
-    return score
+
+def _is_queue_item(agreement: Agreement, user: User) -> bool:
+    role = user.role
+    if role == "researcher":
+        return agreement.owner_id == user.id and (
+            agreement.stage == "initiation"
+            or agreement.status in {"correction_required", "dormant", "expiry_warning", "expiry_critical"}
+            or (agreement.stage == "active" and agreement.next_action)
+        )
+    if role == "approver":
+        return agreement.stage == "department_approval"
+    if role in {"linkages", "director_linkages"}:
+        return (
+            agreement.stage in {"linkages_review", "vc_submission"}
+            or agreement.status in {"legal_stalled", "fully_signed", "dormant", "expiry_warning", "expiry_critical", "renewal_review"}
+            or (agreement.stage == "validation_signing" and agreement.status in {"awaiting_vc_signature", "awaiting_partner_signature"})
+        )
+    if role == "legal":
+        return agreement.stage == "legal_review"
+    if role == "dvc":
+        return agreement.stage == "dvc_approval"
+    if role == "vc_office":
+        return agreement.stage in {"vc_submission", "validation_signing"}
+    if role == "me":
+        return agreement.stage == "active" and (
+            agreement.status_color in {"orange", "red"}
+            or not agreement.deliverables
+            or (agreement.activated_at and utc_now() - agreement.activated_at >= timedelta(days=150))
+        )
+    if role == "executive":
+        return agreement.status_color in {"orange", "red"}
+    return True
+
+
+def _format_values(agreements: list[Agreement]) -> str:
+    totals: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    for agreement in agreements:
+        for record in agreement.values:
+            if record.approved:
+                totals[record.currency.upper()] += record.amount
+    if not totals:
+        return "No value recorded"
+    return " · ".join(f"{currency} {float(amount):,.0f}" for currency, amount in sorted(totals.items()))
+
+
+def _metrics_for_role(db: Session, user: User, agreements: list[Agreement], queue: list[Agreement]) -> list[dict]:
+    active = [a for a in agreements if a.stage == "active" and a.status not in {"closed", "archived"}]
+    pipeline = [a for a in agreements if a.stage in {"initiation", "department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing"}]
+    at_risk = [a for a in agreements if a.status_color in {"orange", "red"}]
+    role = user.role
+
+    if role == "researcher":
+        return [
+            {"label": "My agreements", "value": len(agreements), "note": "Records where you are the Champion", "icon": "agreements", "tone": "green"},
+            {"label": "My pending actions", "value": len(queue), "note": "Requests or reports needing your response", "icon": "pending", "tone": "blue"},
+            {"label": "Active collaborations", "value": len(active), "note": "Signed agreements in implementation", "icon": "complete", "tone": "green"},
+            {"label": "At risk", "value": len(at_risk), "note": "Dormancy, expiry or overdue attention", "icon": "risk", "tone": "orange"},
+        ]
+    if role == "approver":
+        overdue = sum(1 for a in queue if a.submitted_at and utc_now() - a.submitted_at > timedelta(days=7))
+        return [
+            {"label": "Awaiting approval", "value": len(queue), "note": "Requests at the department gate", "icon": "approvals", "tone": "blue"},
+            {"label": "Over seven days", "value": overdue, "note": "Requests needing prompt attention", "icon": "risk", "tone": "orange"},
+            {"label": "Department portfolio", "value": len(agreements), "note": "Records visible in your scope", "icon": "agreements", "tone": "green"},
+            {"label": "Active from department", "value": len(active), "note": "Collaborations currently active", "icon": "complete", "tone": "green"},
+        ]
+    if role in {"linkages", "director_linkages"}:
+        legal_stalled = sum(1 for a in agreements if a.status == "legal_stalled")
+        signing = sum(1 for a in agreements if a.stage in {"vc_submission", "validation_signing"})
+        return [
+            {"label": "Operational queue", "value": len(queue), "note": "Records requiring Linkages action", "icon": "pending", "tone": "blue"},
+            {"label": "Pipeline", "value": len(pipeline), "note": "Initiation through signing", "icon": "agreements", "tone": "green"},
+            {"label": "Legal stalled", "value": legal_stalled, "note": "Legal review beyond the configured SLA", "icon": "legal", "tone": "orange"},
+            {"label": "Signing follow-up", "value": signing, "note": "DVC/VC/signature-stage records", "icon": "signing", "tone": "purple"},
+        ]
+    if role == "legal":
+        stalled = sum(1 for a in agreements if a.status == "legal_stalled")
+        return [
+            {"label": "Legal queue", "value": len(queue), "note": "Drafts currently requiring Legal action", "icon": "legal", "tone": "blue"},
+            {"label": "Over SLA", "value": stalled, "note": "Review age greater than 21 days", "icon": "risk", "tone": "orange"},
+            {"label": "Assigned matters", "value": len(agreements), "note": "Legal records visible to you", "icon": "agreements", "tone": "green"},
+            {"label": "Ready to endorse", "value": sum(1 for a in agreements if a.stage == "dvc_approval"), "note": "Legal-approved packages", "icon": "complete", "tone": "green"},
+        ]
+    if role == "dvc":
+        return [
+            {"label": "Awaiting endorsement", "value": len(queue), "note": "Legally approved packages", "icon": "approvals", "tone": "blue"},
+            {"label": "Endorsed packages", "value": sum(1 for a in agreements if a.stage in {"vc_submission", "validation_signing", "active"}), "note": "Records that passed the DVC gate", "icon": "complete", "tone": "green"},
+            {"label": "Portfolio pipeline", "value": len(pipeline), "note": "All requests before activation", "icon": "agreements", "tone": "green"},
+            {"label": "At risk", "value": len(at_risk), "note": "Read-only management attention", "icon": "risk", "tone": "orange"},
+        ]
+    if role == "vc_office":
+        return [
+            {"label": "Signing queue", "value": len(queue), "note": "Packages at VC or partner signature", "icon": "signing", "tone": "blue"},
+            {"label": "Awaiting VC signature", "value": sum(1 for a in agreements if a.status == "awaiting_vc_signature"), "note": "VC signature milestone pending", "icon": "pending", "tone": "orange"},
+            {"label": "Awaiting partner", "value": sum(1 for a in agreements if a.status == "awaiting_partner_signature"), "note": "Partner execution pending", "icon": "pending", "tone": "orange"},
+            {"label": "Fully signed", "value": sum(1 for a in agreements if a.status == "fully_signed"), "note": "Ready for Linkages activation", "icon": "complete", "tone": "green"},
+        ]
+    if role == "me":
+        dormant = sum(1 for a in agreements if a.status == "dormant")
+        missing = sum(1 for a in agreements if a.stage == "active" and not a.deliverables)
+        return [
+            {"label": "Active monitoring", "value": len(active), "note": "Agreements in implementation", "icon": "monitoring", "tone": "green"},
+            {"label": "Follow-up queue", "value": len(queue), "note": "Reports, risk or data gaps", "icon": "pending", "tone": "blue"},
+            {"label": "Dormant", "value": dormant, "note": "No deliverable activity for 180 days", "icon": "risk", "tone": "orange"},
+            {"label": "Missing baseline", "value": missing, "note": "Active agreements without deliverables", "icon": "monitoring", "tone": "purple"},
+        ]
+    if role == "executive":
+        return [
+            {"label": "Active partnerships", "value": len(active), "note": "Signed and operational", "icon": "agreements", "tone": "green"},
+            {"label": "Pipeline volume", "value": len(pipeline), "note": "Requests before activation", "icon": "pending", "tone": "blue"},
+            {"label": "Dormant / at risk", "value": len(at_risk), "note": "Requires management attention", "icon": "risk", "tone": "orange"},
+            {"label": "Value generated", "value": _format_values(agreements), "note": "Approved values kept by currency", "icon": "value", "tone": "purple"},
+        ]
+    if role == "admin":
+        active_users = db.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0
+        roles = db.scalar(select(func.count(func.distinct(User.role)))) or 0
+        audit_events = db.scalar(select(func.count(AuditLog.id))) or 0
+        return [
+            {"label": "Active users", "value": active_users, "note": "Enabled institutional accounts", "icon": "users", "tone": "green"},
+            {"label": "Configured roles", "value": roles, "note": "Distinct access profiles", "icon": "approvals", "tone": "blue"},
+            {"label": "Audit events", "value": audit_events, "note": "Recorded material system actions", "icon": "audit", "tone": "purple"},
+            {"label": "Portfolio records", "value": len(agreements), "note": "Read-only administrative visibility", "icon": "agreements", "tone": "green"},
+        ]
+    audit_events = db.scalar(select(func.count(AuditLog.id))) or 0
+    return [
+        {"label": "Authorized records", "value": len(agreements), "note": "Agreements available for review", "icon": "agreements", "tone": "green"},
+        {"label": "Audit events", "value": audit_events, "note": "Material events available for inspection", "icon": "audit", "tone": "blue"},
+        {"label": "At-risk records", "value": len(at_risk), "note": "Risk flags for audit sampling", "icon": "risk", "tone": "orange"},
+        {"label": "Archived records", "value": sum(1 for a in agreements if a.stage == "archived"), "note": "Read-only institutional memory", "icon": "complete", "tone": "purple"},
+    ]
+
+
+@router.get("/workspace")
+def workspace(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    agreements = _load_scoped_agreements(db, user)
+    queue = [a for a in agreements if _is_queue_item(a, user)]
+    queue.sort(key=lambda a: (0 if a.status_color == "red" else 1 if a.status_color == "orange" else 2, a.updated_at))
+    queue = queue[:12]
+    config = ROLE_WORKSPACES.get(user.role, ROLE_WORKSPACES["auditor"]).copy()
+    config["role"] = user.role
+    config["metrics"] = _metrics_for_role(db, user, agreements, queue)
+    config["queue"] = [
+        {
+            "id": a.id,
+            "reference_number": a.reference_number,
+            "title": a.title,
+            "partner": a.partner.name,
+            "stage": a.stage,
+            "status": a.status,
+            "status_color": a.status_color,
+            "next_action": a.next_action,
+        }
+        for a in queue
+    ]
+    return config
 
 
 @router.get("/stats")
-def stats(
-    department: str | None = None,
-    agreement_type: str | None = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    stmt = _scoped_statement(user)
-    if department:
-        stmt = stmt.where(Agreement.department == department)
-    if agreement_type:
-        stmt = stmt.where(Agreement.agreement_type == agreement_type)
-
-    agreements = db.scalars(stmt).all()
-    for item in agreements:
-        refresh_risk_status(item)
-    refresh_me_alerts(db)  # FR-025: due/overdue report alerts
-    db.commit()
-
-    agreement_ids = [a.id for a in agreements]
-    deliverables = []
-    documents = []
-    if agreement_ids:
-        deliverables = db.scalars(select(Deliverable).where(Deliverable.agreement_id.in_(agreement_ids))).all()
-        documents = db.scalars(select(Document).where(Document.agreement_id.in_(agreement_ids))).all()
-
-    last_me_update: dict[int, date] = {}
-    for row in deliverables:
-        current = last_me_update.get(row.agreement_id)
-        updated = row.last_updated_at.date()
-        if current is None or updated > current:
-            last_me_update[row.agreement_id] = updated
-
-    today = date.today()
-    dormant_ids: set[int] = set()
-    for agreement in agreements:
-        if agreement.stage != "active":
-            continue
-        anchor = last_me_update.get(agreement.id)
-        if anchor is None and agreement.activated_at:
-            anchor = agreement.activated_at.date()
-        if anchor and (today - anchor).days >= 180:
-            dormant_ids.add(agreement.id)
+def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    agreements = _load_scoped_agreements(db, user)
 
     active = [a for a in agreements if a.stage == "active" and a.status not in {"expired", "archived", "closed"}]
-    pipeline = [a for a in agreements if a.stage in {"initiation", "linkages_review", "legal_review", "dvc_signoff", "vc_submission", "signing"}]
-    at_risk = [a for a in agreements if a.status_color in {"orange", "red"} or a.id in dormant_ids]
+    pipeline = [a for a in agreements if a.stage in {"initiation", "department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing"}]
+    at_risk = [a for a in agreements if a.status_color in {"orange", "red"}]
 
-    total_value = Decimal("0")
-    if agreement_ids:
-        total_value = db.scalar(
-            select(func.coalesce(func.sum(ValueRecord.amount), 0)).where(
-                ValueRecord.agreement_id.in_(agreement_ids), ValueRecord.approved.is_(True)
-            )
-        ) or Decimal("0")
+    value_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    for agreement in agreements:
+        for record in agreement.values:
+            if record.approved:
+                value_by_currency[record.currency.upper()] += record.amount
 
     stage_counts = Counter(a.stage for a in agreements)
     type_counts = Counter(a.agreement_type for a in agreements)
     risk_counts = Counter(a.status_color for a in agreements)
     recent = sorted(agreements, key=lambda a: a.updated_at, reverse=True)[:6]
 
+    current_month = date.today().replace(day=1)
     monthly = []
     for offset in reversed(range(6)):
-        month_start = (today.replace(day=1) - timedelta(days=offset * 31)).replace(day=1)
-        next_month = (month_start + timedelta(days=32)).replace(day=1)
+        month_start = _shift_month(current_month, -offset)
+        next_month = _shift_month(month_start, 1)
         count = sum(1 for a in agreements if month_start <= a.created_at.date() < next_month)
-        monthly.append({"month": month_start.strftime("%b"), "count": count})
+        monthly.append({"month": month_start.strftime("%b %Y"), "count": count})
 
-    priority = sorted(agreements, key=lambda a: _priority_score(a, user), reverse=True)
-    priority = [a for a in priority if _priority_score(a, user) >= 50][:8]
-
-    legal_stalled = sum(1 for a in agreements if a.stage == "legal_review" and a.days_in_stage > 21)
-    schedules = db.scalars(select(MEReportSchedule).where(MEReportSchedule.agreement_id.in_(agreement_ids))).all() if agreement_ids else []
-    reports_due = sum(1 for sc in schedules if sc.status in {"pending", "returned"} and sc.days_to_due <= 30)
-    reports_overdue = sum(1 for sc in schedules if sc.is_overdue)
-    renewal_warning = sum(1 for a in active if a.expiry_days is not None and 91 <= a.expiry_days <= 183)
-    expiry_critical = sum(1 for a in active if a.expiry_days is not None and a.expiry_days <= 90)
-    evidence_documents = sum(1 for d in documents if d.document_type == "evidence")
-    total_target = sum(float(d.target_value or 0) for d in deliverables)
-    total_actual = sum(float(d.actual_value or 0) for d in deliverables)
-    attainment = round((total_actual / total_target) * 100, 1) if total_target else 0
-
+    currencies = [{"currency": key, "amount": float(value_by_currency[key])} for key in sorted(value_by_currency)]
     return {
-        "role_context": ROLE_CONTEXT.get(user.role, ROLE_CONTEXT["champion"]),
-        "filters": {
-            "departments": sorted({a.department for a in agreements}),
-            "agreement_types": sorted({a.agreement_type for a in agreements}),
-            "selected_department": department,
-            "selected_agreement_type": agreement_type,
-        },
         "kpis": {
             "active_partnerships": len(active),
             "pipeline_volume": len(pipeline),
             "at_risk": len(at_risk),
-            "total_value": float(total_value),
-            "currency": "KES",
+            "value_by_currency": currencies,
         },
-        "guardrails": [
-            {"key": "legal_stalled", "label": "Legal stagnation", "value": legal_stalled, "level": "red", "rule": "Review exceeds 21 days"},
-            {"key": "renewal_warning", "label": "Proactive renewal", "value": renewal_warning, "level": "orange", "rule": "Expiry within six months"},
-            {"key": "dormant", "label": "Dormancy trigger", "value": len(dormant_ids), "level": "red", "rule": "No M&E update for 180 days"},
-            {"key": "reports_due", "label": "Six-month reports", "value": reports_due, "level": "orange", "rule": "Report due within 30 days or returned"},
-            {"key": "expiry_critical", "label": "Critical expiry", "value": expiry_critical, "level": "red", "rule": "Expiry within 90 days"},
-        ],
-        "me_summary": {
-            "deliverables": len(deliverables),
-            "evidence_documents": evidence_documents,
-            "attainment_percent": attainment,
-            "dormant_agreements": len(dormant_ids),
-            "reports_due": reports_due,
-            "reports_overdue": reports_overdue,
-        },
-        "by_stage": [
-            {"key": "initiation", "name": "Initiation", "value": stage_counts.get("initiation", 0)},
-            {"key": "linkages_review", "name": "Linkages Review", "value": stage_counts.get("linkages_review", 0)},
-            {"key": "legal_review", "name": "Legal Review", "value": stage_counts.get("legal_review", 0)},
-            {"key": "dvc_signoff", "name": "DVC RPE Sign-off", "value": stage_counts.get("dvc_signoff", 0)},
-            {"key": "vc_submission", "name": "VC Submission", "value": stage_counts.get("vc_submission", 0)},
-            {"key": "signing", "name": "Signing", "value": stage_counts.get("signing", 0)},
-            {"key": "active", "name": "Monitoring & Evaluation", "value": stage_counts.get("active", 0)},
-            {"key": "renewal_closure", "name": "Renewal / Closure / Archive", "value": stage_counts.get("renewal_closure", 0) + stage_counts.get("archived", 0)},
-        ],
-        "by_type": [{"name": key, "value": value} for key, value in sorted(type_counts.items())],
-        "by_risk": [{"name": key.title(), "value": value} for key, value in sorted(risk_counts.items())],
+        "by_stage": [{"name": key.replace("_", " ").title(), "value": value} for key, value in stage_counts.items()],
+        "by_type": [{"name": key, "value": value} for key, value in type_counts.items()],
+        "by_risk": [{"name": key.title(), "value": value} for key, value in risk_counts.items()],
         "monthly_pipeline": monthly,
-        "priority_queue": [
-            {
-                "id": a.id,
-                "reference_number": a.reference_number,
-                "title": a.title,
-                "partner": a.partner.name,
-                "stage": a.stage,
-                "status": a.status,
-                "status_color": a.status_color,
-                "next_action": a.next_action,
-                "days_in_stage": a.days_in_stage,
-                "sla_state": a.sla_state,
-            }
-            for a in priority
-        ],
         "recent_agreements": [
             {
                 "id": a.id,

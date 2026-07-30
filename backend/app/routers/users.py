@@ -14,9 +14,21 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.get("", response_model=list[UserOut])
 def list_users(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin", "linkages", "executive")),
+    _: User = Depends(require_roles("admin")),
 ):
     return db.scalars(select(User).order_by(User.full_name)).all()
+
+
+
+
+@router.get("/champions", response_model=list[UserOut])
+def list_champions(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles("admin", "linkages", "director_linkages")),
+):
+    return db.scalars(
+        select(User).where(User.role == "researcher", User.is_active.is_(True)).order_by(User.full_name)
+    ).all()
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
