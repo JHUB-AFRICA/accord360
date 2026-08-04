@@ -5,9 +5,9 @@ from datetime import date, timedelta
 
 from sqlalchemy import delete, select
 
-from .database import Base, SessionLocal, engine
+from .db.session import SessionLocal
 from .models import Agreement, AuditLog, Deliverable, Document, Notification, Partner, User, ValueRecord, WorkflowEvent
-from .security import hash_password
+from .core.security import hash_password
 from .timeutils import utc_now
 
 
@@ -27,7 +27,6 @@ DEFAULT_USERS = [
 
 
 def seed(reset: bool = False, demo: bool = True) -> None:
-    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
         if reset:

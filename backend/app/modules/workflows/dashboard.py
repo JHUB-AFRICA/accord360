@@ -8,12 +8,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from ..access import apply_agreement_scope
-from ..database import get_db
-from ..deps import get_current_user
-from ..models import Agreement, AuditLog, User
-from ..services import refresh_risk_status
-from ..timeutils import utc_now
+from ...access import apply_agreement_scope
+from ...db.session import get_db
+from ...deps import get_current_user
+from ...models import Agreement, AuditLog, User
+from ...services import refresh_risk_status
+from ...timeutils import utc_now
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -391,3 +391,4 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
             for a in recent
         ],
     }
+

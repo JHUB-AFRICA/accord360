@@ -6,6 +6,7 @@ if TEST_DB.exists():
     TEST_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["UPLOAD_DIR"] = "test_uploads"
+os.environ["ENVIRONMENT"] = "test"
 
 from fastapi.testclient import TestClient
 from app.main import app

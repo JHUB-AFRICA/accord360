@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..database import get_db
-from ..deps import get_current_user
-from ..models import Notification, User
-from ..schemas import NotificationOut
+from ...db.session import get_db
+from ...deps import get_current_user
+from ...models import Notification, User
+from ...schemas import NotificationOut
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -24,3 +24,4 @@ def mark_read(notification_id: int, db: Session = Depends(get_db), user: User = 
     db.commit()
     db.refresh(item)
     return item
+

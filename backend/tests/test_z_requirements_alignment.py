@@ -6,6 +6,7 @@ TEST_DB = Path("test_accord360.db")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB}")
 os.environ.setdefault("UPLOAD_DIR", "test_uploads")
 os.environ.setdefault("SEED_DEMO_DATA", "true")
+os.environ.setdefault("ENVIRONMENT", "test")
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select

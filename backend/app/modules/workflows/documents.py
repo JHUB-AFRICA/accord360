@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import mimetypes
+import tempfile
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ..access import can_download_document, can_upload_document, ensure_can_view_agreement
-from ..config import settings
-from ..database import get_db
-from ..deps import audit, get_current_user
-from ..models import Agreement, Document, User
-from ..schemas import DocumentOut
+from ...access import can_download_document, can_upload_document, ensure_can_view_agreement
+from ...core.config import settings
+from ...db.session import get_db
+from ...deps import audit, get_current_user
+from ...models import Agreement, Document, User
+from ...schemas import DocumentOut
+from ...utils.storage import StorageError, delete_file, download_file, upload_file
 
 router = APIRouter(prefix="/agreements/{agreement_id}/documents", tags=["Documents"])
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".png", ".jpg", ".jpeg", ".txt"}
@@ -60,19 +62,27 @@ def upload_document(
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported file type")
     stored_name = f"{agreement.reference_number}_{uuid.uuid4().hex}{suffix}"
-    destination = settings.upload_path / stored_name
+    content = tempfile.SpooledTemporaryFile(max_size=MAX_FILE_SIZE)
     total = 0
     try:
-        with destination.open("wb") as buffer:
-            while chunk := file.file.read(1024 * 1024):
-                total += len(chunk)
-                if total > MAX_FILE_SIZE:
-                    raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
-                buffer.write(chunk)
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
+        while chunk := file.file.read(1024 * 1024):
+            total += len(chunk)
+            if total > MAX_FILE_SIZE:
+                raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
+            content.write(chunk)
+        content.seek(0)
+        if settings.storage_enabled:
+            upload_file(content, stored_name, file.content_type)
+        else:
+            destination = settings.upload_path / stored_name
+            content.seek(0)
+            with destination.open("wb") as buffer:
+                while chunk := content.read(1024 * 1024):
+                    buffer.write(chunk)
+    except StorageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
+        content.close()
         file.file.close()
 
     if is_official:
@@ -94,10 +104,19 @@ def upload_document(
         is_official=is_official,
         confidentiality=confidentiality,
     )
-    db.add(document)
-    db.flush()
-    audit(db, user, "upload_document", "document", document.id, request, new_value=f"{document.original_name}; official={is_official}")
-    db.commit()
+    try:
+        db.add(document)
+        db.flush()
+        audit(db, user, "upload_document", "document", document.id, request, new_value=f"{document.original_name}; official={is_official}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        if settings.storage_enabled:
+            try:
+                delete_file(stored_name)
+            except StorageError:
+                pass
+        raise
     db.refresh(document)
     return document
 
@@ -118,9 +137,20 @@ def download_document(
         raise HTTPException(status_code=404, detail="Document not found")
     if not can_download_document(user, agreement, document):
         raise HTTPException(status_code=403, detail="You cannot access this document")
+    audit(db, user, "download_document", "document", document.id, request, new_value=document.original_name)
+    db.commit()
+    if settings.storage_enabled:
+        try:
+            content = download_file(document.stored_name)
+        except StorageError as exc:
+            raise HTTPException(status_code=404, detail="Stored file is unavailable") from exc
+        return StreamingResponse(
+            content,
+            media_type=document.mime_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{document.original_name}"'},
+        )
     path = settings.upload_path / document.stored_name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Stored file is unavailable")
-    audit(db, user, "download_document", "document", document.id, request, new_value=document.original_name)
-    db.commit()
+    from fastapi.responses import FileResponse
     return FileResponse(path=path, media_type=document.mime_type or "application/octet-stream", filename=document.original_name)

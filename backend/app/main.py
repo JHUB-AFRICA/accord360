@@ -3,13 +3,18 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import settings
-from .database import Base, engine
-from .routers import agreements, auth, dashboard, documents, me, notifications, partners, reports, users
+from .core.config import settings
+from .db.base import Base
+from .db.session import engine
+from .modules.agreements.router import router as agreements_router
+from .modules.partners.router import router as partners_router
+from .modules.users.router import auth_router, router as users_router
+from .modules.workflows.router import dashboard_router, documents_router, me_router, notifications_router, reports_router
 from .seed import seed
 
 settings.validate()
-Base.metadata.create_all(bind=engine)
+if settings.environment == "test":
+    Base.metadata.create_all(bind=engine)
 if settings.seed_demo_data:
     seed(reset=False, demo=True)
 
@@ -27,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in [auth.router, users.router, partners.router, agreements.router, documents.router, me.router, dashboard.router, notifications.router, reports.router]:
+for router in [auth_router, users_router, partners_router, agreements_router, documents_router, me_router, dashboard_router, notifications_router, reports_router]:
     app.include_router(router, prefix="/api")
 
 

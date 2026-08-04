@@ -1,6 +1,7 @@
 fastapi==0.128.2
 uvicorn[standard]==0.48.0
 SQLAlchemy==2.0.50
+alembic==1.18.4
 pydantic==2.13.4
 PyJWT==2.13.0
 python-multipart==0.0.29
@@ -8,3 +9,5 @@ email-validator==2.3.0
 psycopg[binary]==3.2.12
 pytest==9.0.2
 httpx==0.28.1
+python-dotenv==1.2.2
+boto3==1.43.62

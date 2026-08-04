@@ -1,19 +1,30 @@
+"""Agreement domain service.
+
+Holds the business logic for the agreement lifecycle: listing/scoping,
+creation, detail retrieval, updates and workflow-stage transitions. Routers
+in this module should only parse the request, call one of these functions,
+and return/raise based on the result.
+"""
+
 from __future__ import annotations
 
 import json
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from ..access import apply_agreement_scope, can_download_document, ensure_can_edit_agreement, ensure_can_view_agreement
-from ..database import get_db
-from ..deps import audit, get_current_user
-from ..models import Agreement, Document, Notification, Partner, User, WorkflowEvent
-from ..schemas import AgreementCreate, AgreementDetailOut, AgreementListOut, AgreementUpdate, DocumentOut, TransitionRequest
-from ..services import (
+from ...access import apply_agreement_scope, can_download_document, ensure_can_edit_agreement, ensure_can_view_agreement
+from ...deps import audit
+from .models import Agreement
+from app.modules.partners.models import Partner
+from app.modules.users.models import User
+from app.modules.workflows.models import Notification, WorkflowEvent
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, DocumentOut
+from app.modules.workflows.schemas import TransitionRequest
+from ..workflows.service import (
     ALLOWED_BY_ROLE,
     ALLOWED_BY_STAGE,
     COMMENT_REQUIRED_ACTIONS,
@@ -23,9 +34,20 @@ from ..services import (
     notify_roles,
     refresh_risk_status,
 )
-from ..timeutils import utc_now
+from ...timeutils import utc_now
 
-router = APIRouter(prefix="/agreements", tags=["Agreements"])
+__all__ = [
+    "create_reference",
+    "notify_roles",
+    "refresh_risk_status",
+    "LOAD_OPTIONS",
+    "scoped_query",
+    "list_agreements",
+    "create_agreement",
+    "get_agreement_detail",
+    "update_agreement",
+    "transition_agreement",
+]
 
 LOAD_OPTIONS = (
     selectinload(Agreement.partner),
@@ -73,15 +95,15 @@ def _transition_recipient_roles(action: str) -> set[str]:
     return mapping.get(action, {"linkages", "director_linkages"})
 
 
-@router.get("", response_model=list[AgreementListOut])
 def list_agreements(
-    search: str | None = None,
-    stage: str | None = None,
-    status_filter: str | None = Query(default=None, alias="status"),
-    agreement_type: str | None = None,
-    department: str | None = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    db: Session,
+    user: User,
+    *,
+    search: str | None,
+    stage: str | None,
+    status_filter: str | None,
+    agreement_type: str | None,
+    department: str | None,
 ):
     stmt = scoped_query(user)
     if search:
@@ -108,13 +130,7 @@ def list_agreements(
     return agreements
 
 
-@router.post("", response_model=AgreementDetailOut, status_code=status.HTTP_201_CREATED)
-def create_agreement(
-    payload: AgreementCreate,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+def create_agreement(db: Session, user: User, payload: AgreementCreate, request: Request) -> AgreementDetailOut:
     if user.role not in {"researcher", "linkages", "director_linkages"}:
         raise HTTPException(status_code=403, detail="Only Champions and Linkages officers can create collaboration requests")
     partner = db.get(Partner, payload.partner_id)
@@ -156,15 +172,10 @@ def create_agreement(
     audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.reference_number)
     notify_roles(db, {"linkages", "director_linkages"}, "New collaboration request", f"{agreement.reference_number} was created by {user.full_name} and assigned to {owner.full_name}.", agreement.id)
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return get_agreement_detail(db, user, agreement.id)
 
 
-@router.get("/{agreement_id}", response_model=AgreementDetailOut)
-def get_agreement(
-    agreement_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+def get_agreement_detail(db: Session, user: User, agreement_id: int) -> AgreementDetailOut:
     agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).options(*LOAD_OPTIONS))
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
@@ -176,14 +187,7 @@ def get_agreement(
     return result
 
 
-@router.patch("/{agreement_id}", response_model=AgreementDetailOut)
-def update_agreement(
-    agreement_id: int,
-    payload: AgreementUpdate,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+def update_agreement(db: Session, user: User, agreement_id: int, payload: AgreementUpdate, request: Request) -> AgreementDetailOut:
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
@@ -209,17 +213,10 @@ def update_agreement(
         setattr(agreement, key, value)
     audit(db, user, "update_agreement", "agreement", agreement.id, request, old_value=old, new_value=json.dumps(changes, default=str))
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return get_agreement_detail(db, user, agreement.id)
 
 
-@router.post("/{agreement_id}/transition", response_model=AgreementDetailOut)
-def transition_agreement(
-    agreement_id: int,
-    payload: TransitionRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+def transition_agreement(db: Session, user: User, agreement_id: int, payload: TransitionRequest, request: Request) -> AgreementDetailOut:
     agreement = db.scalar(
         select(Agreement)
         .where(Agreement.id == agreement_id)
@@ -330,4 +327,4 @@ def transition_agreement(
         color,
     )
     db.commit()
-    return get_agreement(agreement.id, db, user)
+    return get_agreement_detail(db, user, agreement.id)

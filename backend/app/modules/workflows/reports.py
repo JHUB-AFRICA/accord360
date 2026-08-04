@@ -9,12 +9,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from ..access import apply_agreement_scope
-from ..database import get_db
-from ..deps import audit, get_current_user, require_roles
-from ..models import Agreement, AuditLog, Partner, User
-from ..schemas import AuditLogOut
-from ..timeutils import utc_now
+from ...access import apply_agreement_scope
+from ...db.session import get_db
+from ...deps import audit, get_current_user, require_roles
+from ...models import Agreement, AuditLog, Partner, User
+from ...schemas import AuditLogOut
+from ...timeutils import utc_now
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -97,3 +97,4 @@ def audit_report(
     _: User = Depends(require_roles("admin", "auditor", "executive", "director_linkages")),
 ):
     return db.scalars(select(AuditLog).options(selectinload(AuditLog.actor)).order_by(AuditLog.created_at.desc()).limit(limit)).all()
+
