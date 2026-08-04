@@ -1,23 +1,7 @@
-from __future__ import annotations
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+"""Backward-compatible import location; use :mod:`app.db` instead."""
 
-from .config import settings
+from .db.base import Base
+from .db.session import SessionLocal, engine, get_db
 
-
-class Base(DeclarativeBase):
-    pass
-
-
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+__all__ = ["Base", "SessionLocal", "engine", "get_db"]

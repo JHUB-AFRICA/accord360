@@ -25,6 +25,8 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
+python -m alembic upgrade head
 python -m uvicorn app.main:app --reload
 ```
 
@@ -37,6 +39,31 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+## Database configuration and migrations
+
+The backend loads database configuration from `backend/.env`. SQLite works by
+default. To use Neon, copy `backend/.env.example` to `backend/.env` and replace
+`DATABASE_URL` with the SQLAlchemy-compatible connection string from Neon:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/DBNAME?sslmode=require
+```
+
+Keep `.env` private; it is excluded from Git. Apply all schema migrations before
+starting the API:
+
+```bash
+cd backend
+python -m alembic upgrade head
+```
+
+After changing SQLAlchemy models, create and review a migration, then apply it:
+
+```bash
+python -m alembic revision --autogenerate -m "describe schema change"
+python -m alembic upgrade head
+```
 
 ## Demo role accounts
 
