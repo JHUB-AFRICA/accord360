@@ -1,0 +1,4 @@
+import { Download, ShieldCheck } from "lucide-react";
+import PageHeader from "../components/PageHeader";
+const events=["Legal comment added to Clause 7.2","DVC RPE package endorsed","Partner verification completed","Agreement register exported","User role changed"];
+export default function Audit(){return <><PageHeader eyebrow="Security and compliance" title="System audit log" description="Read-only history of authentication, workflow, document and configuration actions." actions={<button className="secondary-button"><Download size={16}/> Export CSV</button>}/><div className="panel audit-list">{events.map((e,i)=><div className="audit-row" key={e}><div className="audit-icon"><ShieldCheck size={17}/></div><div><strong>{e}</strong><p>{["Counsel Angela Wanjiku","Prof. Grace Nyambura","Jane Muthoni","Internal Auditor","Esther Kamau"][i]} · JKUAT/ACC/2026/00{41-i}</p><span>5 August 2026 · {10+i}:2{i} · AUD-2026-0{i+1}</span></div></div>)}</div></>}
