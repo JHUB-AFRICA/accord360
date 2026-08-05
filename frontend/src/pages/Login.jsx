@@ -1,6 +1,58 @@
-import { useState } from "react";
-import { ArrowRight, CheckCircle2, Eye, EyeOff, LockKeyhole } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { DEMO_ACCOUNTS } from "../data/mockData";
 import { useAuth } from "../context/AuthContext";
 import { roleHome } from "../lib/roles";
-export default function Login(){const [email,setEmail]=useState("");const [password,setPassword]=useState("");const [show,setShow]=useState(false);const [error,setError]=useState("");const [busy,setBusy]=useState(false);const {login}=useAuth();const nav=useNavigate();async function submit(e){e.preventDefault();setBusy(true);setError("");try{const user=await login(email,password);nav(roleHome(user.role),{replace:true});}catch(err){setError(err.message||"Unable to sign in.");}finally{setBusy(false)}}return <div className="login-page"><section className="login-visual"><div className="login-grid"/><div className="visual-content"><div className="visual-brand"><span>A</span> Accord360</div><div className="visual-copy"><small>JKUAT DIRECTORATE OF LINKAGES (RPE)</small><h1>Partnerships built on clarity, accountability and measurable impact.</h1><p>Manage every collaboration from partner inquiry and legal review to signing, monitoring, renewal and closure.</p><div className="visual-points"><span><CheckCircle2 size={18}/> Role-specific institutional workspaces</span><span><CheckCircle2 size={18}/> Traceable approvals and exact corrections</span><span><CheckCircle2 size={18}/> Portfolio, M&E and executive reporting</span></div></div><div className="visual-footer">Demonstration data for prototype purposes</div></div></section><section className="login-form-side"><form className="login-card" onSubmit={submit}><div className="login-logo"><LockKeyhole size={24}/></div><div className="eyebrow">Secure institutional access</div><h2>Welcome back</h2><p>Sign in with your Accord360 account to open your assigned workspace.</p>{error&&<div className="form-error">{error}</div>}<label>Official email address<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@jkuat.ac.ke" required/></label><label>Password<div className="password-input"><input type={show?"text":"password"} autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" required/><button type="button" onClick={()=>setShow(v=>!v)} aria-label={show?"Hide password":"Show password"}>{show?<EyeOff size={19}/>:<Eye size={19}/>}</button></div></label><div className="login-row"><label className="check-line"><input type="checkbox"/> Keep me signed in</label><button type="button" className="link-button">Forgot password?</button></div><button className="primary-button login-submit" disabled={busy}>{busy?"Signing in…":"Sign in to workspace"}<ArrowRight size={18}/></button><p className="login-help">External collaborating partner? <button type="button" className="link-button">Request portal access</button></p></form></section></div>}
+
+export default function Login() {
+  const { user, login, sessionMessage, clearSessionMessage, isMockMode } = useAuth();
+  const [form, setForm] = useState({ email: "", password: "" });
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => () => clearSessionMessage(), [clearSessionMessage]);
+  if (user) return <Navigate to={roleHome(user.role)} replace />;
+
+  async function submit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      const signedIn = await login(form.email.trim(), form.password);
+      navigate(location.state?.from || roleHome(signedIn.role), { replace: true });
+    } catch (requestError) {
+      setError(requestError.message || "Unable to sign in.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function chooseAccount(account) {
+    setForm({ email: account.email, password: account.password });
+    setError("");
+  }
+
+  return (
+    <div className="auth-page">
+      <div className="auth-brand-panel"><Link className="public-brand auth-brand" to="/"><span className="brand-mark">A</span><span><strong>Accord360</strong><small>Directorate of Linkages (RPE)</small></span></Link><div><span className="hero-kicker">JKUAT partnership portal</span><h1>Secure access to every stage of the partnership lifecycle.</h1><p>Each user is routed to a workspace designed for their institutional responsibility.</p></div><ul><li><ShieldCheck /> Role-specific navigation and actions</li><li><LockKeyhole /> Audited approval gates</li><li><Mail /> Action-linked notifications</li></ul></div>
+      <main className="auth-form-panel">
+        <form className="auth-card" onSubmit={submit} noValidate>
+          <div className="auth-card-head"><span className="auth-logo"><LockKeyhole /></span><h2>Sign in to Accord360</h2><p>Use your approved institutional or partner account.</p></div>
+          {sessionMessage && <div className="form-alert warning">{sessionMessage}</div>}
+          {error && <div className="form-alert error" role="alert">{error}</div>}
+          <label className="auth-field"><span>Official email address</span><div><Mail size={18} /><input type="email" autoComplete="username" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="name@institution.ac.ke" /></div></label>
+          <label className="auth-field"><span>Password</span><div><LockKeyhole size={18} /><input type={showPassword ? "text" : "password"} autoComplete="current-password" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Enter password" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+          <div className="auth-options"><label><input type="checkbox" /> Keep me signed in</label><Link to="/forgot-password">Forgot password?</Link></div>
+          <button className="primary-button auth-submit" disabled={submitting}>{submitting ? <span className="button-spinner" /> : "Sign in to workspace"}</button>
+          <p className="auth-register">External collaborating institution? <Link to="/partner/register">Register or request portal access</Link></p>
+
+          {isMockMode && <div className="demo-account-box"><div><strong>Demonstration accounts</strong><span>Select a role to fill its test credentials.</span></div><select aria-label="Select demonstration account" defaultValue="" onChange={(event) => { const selected = DEMO_ACCOUNTS.find((account) => account.email === event.target.value); if (selected) chooseAccount(selected); }}><option value="" disabled>Choose a role…</option>{DEMO_ACCOUNTS.map((account) => <option value={account.email} key={account.email}>{account.label}</option>)}</select><small>Demo mode is explicitly enabled through VITE_USE_MOCK_API. It is never used after a failed sign-in attempt.</small></div>}
+        </form>
+      </main>
+    </div>
+  );
+}

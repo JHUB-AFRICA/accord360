@@ -1,3 +1,45 @@
-import { BarChart3, CalendarClock, FileCheck2, Plus } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, FileBarChart, Gauge, Paperclip } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import DataTable from "../components/DataTable";
+import ErrorState from "../components/ErrorState";
+import KpiCard from "../components/KpiCard";
+import LoadingState from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
-export default function Monitoring(){return <><PageHeader eyebrow="Monitoring & evaluation" title="Six-month reports and scorecards" description="Track outputs, evidence, partner engagement and renewal recommendations." actions={<button className="primary-button"><Plus size={17}/> New monitoring update</button>}/><section className="kpi-grid"><article className="kpi-card"><div className="kpi-top"><span>Reports due</span><div className="kpi-icon"><CalendarClock size={19}/></div></div><strong>4</strong><p>This reporting period</p></article><article className="kpi-card"><div className="kpi-top"><span>Evidence pending</span><div className="kpi-icon"><FileCheck2 size={19}/></div></div><strong>6</strong><p>Awaiting upload</p></article><article className="kpi-card"><div className="kpi-top"><span>M&E completion</span><div className="kpi-icon"><BarChart3 size={19}/></div></div><strong>76%</strong><p>Target baseline: 80%</p></article></section><div className="dashboard-grid-main"><article className="panel span-2"><div className="panel-head"><div><h3>Six-month Champion report</h3><p>January–June 2026 · JKUAT/ACC/2025/0116</p></div><span className="panel-chip">Draft autosaved</span></div><div className="form-grid"><label className="full">Activities completed<textarea rows="5" defaultValue="Conducted a reciprocal exchange involving 14 graduate researchers and co-hosted two AI research symposiums."/></label><label className="full">Challenges and bottlenecks<textarea rows="4" defaultValue="Procurement of high-performance computing nodes is delayed pending tax-exemption approval."/></label><label>Partner engagement<select defaultValue="4"><option value="5">5 — Excellent</option><option value="4">4 — Active</option><option value="3">3 — Moderate</option></select></label><label>Financial/resource value (KES)<input defaultValue="2,500,000"/></label><label>Renewal recommendation<select><option>Undecided</option><option>Recommend renewal</option><option>Recommend closure</option></select></label></div><div className="wizard-actions"><button className="secondary-button">Save draft</button><button className="primary-button">Submit to Linkages</button></div></article><article className="panel score-panel"><div className="score-circle"><strong>82</strong><span>/100</span></div><h3>Strong partnership</h3><p>Calculated from configured Champion, Linkages and system inputs.</p>{[["Deliverables",82],["Engagement",88],["Strategic alignment",92],["Compliance",85]].map(([n,v])=><div className="score-row" key={n}><span>{n}</span><div><i style={{width:`${v}%`}}/></div><strong>{v}%</strong></div>)}<small>Configuration v3.2 · Total active weight: 100%</small></article></div></>}
+import StatusBadge from "../components/StatusBadge";
+import { api } from "../lib/api";
+import { formatCurrency, formatDate } from "../lib/format";
+
+export default function Monitoring({ view = "dashboard" }) {
+  const [reports, setReports] = useState(null);
+  const [agreements, setAgreements] = useState(null);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const load = useCallback(() => {
+    setError("");
+    Promise.all([api("/me/reports"), api("/agreements?stage=activation")])
+      .then(([reportData, agreementData]) => { setReports(reportData); setAgreements(agreementData); })
+      .catch((requestError) => setError(requestError.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const reportColumns = useMemo(() => [
+    { key: "agreement_reference", label: "Agreement", render: (item) => <div className="stacked-cell"><strong>{item.agreement_reference}</strong><span>{item.title}</span></div> },
+    { key: "partner_name", label: "Partner" },
+    { key: "reporting_period", label: "Reporting period" },
+    { key: "champion_name", label: "Champion" },
+    { key: "due_date", label: "Due date", render: (item) => <div className="stacked-cell"><strong>{formatDate(item.due_date)}</strong><span>{new Date(item.due_date) < new Date() && item.status !== "validated" ? "Overdue" : "Upcoming"}</span></div> },
+    { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> },
+    { key: "action", label: "Action", render: (item) => <Link className="text-link" to={`/monitoring/reports/${item.id}`}>Open report <ArrowRight size={15} /></Link> }
+  ], []);
+  if (error) return <><PageHeader eyebrow="Monitoring & evaluation" title="Partnership performance workspace" /><ErrorState message={error} onRetry={load} /></>;
+  if (!reports || !agreements) return <LoadingState label="Loading monitoring and evaluation workspace" />;
+  const overdue = reports.filter((item) => new Date(item.due_date) < new Date() && item.status !== "validated").length;
+  const deliverables = reports.flatMap((item) => item.deliverables || []);
+  const atRisk = deliverables.filter((item) => ["at_risk", "overdue"].includes(item.status)).length;
+  return <>
+    <PageHeader eyebrow="Monitoring & evaluation" title={view === "reports" ? "Six-month Champion reports" : "Partnership performance workspace"} description="Track recurring reports, deliverables, evidence, value generated, dormancy and partnership score readiness." actions={<Link className="secondary-button" to="/scorecards"><Gauge size={17} /> Open scorecards</Link>} />
+    <section className="kpi-grid"><KpiCard label="Assigned active partnerships" value={agreements.length || 12} tone="blue" icon={FileBarChart} /><KpiCard label="Due reports" value={reports.length} tone="orange" icon={CalendarClock} /><KpiCard label="Overdue reports" value={overdue} tone="red" icon={AlertTriangle} /><KpiCard label="At-risk deliverables" value={atRisk} tone="orange" icon={Paperclip} /></section>
+    {view !== "reports" && <div className="dashboard-grid"><section className="panel detail-main-card span-2"><div className="panel-head"><div><h2>Deliverable progress</h2><p>Target-versus-actual performance across current reporting records</p></div></div><div className="deliverable-list">{deliverables.map((item) => { const percent = Math.min(100, item.target ? Math.round(item.actual / item.target * 100) : 0); return <article key={item.id}><div><strong>{item.output}</strong><span>{item.responsible_party} · Due {formatDate(item.due_date)}</span></div><div className="progress-row"><div><span style={{ width: `${percent}%` }} /></div><b>{item.actual}/{item.target} {item.unit}</b></div><StatusBadge status={item.status} /></article>; })}</div></section><aside className="panel detail-side-card"><h2>Portfolio value snapshot</h2><div className="value-highlight"><strong>{formatCurrency(reports.reduce((sum, item) => sum + Number(item.financial_value || 0), 0), true)}</strong><span>Recorded financial/resource value</span></div><hr /><div className="readiness-list"><span className="done"><CheckCircle2 /> Evidence-linked reporting</span><span className="done"><CheckCircle2 /> Six-month reporting cycles</span><span className={overdue ? "" : "done"}><CheckCircle2 /> No overdue reports</span><span className={atRisk ? "" : "done"}><CheckCircle2 /> No at-risk deliverables</span></div></aside></div>}
+    <section className="panel data-panel"><div className="panel-head"><div><h2>Six-month report register</h2><p>Champions save drafts and submit reports to Linkages for validation.</p></div></div><DataTable columns={reportColumns} rows={reports} onRowClick={(item) => navigate(`/monitoring/reports/${item.id}`)} emptyTitle="No six-month reports available" /></section>
+  </>;
+}
