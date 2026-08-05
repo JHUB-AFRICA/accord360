@@ -7,7 +7,7 @@ import {
   Users, X
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../lib/api";
+import { listNotifications, markNotificationRead } from "../lib/backend.js";
 import { initials } from "../lib/format";
 import { roleConfig } from "../lib/roles";
 import StatusBadge from "./StatusBadge";
@@ -37,14 +37,6 @@ const iconMap = {
 };
 
 const navigation = {
-  partner: [
-    ["home", "Dashboard", "/partner/dashboard"],
-    ["agreements", "My partnership requests", "/partner/requests"],
-    ["corrections", "Required actions", "/corrections"],
-    ["documents", "Documents", "/partner/documents"],
-    ["notifications", "Notifications", "/notifications"],
-    ["help", "Help", "/help"]
-  ],
   researcher: [
     ["home", "Dashboard", "/researcher"],
     ["new", "Create request", "/agreements/new"],
@@ -85,7 +77,7 @@ const navigation = {
     ["home", "Legal dashboard", "/legal"],
     ["legal", "Review queue", "/legal/queue"],
     ["corrections", "Returned drafts", "/corrections"],
-    ["agreements", "Approved versions", "/agreements?stage=legal_review"],
+    ["agreements", "Legal-approved packages", "/agreements?stage=dvc_approval"],
     ["notifications", "Notifications", "/notifications"]
   ],
   dvc: [
@@ -97,14 +89,14 @@ const navigation = {
   vc_office: [
     ["home", "VC dashboard", "/signing"],
     ["signing", "Submission packages", "/signing/queue"],
-    ["agreements", "Executed agreements", "/agreements?stage=activation"],
+    ["agreements", "Executed agreements", "/agreements?stage=active"],
     ["notifications", "Notifications", "/notifications"]
   ],
   me: [
     ["home", "M&E dashboard", "/monitoring"],
     ["monitoring", "Six-month reports", "/monitoring/reports"],
     ["scorecards", "Scorecards", "/scorecards"],
-    ["agreements", "Active agreements", "/agreements?stage=activation"],
+    ["agreements", "Active agreements", "/agreements?stage=active"],
     ["notifications", "Notifications", "/notifications"],
     ["reports", "Performance reports", "/reports"]
   ],
@@ -144,7 +136,7 @@ export default function Layout() {
   useEffect(() => setMobileOpen(false), [location.pathname]);
   useEffect(() => {
     let active = true;
-    api("/notifications").then((items) => { if (active) setNotifications(items); }).catch(() => {});
+    listNotifications().then((items) => { if (active) setNotifications(items); }).catch(() => {});
     return () => { active = false; };
   }, [location.pathname]);
 
@@ -153,7 +145,7 @@ export default function Layout() {
 
   async function markRead(item) {
     if (!item.is_read) {
-      await api(`/notifications/${item.id}/read`, { method: "POST" });
+      await markNotificationRead(item.id);
       setNotifications((current) => current.map((notification) => notification.id === item.id ? { ...notification, is_read: true } : notification));
     }
   }

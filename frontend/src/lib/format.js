@@ -42,3 +42,14 @@ export function downloadBlob(blob, fileName) {
   anchor.remove();
   URL.revokeObjectURL(url);
 }
+export function formatNumber(value, options = {}) {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? new Intl.NumberFormat("en-KE", options).format(number)
+    : "—";
+}

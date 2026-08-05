@@ -1,174 +1,159 @@
-import { ArrowLeft, CheckCircle2, FileUp, Save } from "lucide-react";
+import { ArrowLeft, FileUp, Save, ShieldCheck, TrendingUp } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import ErrorState from "../components/ErrorState";
-import LoadingState from "../components/LoadingState";
-import Modal from "../components/Modal";
-import PageHeader from "../components/PageHeader";
-import StatusBadge from "../components/StatusBadge";
-import Toast from "../components/Toast";
-import { useAuth } from "../context/AuthContext";
-import { api } from "../lib/api";
-import { formatCurrency, formatDate } from "../lib/format";
+import ErrorState from "../components/ErrorState.jsx";
+import LoadingState from "../components/LoadingState.jsx";
+import PageHeader from "../components/PageHeader.jsx";
+import StatusBadge from "../components/StatusBadge.jsx";
+import Toast from "../components/Toast.jsx";
+import { createDeliverable, createValueRecord, getAgreement, updateDeliverable, uploadAgreementDocument } from "../lib/backend.js";
+import { formatDate, formatNumber } from "../lib/format.js";
+
+const emptyForm = {
+  deliverable_id: "",
+  deliverable_type: "",
+  target_value: "",
+  actual_value: "",
+  reporting_period: "",
+  notes: "",
+  value_type: "",
+  amount: "",
+  currency: "KES",
+  source: ""
+};
 
 export default function SixMonthReport() {
   const { id } = useParams();
-  const { user } = useAuth();
-  const [record, setRecord] = useState(null);
-  const [form, setForm] = useState(null);
+  const navigate = useNavigate();
+  const [agreement, setAgreement] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [evidence, setEvidence] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [returnOpen, setReturnOpen] = useState(false);
-  const [reviewNote, setReviewNote] = useState("");
-  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setError("");
-    api(`/me/reports/${id}`)
-      .then((data) => { setRecord(data); setForm(data); setReviewNote(data.review_note || ""); })
-      .catch((requestError) => setError(requestError.message));
+    try { setAgreement(await getAgreement(id)); }
+    catch (requestError) { setError(requestError.message); }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
 
-  const isChampion = Boolean(form && user.id === form.champion_id);
-  const canEditContent = useMemo(
-    () => Boolean(form) && (isChampion || user.role === "me") && ["draft", "returned"].includes(form.status),
-    [form, isChampion, user.role]
-  );
-  const canReview = useMemo(
-    () => Boolean(form) && ["linkages", "director_linkages", "me"].includes(user.role) && form.status === "submitted",
-    [form, user.role]
+  const selectedDeliverable = useMemo(
+    () => agreement?.deliverables?.find((item) => Number(item.id) === Number(form.deliverable_id)),
+    [agreement, form.deliverable_id]
   );
 
-  if (error && !record) return <><PageHeader eyebrow="Six-month reporting" title="Unable to load report" /><ErrorState message={error} onRetry={load} /></>;
-  if (!record || !form) return <LoadingState label="Loading six-month Champion report" />;
-
-  function update(key, value) {
-    setForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function updateDeliverable(index, key, value) {
+  function chooseDeliverable(value) {
+    const item = agreement.deliverables.find((entry) => Number(entry.id) === Number(value));
+    if (!item) {
+      setForm({ ...emptyForm, reporting_period: form.reporting_period });
+      return;
+    }
     setForm((current) => ({
       ...current,
-      deliverables: current.deliverables.map((item, itemIndex) => itemIndex === index
-        ? { ...item, [key]: key === "actual" ? Number(value) : value }
-        : item)
+      deliverable_id: String(item.id),
+      deliverable_type: item.deliverable_type || "",
+      target_value: String(item.target_value ?? ""),
+      actual_value: String(item.actual_value ?? ""),
+      reporting_period: item.reporting_period || current.reporting_period,
+      notes: item.notes || ""
     }));
   }
 
-  function validateReadiness() {
-    if (!form.activities_completed.trim()) return "Describe the activities completed during the reporting period.";
-    if (!form.deliverables.every((item) => item.status)) return "Update the status of every deliverable.";
-    if (!form.evidence.length) return "Attach at least one supporting evidence file before submission.";
-    return "";
-  }
-
-  async function save(status = form.status, extra = {}) {
-    if (status === "submitted") {
-      const readinessError = validateReadiness();
-      if (readinessError) { setError(readinessError); return; }
-    }
-    if (status === "returned" && !String(extra.review_note || "").trim()) {
-      setError("A clear return reason is required.");
+  async function saveUpdate(event) {
+    event.preventDefault();
+    if (!form.deliverable_type.trim() || form.target_value === "" || form.actual_value === "") {
+      setError("Deliverable, target and actual values are required.");
       return;
     }
-    setSubmitting(true);
+    if (Number(form.target_value) < 0 || Number(form.actual_value) < 0) {
+      setError("Target and actual values cannot be negative.");
+      return;
+    }
+    setSaving(true);
     setError("");
     try {
-      const updated = await api(`/me/reports/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ ...form, ...extra, status })
-      });
-      setRecord(updated);
-      setForm(updated);
-      setReviewNote(updated.review_note || "");
-      setReturnOpen(false);
-      setMessage(
-        status === "submitted" ? "Six-month report submitted to Linkages."
-          : status === "validated" ? "Six-month report validated."
-            : status === "returned" ? "Report returned to the Champion for correction."
-              : "Report draft saved."
-      );
+      let evidenceDocumentId = selectedDeliverable?.evidence_document_id || null;
+      if (evidence) {
+        const uploaded = await uploadAgreementDocument(agreement.id, {
+          file: evidence,
+          documentType: "evidence",
+          version: "1.0",
+          confidentiality: "internal",
+          isOfficial: false
+        });
+        evidenceDocumentId = Number(uploaded.id);
+      }
+      const payload = {
+        deliverable_type: form.deliverable_type.trim(),
+        target_value: Number(form.target_value),
+        actual_value: Number(form.actual_value),
+        reporting_period: form.reporting_period.trim() || null,
+        notes: form.notes.trim() || null,
+        evidence_document_id: evidenceDocumentId
+      };
+      if (form.deliverable_id) await updateDeliverable(agreement.id, form.deliverable_id, payload);
+      else await createDeliverable(agreement.id, payload);
+
+      if (form.amount !== "") {
+        await createValueRecord(agreement.id, {
+          value_type: form.value_type.trim() || "Partnership resource value",
+          amount: Number(form.amount),
+          currency: form.currency.trim().toUpperCase() || "KES",
+          source: form.source.trim() || null,
+          reporting_period: form.reporting_period.trim() || null,
+          approved: true
+        });
+      }
+      setMessage(form.deliverable_id ? "Monitoring deliverable updated." : "Monitoring deliverable recorded.");
+      setForm(emptyForm);
+      setEvidence(null);
+      await load();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   }
 
+  if (error && !agreement) return <><PageHeader eyebrow="Monitoring & evaluation" title="Six-month update" /><ErrorState message={error} onRetry={load} /></>;
+  if (!agreement) return <LoadingState label="Loading agreement monitoring data" />;
+
   return <>
-    <Toast message={message} onClose={() => setMessage("")} />
-    <Toast message={error} type="error" onClose={() => setError("")} />
-    <PageHeader
-      eyebrow="Monitoring & evaluation"
-      title="Six-month Champion report"
-      description={`${record.agreement_reference} · ${record.partner_name}`}
-      actions={<button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>}
-      meta={<StatusBadge status={form.status} />}
-    />
+    <Toast message={message} onClose={() => setMessage("")} /><Toast message={error} type="error" onClose={() => setError("")} />
+    <PageHeader eyebrow="Monitoring & evaluation" title="Six-month partnership update" description={`${agreement.reference} · ${agreement.partner_name}`} actions={<button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>} meta={<StatusBadge status={agreement.status}>{agreement.status.replaceAll("_", " ")}</StatusBadge>} />
+    <div className="inline-alert info"><ShieldCheck size={18} /><div><strong>Implemented backend model</strong><p>The API currently stores monitoring data as deliverables, evidence documents and value records. This form writes only to those supported endpoints.</p></div></div>
 
-    {form.status === "returned" && form.review_note && <div className="form-alert warning"><strong>Correction required:</strong> {form.review_note}</div>}
-
-    <div className="report-form-grid">
-      <section className="panel report-form-main">
-        <div className="report-period-banner">
-          <div><span>Reporting period</span><strong>{record.reporting_period}</strong></div>
-          <div><span>Submission deadline</span><strong>{formatDate(record.due_date)}</strong></div>
-          <div><span>Champion</span><strong>{record.champion_name}</strong></div>
-        </div>
-
-        <div className="form-grid single-column">
-          <label className="form-field"><span>Activities completed during this period</span><textarea rows="5" disabled={!canEditContent} value={form.activities_completed} onChange={(event) => update("activities_completed", event.target.value)} /></label>
-          <label className="form-field"><span>Key challenges and bottlenecks</span><textarea rows="4" disabled={!canEditContent} value={form.challenges} onChange={(event) => update("challenges", event.target.value)} /></label>
-        </div>
-
-        <h2>Outputs achieved versus plan</h2>
-        <div className="deliverable-edit-list">
-          {form.deliverables.map((item, index) => <article key={item.id}>
-            <div><strong>{item.output}</strong><span>{item.responsible_party}</span></div>
-            <label>Target<input type="number" disabled value={item.target} /></label>
-            <label>Actual<input type="number" disabled={!canEditContent} min="0" value={item.actual} onChange={(event) => updateDeliverable(index, "actual", event.target.value)} /></label>
-            <label>Status<select disabled={!canEditContent} value={item.status} onChange={(event) => updateDeliverable(index, "status", event.target.value)}><option value="not_started">Not started</option><option value="on_track">On track</option><option value="at_risk">At risk</option><option value="overdue">Overdue</option><option value="completed">Completed</option><option value="not_achieved">Not achieved</option></select></label>
-          </article>)}
-        </div>
-
-        <div className="form-grid">
-          <label className="form-field"><span>Partner engagement rating</span><select disabled={!canEditContent} value={form.partner_engagement_rating} onChange={(event) => update("partner_engagement_rating", Number(event.target.value))}><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3">3 — Moderate</option><option value="4">4 — Active</option><option value="5">5 — Excellent</option></select></label>
-          <label className="form-field"><span>Financial/resource value (KES)</span><input type="number" disabled={!canEditContent} value={form.financial_value} onChange={(event) => update("financial_value", Number(event.target.value))} /></label>
-          <label className="form-field"><span>Renewal recommendation</span><select disabled={!canEditContent} value={form.renewal_recommendation} onChange={(event) => update("renewal_recommendation", event.target.value)}><option value="renew">Recommend renewal</option><option value="close">Recommend closure</option><option value="undecided">Undecided</option></select></label>
-        </div>
-
-        <label className="upload-zone compact-upload">
-          <FileUp />
-          <strong>Upload supporting evidence</strong>
-          <span>Evidence will be securely attached to this reporting period.</span>
-          <input type="file" multiple disabled={!canEditContent} onChange={(event) => update("evidence", [...form.evidence, ...Array.from(event.target.files || []).map((file) => file.name)])} />
-        </label>
-        <div className="file-chip-list">{form.evidence.map((file) => <span key={file}>{file}</span>)}</div>
+    <div className="content-grid two-column">
+      <section className="panel">
+        <div className="panel-head"><div><h2>Recorded deliverables</h2><p>{agreement.deliverables.length} monitoring item{agreement.deliverables.length === 1 ? "" : "s"}</p></div><TrendingUp size={20} /></div>
+        {agreement.deliverables.length ? <div className="deliverable-list">{agreement.deliverables.map((item) => {
+          const target = Number(item.target_value || 0);
+          const actual = Number(item.actual_value || 0);
+          const progress = target > 0 ? Math.min(100, Math.round(actual / target * 100)) : actual > 0 ? 100 : 0;
+          return <article key={item.id}><div className="deliverable-head"><div><strong>{item.deliverable_type}</strong><span>{item.reporting_period || "Reporting period not recorded"}</span></div><StatusBadge tone={progress >= 100 ? "green" : progress >= 60 ? "blue" : "orange"}>{progress}%</StatusBadge></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="deliverable-metrics"><span>Target <b>{formatNumber(target)}</b></span><span>Actual <b>{formatNumber(actual)}</b></span><span>Evidence <b>{item.evidence_document_id ? `Document #${item.evidence_document_id}` : "Missing"}</b></span></div><button className="text-button" type="button" onClick={() => chooseDeliverable(String(item.id))}>Update this deliverable</button></article>;
+        })}</div> : <div className="inline-empty">No deliverables have been recorded for this agreement.</div>}
+        <div className="panel-divider" />
+        <h3>Recorded value</h3>
+        {agreement.values.length ? <div className="value-list">{agreement.values.map((item) => <article key={item.id}><strong>{item.currency} {Number(item.amount).toLocaleString()}</strong><span>{item.value_type} · {item.reporting_period || "No period"}</span><small>{item.approved ? "Approved" : "Pending approval"} · {item.source || "No source recorded"}</small></article>)}</div> : <p>No partnership value records are available.</p>}
+        <p className="form-help">Agreement effective period: {formatDate(agreement.effective_date)} – {formatDate(agreement.expiry_date)}</p>
       </section>
 
-      <aside className="panel report-form-aside">
-        <h2>Report summary</h2>
-        <dl className="aside-summary"><div><dt>Agreement</dt><dd>{record.title}</dd></div><div><dt>Period</dt><dd>{record.reporting_period}</dd></div><div><dt>Resource value</dt><dd>{formatCurrency(form.financial_value)}</dd></div><div><dt>Evidence files</dt><dd>{form.evidence.length}</dd></div></dl>
-        <hr />
-        <h3>Readiness</h3>
-        <div className="readiness-list"><span className={form.activities_completed ? "done" : ""}><CheckCircle2 /> Activities completed</span><span className={form.challenges ? "done" : ""}><CheckCircle2 /> Challenges recorded</span><span className={form.deliverables.every((item) => item.status) ? "done" : ""}><CheckCircle2 /> Deliverables updated</span><span className={form.evidence.length ? "done" : ""}><CheckCircle2 /> Evidence attached</span></div>
-      </aside>
+      <form className="panel" onSubmit={saveUpdate}>
+        <div className="panel-head"><div><h2>{form.deliverable_id ? "Update deliverable" : "Add monitoring update"}</h2><p>Target and actual values must be non-negative.</p></div></div>
+        <label className="form-field"><span>Existing deliverable</span><select value={form.deliverable_id} onChange={(event) => chooseDeliverable(event.target.value)}><option value="">Create a new deliverable</option>{agreement.deliverables.map((item) => <option key={item.id} value={item.id}>{item.deliverable_type}</option>)}</select></label>
+        <label className="form-field"><span>Deliverable / output *</span><input value={form.deliverable_type} onChange={(event) => setForm({ ...form, deliverable_type: event.target.value })} /></label>
+        <div className="form-grid"><label className="form-field"><span>Target *</span><input type="number" min="0" step="any" value={form.target_value} onChange={(event) => setForm({ ...form, target_value: event.target.value })} /></label><label className="form-field"><span>Actual *</span><input type="number" min="0" step="any" value={form.actual_value} onChange={(event) => setForm({ ...form, actual_value: event.target.value })} /></label></div>
+        <label className="form-field"><span>Reporting period</span><input value={form.reporting_period} onChange={(event) => setForm({ ...form, reporting_period: event.target.value })} placeholder="2026 H1" /></label>
+        <label className="form-field"><span>Progress notes</span><textarea rows="5" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+        <label className="upload-zone compact-upload-zone"><FileUp size={22} /><strong>{evidence ? evidence.name : "Upload supporting evidence"}</strong><span>Optional supported document, maximum 25 MB.</span><input type="file" onChange={(event) => setEvidence(event.target.files?.[0] || null)} /></label>
+        <div className="panel-divider" />
+        <h3>Optional financial or resource value</h3>
+        <div className="form-grid"><label className="form-field"><span>Value type</span><input value={form.value_type} onChange={(event) => setForm({ ...form, value_type: event.target.value })} placeholder="Research funding" /></label><label className="form-field"><span>Amount</span><input type="number" min="0" step="any" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label><label className="form-field"><span>Currency</span><input value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })} /></label><label className="form-field"><span>Source</span><input value={form.source} onChange={(event) => setForm({ ...form, source: event.target.value })} /></label></div>
+        <button className="primary-button full-width" type="submit" disabled={saving}><Save size={17} /> {saving ? "Saving…" : form.deliverable_id ? "Update monitoring record" : "Save monitoring record"}</button>
+      </form>
     </div>
-
-    {canEditContent && <div className="sticky-form-actions"><button className="secondary-button" disabled={submitting} onClick={() => save("draft")}><Save size={17} /> Save draft</button><button className="primary-button" disabled={submitting} onClick={() => save("submitted")}>Submit to Linkages</button></div>}
-    {canReview && <div className="sticky-form-actions"><button className="secondary-button" disabled={submitting} onClick={() => setReturnOpen(true)}>Return for correction</button><button className="primary-button" disabled={submitting} onClick={() => save("validated", { review_note: reviewNote })}>Validate report</button></div>}
-
-    <Modal
-      open={returnOpen}
-      onClose={() => setReturnOpen(false)}
-      title="Return report for correction"
-      description="The Champion will receive this exact correction request."
-      footer={<><button className="secondary-button" onClick={() => setReturnOpen(false)}>Cancel</button><button className="danger-button" disabled={submitting} onClick={() => save("returned", { review_note: reviewNote })}>Return report</button></>}
-    >
-      <label className="form-field"><span>Required correction *</span><textarea rows="5" value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="State what must be corrected and why." /></label>
-    </Modal>
   </>;
 }

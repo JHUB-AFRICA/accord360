@@ -1,26 +1,36 @@
 # Frontend Implementation Notes
 
-## Final corrections incorporated
+## Architecture
 
-- One canonical 17-stage lifecycle is used throughout.
-- DVC RPE endorsement and VC execution are separate workspaces and actions.
-- Navigation is generated per role; generic all-module sidebars were removed.
-- External partners have post-registration self-service screens.
-- Corrections are structured and linked to exact items.
-- Legal approval is blocked by unresolved blocking comments.
-- Administrators cannot perform operational approvals.
-- Six-month M&E reports support draft, submission, structured return and Linkages/M&E validation.
-- Activation requires effective/expiry dates, a Champion, partner liaison, initial deliverable and completed signing gates.
-- Versioned scorecards are included and score weights are validated to exactly 100%.
-- The AI report uses a human-review disclaimer rather than an absolute accuracy claim.
-- CA remains configurable and is not assigned a conflicting official definition.
-- Synthetic demonstration records are consistent and labeled as prototype data.
-- Responsive tables become labeled cards on small screens.
-- Password-reset requests, notification resend, PDF/Excel/CSV report export controls and template administration are wired to the documented API.
-- Loading, empty, error, access-denied, modal-confirmation and notification states are implemented.
+- `src/lib/api.js`: bearer-token HTTP transport, error normalization and secure file downloads.
+- `src/lib/backend.js`: the only production API contract adapter.
+- `src/lib/normalize.js`: maps backend responses to stable UI view models.
+- `src/lib/workflow.js`: canonical lifecycle presentation and exact backend transition actions.
+- `src/lib/mockApi.js`: optional exact-contract mock server used only when explicitly enabled.
+- `src/context/AuthContext.jsx`: token lifecycle and `/auth/me` session validation.
 
-## Integration boundary
+## Important implementation decisions
 
-The frontend is complete as an interactive implementation using explicit mock mode. Switching `VITE_USE_MOCK_API=false` changes all data calls to the real backend. The backend developer’s remaining work is to implement and authorize the endpoints documented in `BACKEND_API_CONTRACT.md`.
+1. **No automatic mock fallback.** A 401, network failure or backend error remains an error in real mode.
+2. **Backend integer IDs.** Route parameters are converted to numbers before network calls.
+3. **Backend-scoped lists.** Agreement data is never treated as globally visible merely because a page is accessible.
+4. **No duplicated API paths in pages.** Pages call named integration functions.
+5. **Correction compatibility.** Structured correction text is stored in transition comments until dedicated correction endpoints exist.
+6. **M&E compatibility.** The six-month form writes supported deliverable, evidence and value records.
+7. **Score transparency.** Client score previews show each component and weight and are not presented as stored official scores.
+8. **Template honesty.** Template names shown in the request wizard are local guidance and are not submitted as nonexistent fields.
+9. **Public partner honesty.** The registration form is visually complete but cannot submit until an approved public endpoint and partner identity model exist.
+10. **Human review wording.** Generated narrative previews clearly require review and never claim that AI cannot hallucinate.
 
-No frontend code should be modified to bypass missing backend permissions. The backend must be the authoritative source for roles, scopes, workflow transitions, document locks and audit records.
+## Backend changes that would unlock future UI features
+
+- Public partner registration, verification and authentication
+- Partner-scoped document and correction access
+- Template and configuration APIs
+- Dedicated correction objects with field/clause links
+- Six-month report workflow entities and validation status
+- Governed scorecard persistence and configurable weights
+- AI summary generation, approval and source links
+- PDF and Excel report exports
+- Password reset and email verification
+- Notification delivery status and resend actions

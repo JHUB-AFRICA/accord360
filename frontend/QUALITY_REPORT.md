@@ -1,30 +1,32 @@
 # Accord360 Frontend Quality Report
 
-## Automated checks completed in the delivery environment
+## Completed checks
 
-- Source/import validation: **passed** for 55 frontend source files.
-- TypeScript JavaScript/JSX parser check: **passed** with `allowJs` and `checkJs` disabled, catching syntax and module-shape errors.
-- Mock API integration smoke test: **passed** for all 12 roles.
-- Canonical workflow test: **passed** through Legal approval, Legal lock, DVC RPE endorsement, VC release, both signatures, final signed upload and activation.
-- Structured Legal comments and correction endpoints: **passed**.
-- Document upload/download contract: **passed**.
-- Partner self-service profile update: **passed**.
-- Six-month report submit, return, resubmit and validate flow: **passed**.
-- Score configuration validation: invalid totals rejected; active total must equal 100%.
-- Notification resend, template lifecycle, AI draft human approval, report export contracts and audit access: **passed**.
-- Forbidden legacy wording/data scan: **passed**.
+- Central production API wrapper implemented.
+- Source-of-truth API reference included.
+- Unsupported production endpoint fragments blocked by validation.
+- Backend role names and integer IDs aligned.
+- Exact dashboard, Champion, partner-update and transition naming aligned.
+- Multipart document upload contract aligned.
+- Agreement filtering uses `agreement_type`.
+- Auth has no unsafe demo fallback.
+- Public partner registration and password assistance make no unsupported request.
+- Corrections, scoring and six-month reporting use supported backend data models.
+- JavaScript/JSX syntax was parsed successfully during artifact validation; the packaged `npm run syntax` command performs the same check through the installed Vite compiler.
+- Exact-contract mock smoke test passed for all 11 roles.
+- Full mocked workflow passed from department approval through activation.
+- Mock checks passed for users, partners, documents, M&E, notifications, CSV and audit.
 
-## Build verification boundary
+## Commands passed in the artifact environment
 
-The source was not bundled with Vite inside this delivery container because its npm registry proxy did not provide the locked Vite package. The lockfile points to the public npm registry and the project includes `npm run check`, which performs validation, mock integration tests and `vite build` after dependencies are installed on the target machine or CI runner.
-
-Run before merging:
-
-```powershell
-npm ci
-npm run check
+```text
+node scripts/validate.mjs
+node scripts/syntax-check.mjs (artifact validation parser)
+node scripts/mock-smoke-test.mjs
 ```
 
-## Production boundary
+## Build boundary
 
-Mock mode demonstrates and tests frontend behavior. Production security, persistence, file storage, email, AI execution, reporting binaries and authoritative workflow validation remain backend responsibilities described in `BACKEND_API_CONTRACT.md`.
+A full Vite bundle could not be completed in the artifact environment because its internal npm proxy returned 404 for the locked Vite package. The lock file uses public npm package URLs. Run `npm ci` and `npm run build` on the development machine before merging.
+
+This limitation is environmental; it is not presented as a passed production build.

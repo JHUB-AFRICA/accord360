@@ -1,42 +1,40 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import AccountState from "./pages/AccountState";
-import AgreementDetail from "./pages/AgreementDetail";
-import AgreementForm from "./pages/AgreementForm";
-import Agreements from "./pages/Agreements";
-import Audit from "./pages/Audit";
-import Configuration from "./pages/Configuration";
-import CorrectionDetail from "./pages/CorrectionDetail";
-import Corrections from "./pages/Corrections";
-import Dashboard from "./pages/Dashboard";
-import ForgotPassword from "./pages/ForgotPassword";
-import Help from "./pages/Help";
-import LandingPage from "./pages/LandingPage";
-import Login from "./pages/Login";
-import Monitoring from "./pages/Monitoring";
-import NotFound from "./pages/NotFound";
-import Notifications from "./pages/Notifications";
-import PartnerDetail from "./pages/PartnerDetail";
-import PartnerPortal from "./pages/PartnerPortal";
-import PartnerRegister from "./pages/PartnerRegister";
-import PartnerVerification from "./pages/PartnerVerification";
-import Partners from "./pages/Partners";
-import RegistrationSubmitted from "./pages/RegistrationSubmitted";
-import Reports from "./pages/Reports";
-import Scorecards from "./pages/Scorecards";
-import SixMonthReport from "./pages/SixMonthReport";
-import Users from "./pages/Users";
-import WorkflowQueue from "./pages/WorkflowQueue";
-import Layout from "./components/Layout";
-import ProtectedRoute from "./components/ProtectedRoute";
-import PublicLayout from "./components/PublicLayout";
-import RoleHomeRedirect from "./components/RoleHomeRedirect";
-import RoleRoute from "./components/RoleRoute";
-import { ALL_ROLES } from "./lib/roles";
+import AccountState from "./pages/AccountState.jsx";
+import AgreementDetail from "./pages/AgreementDetail.jsx";
+import AgreementForm from "./pages/AgreementForm.jsx";
+import Agreements from "./pages/Agreements.jsx";
+import Audit from "./pages/Audit.jsx";
+import Configuration from "./pages/Configuration.jsx";
+import CorrectionDetail from "./pages/CorrectionDetail.jsx";
+import Corrections from "./pages/Corrections.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
+import Help from "./pages/Help.jsx";
+import LandingPage from "./pages/LandingPage.jsx";
+import Login from "./pages/Login.jsx";
+import Monitoring from "./pages/Monitoring.jsx";
+import NotFound from "./pages/NotFound.jsx";
+import Notifications from "./pages/Notifications.jsx";
+import PartnerDetail from "./pages/PartnerDetail.jsx";
+import PartnerRegister from "./pages/PartnerRegister.jsx";
+import PartnerVerification from "./pages/PartnerVerification.jsx";
+import Partners from "./pages/Partners.jsx";
+import RegistrationSubmitted from "./pages/RegistrationSubmitted.jsx";
+import Reports from "./pages/Reports.jsx";
+import Scorecards from "./pages/Scorecards.jsx";
+import SixMonthReport from "./pages/SixMonthReport.jsx";
+import Users from "./pages/Users.jsx";
+import WorkflowQueue from "./pages/WorkflowQueue.jsx";
+import Layout from "./components/Layout.jsx";
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import PublicLayout from "./components/PublicLayout.jsx";
+import RoleHomeRedirect from "./components/RoleHomeRedirect.jsx";
+import RoleRoute from "./components/RoleRoute.jsx";
+import { ALL_ROLES } from "./lib/roles.js";
 
 const role = (roles, element) => <RoleRoute roles={roles}>{element}</RoleRoute>;
-const operationalRoles = ALL_ROLES;
 const agreementCreators = ["researcher", "linkages", "director_linkages"];
-const correctionRoles = ["partner", "researcher", "approver", "linkages", "director_linkages", "legal"];
+const correctionRoles = ["researcher", "approver", "linkages", "director_linkages", "legal", "dvc"];
 const reportRoles = ["linkages", "director_linkages", "dvc", "executive", "me", "auditor", "admin"];
 
 export default function App() {
@@ -58,12 +56,6 @@ export default function App() {
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/workspace" element={<RoleHomeRedirect />} />
         <Route path="/access-denied" element={<AccountState type="access-denied" />} />
-
-        <Route path="/partner/dashboard" element={role(["partner"], <Dashboard />)} />
-        <Route path="/partner/registration" element={role(["partner"], <PartnerPortal view="registration" />)} />
-        <Route path="/partner/requests" element={role(["partner"], <Agreements />)} />
-        <Route path="/partner/documents" element={role(["partner"], <PartnerPortal view="documents" />)} />
-        <Route path="/partner/profile" element={role(["partner"], <PartnerPortal view="profile" />)} />
 
         <Route path="/researcher" element={role(["researcher"], <Dashboard />)} />
         <Route path="/approvals" element={role(["approver"], <Dashboard />)} />
@@ -88,20 +80,20 @@ export default function App() {
         <Route path="/admin" element={role(["admin"], <Dashboard />)} />
         <Route path="/audit-workspace" element={role(["auditor"], <Dashboard />)} />
 
-        <Route path="/agreements" element={role(operationalRoles, <Agreements />)} />
+        <Route path="/agreements" element={role(ALL_ROLES, <Agreements />)} />
         <Route path="/agreements/new" element={role(agreementCreators, <AgreementForm />)} />
-        <Route path="/agreements/:id" element={role(operationalRoles, <AgreementDetail />)} />
-        <Route path="/partners" element={role(["linkages", "director_linkages", "admin"], <Partners />)} />
-        <Route path="/partners/:id" element={role(["linkages", "director_linkages", "admin", "partner"], <PartnerDetail />)} />
+        <Route path="/agreements/:id" element={role(ALL_ROLES, <AgreementDetail />)} />
+        <Route path="/partners" element={role(["researcher", "linkages", "director_linkages", "admin"], <Partners />)} />
+        <Route path="/partners/:id" element={role(["researcher", "linkages", "director_linkages", "admin"], <PartnerDetail />)} />
         <Route path="/partners/:id/verify" element={role(["linkages", "director_linkages"], <PartnerVerification />)} />
         <Route path="/corrections" element={role(correctionRoles, <Corrections />)} />
         <Route path="/corrections/:id" element={role(correctionRoles, <CorrectionDetail />)} />
-        <Route path="/notifications" element={role(operationalRoles, <Notifications />)} />
+        <Route path="/notifications" element={role(ALL_ROLES, <Notifications />)} />
         <Route path="/reports" element={role(reportRoles, <Reports />)} />
         <Route path="/users" element={role(["admin"], <Users />)} />
         <Route path="/configuration" element={role(["admin"], <Configuration />)} />
         <Route path="/audit" element={role(["admin", "auditor", "executive", "director_linkages"], <Audit />)} />
-        <Route path="/help" element={role(operationalRoles, <Help />)} />
+        <Route path="/help" element={role(ALL_ROLES, <Help />)} />
       </Route>
 
       <Route path="/home" element={<Navigate to="/" replace />} />

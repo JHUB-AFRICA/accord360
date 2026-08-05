@@ -1,62 +1,37 @@
-import { AlertTriangle, CheckCircle2, MessageSquarePlus, MessageSquareText, Scale } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, MessageSquarePlus, Scale } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
-import { formatDateTime } from "../lib/format";
-import EmptyState from "./EmptyState";
-import Modal from "./Modal";
-import StatusBadge from "./StatusBadge";
-
-const fallbackComparison = [
-  {
-    clause: "Template comparison unavailable",
-    standard: "Standard-template clause text is not available for comparison.",
-    working: "Upload or select a working draft to generate a clause-level comparison.",
-    status: "pending"
-  }
-];
+import { transitionAgreement } from "../lib/backend.js";
+import { formatDateTime, humanize } from "../lib/format.js";
+import EmptyState from "./EmptyState.jsx";
+import Modal from "./Modal.jsx";
+import StatusBadge from "./StatusBadge.jsx";
 
 export default function LegalReviewPanel({ record, user, onRecordChange, onError, onMessage }) {
   const [commentOpen, setCommentOpen] = useState(false);
-  const [commentForm, setCommentForm] = useState({ clause: "", text: "", blocking: true });
   const [submitting, setSubmitting] = useState(false);
-  const comparisons = record.template_comparison?.length ? record.template_comparison : fallbackComparison;
-  const blockingCount = useMemo(
-    () => (record.legal_comments || []).filter((item) => item.blocking && item.status !== "resolved").length,
-    [record.legal_comments]
-  );
+  const [form, setForm] = useState({ exactItem: "", requestedChange: "", details: "" });
+  const reviewEvents = (record.workflow_events || []).filter((event) => event.comment || ["send_legal", "approve_legal", "return_correction", "return_dvc"].includes(event.action));
+  const canReturn = user.role === "legal" && record.backend_stage === "legal_review";
 
-  async function addComment() {
-    if (!commentForm.clause.trim() || !commentForm.text.trim()) {
-      onError("Select an exact clause or section and provide a Legal comment.");
+  async function requestAmendment() {
+    if (!form.exactItem.trim() || !form.requestedChange.trim()) {
+      onError("Identify the exact clause, field or document and the requested change.");
       return;
     }
     setSubmitting(true);
     try {
-      const created = await api(`/agreements/${record.id}/legal-comments`, {
-        method: "POST",
-        body: JSON.stringify(commentForm)
-      });
-      onRecordChange({ ...record, legal_comments: [...(record.legal_comments || []), created] });
-      setCommentForm({ clause: "", text: "", blocking: true });
+      const comment = [
+        `LEGAL CORRECTION`,
+        `Exact item: ${form.exactItem.trim()}`,
+        `Requested change: ${form.requestedChange.trim()}`,
+        form.details.trim() ? `Additional context: ${form.details.trim()}` : null
+      ].filter(Boolean).join("\n");
+      const updated = await transitionAgreement(record.id, "return_correction", comment);
+      onRecordChange(updated);
+      onMessage("The agreement was returned for correction using the supported workflow transition endpoint.");
+      setForm({ exactItem: "", requestedChange: "", details: "" });
       setCommentOpen(false);
-      onMessage("Legal comment added and audit event recorded.");
-    } catch (error) {
-      onError(error.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function resolveComment(comment) {
-    setSubmitting(true);
-    try {
-      const updated = await api(`/agreements/${record.id}/legal-comments/${comment.id}/resolve`, { method: "POST" });
-      onRecordChange({
-        ...record,
-        legal_comments: (record.legal_comments || []).map((item) => item.id === updated.id ? updated : item)
-      });
-      onMessage("Legal comment marked resolved.");
     } catch (error) {
       onError(error.message);
     } finally {
@@ -68,91 +43,50 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
     <>
       <section className="panel legal-comparison-panel">
         <div className="panel-head">
-          <div>
-            <h2>Side-by-side template comparison</h2>
-            <p>Compare the approved standard language against the current working draft.</p>
-          </div>
-          <StatusBadge tone={record.template?.compliance >= 90 ? "green" : "orange"}>
-            {record.template?.compliance ?? 0}% aligned
-          </StatusBadge>
+          <div><h2>Legal review record</h2><p>The current backend exposes Legal feedback as workflow-event comments rather than separate clause-comment endpoints.</p></div>
+          {canReturn && <button className="secondary-button compact-button" onClick={() => setCommentOpen(true)}><MessageSquarePlus size={16} /> Request amendment</button>}
         </div>
-        <div className="comparison-table" role="table" aria-label="Template and working-draft comparison">
-          <div className="comparison-heading" role="row">
-            <strong role="columnheader">Clause / section</strong>
-            <strong role="columnheader">Approved standard template</strong>
-            <strong role="columnheader">Current working draft</strong>
-          </div>
-          {comparisons.map((item) => (
-            <article className={`comparison-row comparison-${item.status || "review"}`} role="row" key={item.clause}>
-              <div role="cell"><strong>{item.clause}</strong><StatusBadge status={item.status || "under_review"} /></div>
-              <p role="cell">{item.standard}</p>
-              <p role="cell">{item.working}</p>
-            </article>
-          ))}
+        <div className="comparison-table" role="table" aria-label="Legal review evidence">
+          <div className="comparison-header" role="row"><strong role="columnheader">Evidence</strong><strong role="columnheader">Current backend value</strong><strong role="columnheader">Review status</strong></div>
+          <article className="comparison-row" role="row"><div role="cell"><strong>Agreement draft</strong></div><p role="cell">{record.documents.find((item) => item.type === "working_draft")?.name || "No working draft document classified"}</p><p role="cell"><StatusBadge status={record.status} /></p></article>
+          <article className="comparison-row" role="row"><div role="cell"><strong>Legal-approved document</strong></div><p role="cell">{record.documents.find((item) => item.type === "legal_approved" && item.is_official)?.name || "Not yet uploaded as an official Legal-approved document"}</p><p role="cell"><StatusBadge tone={record.status === "legal_approved" ? "green" : "yellow"}>{record.status === "legal_approved" ? "Approved" : "Pending"}</StatusBadge></p></article>
+          <article className="comparison-row" role="row"><div role="cell"><strong>Confidentiality</strong></div><p role="cell">{humanize(record.confidentiality)}</p><p role="cell"><StatusBadge tone="blue">Backend controlled</StatusBadge></p></article>
         </div>
       </section>
 
       <div className="detail-grid">
         <section className="panel detail-main-card">
-          <div className="panel-head">
-            <div><h2>Legal comments</h2><p>Clause-level feedback and blocking issues</p></div>
-            <div className="panel-actions">
-              <StatusBadge tone={blockingCount ? "red" : "green"}>{blockingCount} blocking</StatusBadge>
-              {user.role === "legal" && record.stage === "legal_review" && (
-                <button className="secondary-button compact-button" onClick={() => setCommentOpen(true)}>
-                  <MessageSquarePlus size={16} /> Add Legal comment
-                </button>
-              )}
-            </div>
-          </div>
+          <div className="panel-head"><div><h2>Review comments and events</h2><p>Every displayed item is sourced from the agreement workflow history.</p></div></div>
           <div className="comment-list">
-            {(record.legal_comments || []).map((comment) => (
-              <article key={comment.id} className={comment.blocking && comment.status !== "resolved" ? "blocking" : ""}>
-                <div className="comment-head">
-                  <div><strong>{comment.clause}</strong><span>{comment.author} · {formatDateTime(comment.created_at)}</span></div>
-                  <StatusBadge status={comment.status} />
-                </div>
-                <p>{comment.text}</p>
-                <div className="comment-footer">
-                  {comment.blocking && <span className="blocking-label"><AlertTriangle size={14} /> Blocking comment</span>}
-                  {user.role === "legal" && comment.status !== "resolved" && (
-                    <button className="text-button" disabled={submitting} onClick={() => resolveComment(comment)}>
-                      <CheckCircle2 size={15} /> Mark resolved
-                    </button>
-                  )}
-                </div>
+            {reviewEvents.map((event) => (
+              <article key={event.id} className={["return_correction", "return_dvc"].includes(event.action) ? "blocking" : ""}>
+                <div className="comment-head"><div><strong>{humanize(event.action)}</strong><span>{event.actor?.full_name || "Accord360 user"} · {formatDateTime(event.created_at)}</span></div><StatusBadge tone={["return_correction", "return_dvc"].includes(event.action) ? "orange" : "blue"}>{humanize(event.to_stage)}</StatusBadge></div>
+                <p>{event.comment || "No comment was recorded for this workflow event."}</p>
+                {["return_correction", "return_dvc"].includes(event.action) && <div className="comment-footer"><span className="blocking-label"><AlertTriangle size={14} /> Requires correction and resubmission</span></div>}
               </article>
             ))}
-            {!record.legal_comments?.length && <EmptyState title="No Legal comments" text="Add a clause-level comment when an issue is identified." />}
+            {!reviewEvents.length && <EmptyState title="No review comments recorded" text="Workflow comments will appear here after a review action is completed." />}
           </div>
         </section>
 
         <aside className="panel detail-side-card">
-          <div className="panel-head"><div><h2>Structured corrections</h2><p>Direct links to exact required changes</p></div></div>
-          <div className="compact-list">
-            {(record.corrections || []).map((correctionId) => (
-              <Link key={correctionId} to={`/corrections/${correctionId}`}>
-                <span className="list-icon orange"><MessageSquareText /></span>
-                <div><strong>{correctionId.toUpperCase()}</strong><span>Open correction record</span></div>
-              </Link>
-            ))}
-            {!record.corrections?.length && <div className="inline-empty"><CheckCircle2 /> No correction records.</div>}
-          </div>
-          <div className="helper-note"><Scale size={16} /> Legal approval remains unavailable while a blocking comment is unresolved.</div>
+          <div className="panel-head"><div><h2>Correction response</h2><p>Corrections are derived from the agreement status and workflow comments.</p></div></div>
+          {record.status === "correction_required" || record.status === "dvc_returned" ? <Link className="quick-link-card" to={`/corrections/${record.id}`}><span className="list-icon orange"><AlertTriangle /></span><div><strong>Open correction workspace</strong><span>Review the latest return comment and resubmit the agreement.</span></div></Link> : <div className="inline-empty"><CheckCircle2 /> No active correction is recorded.</div>}
+          <div className="helper-note"><Scale size={16} /> Separate clause-level comments and resolution states require a future backend endpoint. This frontend does not call an endpoint that is not implemented.</div>
         </aside>
       </div>
 
       <Modal
         open={commentOpen}
         onClose={() => setCommentOpen(false)}
-        title="Add Legal comment"
-        description="Link the issue to an exact clause, field or document section. Blocking comments prevent Legal approval."
-        footer={<><button className="secondary-button" onClick={() => setCommentOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={addComment}>{submitting ? "Saving…" : "Add comment"}</button></>}
+        title="Return agreement for Legal correction"
+        description="This performs the implemented return_correction transition and stores the structured details in its comment."
+        footer={<><button className="secondary-button" onClick={() => setCommentOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={requestAmendment}>{submitting ? "Returning…" : "Return for correction"}</button></>}
       >
         <div className="form-grid single-column">
-          <label className="form-field"><span>Exact clause or section *</span><input value={commentForm.clause} onChange={(event) => setCommentForm({ ...commentForm, clause: event.target.value })} placeholder="Clause 7.2 — Intellectual Property" /></label>
-          <label className="form-field"><span>Legal comment *</span><textarea rows="5" value={commentForm.text} onChange={(event) => setCommentForm({ ...commentForm, text: event.target.value })} placeholder="Describe the issue and the exact amendment required." /></label>
-          <label className="consent-box"><input type="checkbox" checked={commentForm.blocking} onChange={(event) => setCommentForm({ ...commentForm, blocking: event.target.checked })} /><span>Mark as blocking. Legal approval cannot proceed until this comment is resolved.</span></label>
+          <label className="form-field"><span>Exact clause, field or document *</span><input value={form.exactItem} onChange={(event) => setForm({ ...form, exactItem: event.target.value })} placeholder="Clause 7.2 — Intellectual Property" /></label>
+          <label className="form-field"><span>Requested change *</span><textarea rows="4" value={form.requestedChange} onChange={(event) => setForm({ ...form, requestedChange: event.target.value })} /></label>
+          <label className="form-field"><span>Additional context</span><textarea rows="3" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /></label>
         </div>
       </Modal>
     </>

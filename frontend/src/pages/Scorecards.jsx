@@ -1,37 +1,39 @@
-import { CheckCircle2, Gauge, RefreshCw } from "lucide-react";
+import { Activity, Gauge, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import ErrorState from "../components/ErrorState";
-import LoadingState from "../components/LoadingState";
-import PageHeader from "../components/PageHeader";
-import StatusBadge from "../components/StatusBadge";
-import Toast from "../components/Toast";
-import { useAuth } from "../context/AuthContext";
-import { api } from "../lib/api";
-import { formatDate } from "../lib/format";
+import ErrorState from "../components/ErrorState.jsx";
+import LoadingState from "../components/LoadingState.jsx";
+import PageHeader from "../components/PageHeader.jsx";
+import StatusBadge from "../components/StatusBadge.jsx";
+import { getAgreement, listAgreements } from "../lib/backend.js";
+import { calculateAgreementScore } from "../lib/normalize.js";
 
 export default function Scorecards() {
-  const { user } = useAuth();
   const [records, setRecords] = useState(null);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const load = useCallback(() => { setError(""); api("/scorecards").then(setRecords).catch((requestError) => setError(requestError.message)); }, []);
-  useEffect(() => { load(); }, [load]);
-  if (error && !records) return <><PageHeader eyebrow="Partnership performance" title="Collaboration scorecards" /><ErrorState message={error} onRetry={load} /></>;
-  if (!records) return <LoadingState label="Loading collaboration scorecards" />;
-  async function recalculate(record) {
-    setSubmitting(true); setError("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setError("");
+    setRefreshing(true);
     try {
-      const updated = await api(`/scorecards/${record.id}/recalculate`, { method: "POST" });
-      setRecords((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setMessage("Scorecard recalculated using the active 100% weight configuration.");
-    } catch (requestError) { setError(requestError.message); }
-    finally { setSubmitting(false); }
-  }
+      const active = await listAgreements({ stage: "active" });
+      const details = await Promise.all(active.map((item) => getAgreement(item.id)));
+      setRecords(details.map((agreement) => ({ agreement, score: calculateAgreementScore(agreement) })));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (error && !records) return <><PageHeader eyebrow="Partnership performance" title="Collaboration scorecards" /><ErrorState message={error} onRetry={load} /></>;
+  if (!records) return <LoadingState label="Calculating score previews from agreement data" />;
+
   return <>
-    <Toast message={message} onClose={() => setMessage("")} /><Toast message={error} type="error" onClose={() => setError("")} />
-    <PageHeader eyebrow="Partnership performance" title="Collaboration scorecards" description="Weighted scorecards combine Champion, Linkages and automated system inputs. Executives view but do not alter operational scores." />
-    <div className="scorecard-stack">{records.map((record) => { const totalWeight = record.components.reduce((sum, item) => sum + Number(item.weight), 0); return <section className="panel scorecard" key={record.id}><div className="scorecard-head"><div><span className="section-kicker">{record.agreement_reference}</span><h2>{record.title}</h2><p>{record.partner_name}</p></div><div className="score-gauge"><strong>{record.overall_score}</strong><span>/100</span><StatusBadge tone="green">{record.category}</StatusBadge></div></div><div className="scorecard-grid"><div><div className="panel-head"><div><h3>Component breakdown</h3><p>Weighted inputs from verified system records</p></div><StatusBadge tone={totalWeight === 100 ? "green" : "red"}>{totalWeight}% total weight</StatusBadge></div><div className="score-components">{record.components.map((component) => <article key={component.key}><div><strong>{component.label}</strong><span>{component.source}</span></div><div className="component-score"><div><span style={{ width: `${component.score}%` }} /></div><b>{component.score}</b><small>{component.weight}% weight</small></div></article>)}</div></div><aside><h3>Score history</h3><div className="score-history-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={record.history}><CartesianGrid strokeDasharray="4 4" vertical={false} /><XAxis dataKey="period" tick={{ fontSize: 11 }} /><YAxis domain={[0, 100]} tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="score" fill="#1b5e3b" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div><dl className="aside-summary"><div><dt>Configuration version</dt><dd>{record.configuration_version}</dd></div><div><dt>Calculation date</dt><dd>{formatDate(record.calculation_date)}</dd></div><div><dt>Reviewer</dt><dd>{record.reviewer}</dd></div></dl>{["me", "linkages", "director_linkages"].includes(user.role) && <button className="secondary-button full-button" disabled={submitting || totalWeight !== 100} onClick={() => recalculate(record)}><RefreshCw size={17} /> Recalculate score</button>}</aside></div><div className="scorecard-footer"><CheckCircle2 /><span>Every component shows its data source, configuration version, reviewer and calculation history.</span></div></section>; })}</div>
+    <PageHeader eyebrow="Partnership performance" title="Collaboration scorecards" description="Scores are transparent frontend previews calculated from implemented deliverable, evidence, risk and value fields. No scorecard records are persisted because the backend has no scorecard endpoint." actions={<button className="secondary-button" disabled={refreshing} onClick={load}><RefreshCw size={17} /> {refreshing ? "Refreshing…" : "Recalculate previews"}</button>} meta={<span className="scope-note"><ShieldCheck size={15} /> Weight total 100%</span>} />
+    <div className="inline-alert info"><Gauge size={18} /><div><strong>Calculation only</strong><p>These values support review and UI testing. They are not official institutional scores until the backend provides a governed scoring model and persistence.</p></div></div>
+    <section className="scorecard-grid">{records.length ? records.map(({ agreement, score }) => <article className="panel scorecard-card" key={agreement.id}><div className="scorecard-head"><div><span className="section-kicker">{agreement.reference}</span><h2>{agreement.title}</h2><p>{agreement.partner_name} · {agreement.agreement_type}</p></div><div className="score-ring"><strong>{score.overall}</strong><span>/100</span></div></div><StatusBadge tone={score.overall >= 80 ? "green" : score.overall >= 60 ? "blue" : score.overall >= 40 ? "orange" : "red"}>{score.category}</StatusBadge><div className="score-components">{score.components.map((component) => <div key={component.name}><div><span>{component.name}</span><strong>{component.score}% · {component.weight}% weight</strong></div><div className="progress-track"><span style={{ width: `${component.score}%` }} /></div></div>)}</div><div className="score-source"><Activity size={16} /> Based on current deliverables, evidence IDs, status color and value records.</div></article>) : <section className="panel empty-state"><Gauge size={30} /><h2>No active agreements available</h2><p>Score previews require active agreements with backend-visible details.</p></section>}</section>
   </>;
 }

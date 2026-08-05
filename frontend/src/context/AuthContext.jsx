@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, USE_MOCK_API } from "../lib/api";
+import { USE_MOCK_API } from "../lib/api.js";
+import { getCurrentUser, loginRequest } from "../lib/backend.js";
 
 const AuthContext = createContext(null);
 
@@ -30,7 +31,7 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
-    api("/auth/me")
+    getCurrentUser()
       .then((data) => {
         setUser(data);
         localStorage.setItem("accord360_user", JSON.stringify(data));
@@ -47,10 +48,7 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     setSessionMessage("");
-    const data = await api("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password })
-    });
+    const data = await loginRequest(email, password);
     localStorage.setItem("accord360_token", data.access_token);
     localStorage.setItem("accord360_user", JSON.stringify(data.user));
     setUser(data.user);

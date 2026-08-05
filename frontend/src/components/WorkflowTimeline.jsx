@@ -3,7 +3,7 @@ import { WORKFLOW_STAGES, stageIndex } from "../lib/workflow";
 import { formatDate } from "../lib/format";
 
 export default function WorkflowTimeline({ agreement, compact = false }) {
-  const currentIndex = stageIndex(agreement.stage);
+  const currentIndex = stageIndex(agreement.stage, agreement.backend_stage, agreement.status);
   const history = agreement.lifecycle_history || [];
   return (
     <div className={`workflow-timeline ${compact ? "workflow-compact" : ""}`}>

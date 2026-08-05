@@ -1,42 +1,24 @@
-import { Mail } from "lucide-react";
+import { ArrowLeft, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
 
-  async function submit(event) {
+  function handleSubmit(event) {
     event.preventDefault();
-    setSubmitting(true);
-    setError("");
-    try {
-      await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
-      setSent(true);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setSubmitting(false);
-    }
+    setAcknowledged(true);
   }
 
-  return <div className="standalone-state-page">
-    <form className="standalone-state-card" onSubmit={submit}>
-      <Mail size={38} />
-      <span className="section-kicker">Account recovery</span>
-      <h1>Reset your password</h1>
-      <p>Enter the email registered with your JKUAT or partner account. For privacy, the confirmation does not reveal whether an account exists.</p>
-      {error && <div className="form-alert error">{error}</div>}
-      {sent
-        ? <div className="form-alert success">When an active account exists for <strong>{email}</strong>, the account service will send a secure reset link.</div>
-        : <label className="auth-field"><span>Registered email address</span><div><Mail size={18} /><input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div></label>}
-      <div className="state-actions">
-        {!sent && <button className="primary-button" disabled={submitting}>{submitting ? "Submitting…" : "Send secure reset link"}</button>}
-        <Link className="secondary-button" to="/login">Back to sign in</Link>
-      </div>
-    </form>
-  </div>;
+  return <main className="auth-page">
+      <section className="auth-card">
+        <div className="auth-logo"><span>360</span><div><strong>ACCORD360</strong><small>JKUAT PARTNERSHIPS</small></div></div>
+        <div className="auth-icon"><LockKeyhole /></div>
+        <h1>Password assistance</h1>
+        <p>The current backend does not expose a password-reset endpoint. This screen records no request and does not call an arbitrary URL.</p>
+        {acknowledged ? <div className="inline-alert info"><ShieldCheck size={18} /><div><strong>Contact the system administrator</strong><p>Ask an authorized administrator to assist with account access for <b>{email || "your official email"}</b>.</p></div></div> : <form onSubmit={handleSubmit} className="auth-form"><label><span>Registered email address</span><div className="input-with-icon"><Mail size={18} /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@jkuat.ac.ke" /></div></label><button className="primary-button full-width" type="submit">Show recovery guidance</button></form>}
+        <Link className="back-link" to="/login"><ArrowLeft size={16} /> Back to sign in</Link>
+      </section>
+  </main>;
 }

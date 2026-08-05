@@ -1,11 +1,4 @@
 export const ROLE_CONFIG = {
-  partner: {
-    label: "External Partner",
-    workspace: "Partner Collaboration Portal",
-    home: "/partner/dashboard",
-    shortDescription: "Track shared requests, complete required actions and exchange approved documents.",
-    scope: "partner"
-  },
   researcher: {
     label: "Researcher / Initiator",
     workspace: "Researcher & Champion Workspace",
@@ -17,14 +10,14 @@ export const ROLE_CONFIG = {
     label: "Faculty / Department Approver",
     workspace: "Faculty Approval Workspace",
     home: "/approvals",
-    shortDescription: "Review academic fit and expected outcomes within your faculty scope.",
+    shortDescription: "Review academic fit and expected outcomes within your department scope.",
     scope: "faculty"
   },
   linkages: {
     label: "Linkages Officer",
     workspace: "Linkages Operations Workspace",
     home: "/linkages",
-    shortDescription: "Verify partners, coordinate reviews and move complete records through the lifecycle.",
+    shortDescription: "Coordinate partner records, reviews and agreement hand-offs.",
     scope: "all"
   },
   director_linkages: {
@@ -38,7 +31,7 @@ export const ROLE_CONFIG = {
     label: "Legal Reviewer",
     workspace: "Legal Review Workspace",
     home: "/legal",
-    shortDescription: "Review clauses, manage amendments and lock the approved legal version.",
+    shortDescription: "Review clauses, return amendments and approve legally complete drafts.",
     scope: "assigned"
   },
   dvc: {
@@ -46,21 +39,14 @@ export const ROLE_CONFIG = {
     workspace: "DVC RPE Endorsement Workspace",
     home: "/dvc",
     shortDescription: "Endorse legally approved packages before VC submission.",
-    scope: "assigned"
+    scope: "all_read"
   },
   vc_office: {
     label: "VC Office",
     workspace: "VC Submission & Signing Workspace",
     home: "/signing",
-    shortDescription: "Manage complete submission packages and JKUAT/partner signature milestones.",
-    scope: "assigned"
-  },
-  me: {
-    label: "M&E Officer",
-    workspace: "Monitoring & Evaluation Workspace",
-    home: "/monitoring",
-    shortDescription: "Validate six-month reports, evidence, deliverables and partnership scores.",
-    scope: "active"
+    shortDescription: "Manage VC signature and partner execution milestones.",
+    scope: "signing"
   },
   executive: {
     label: "Executive Viewer",
@@ -69,11 +55,18 @@ export const ROLE_CONFIG = {
     shortDescription: "View portfolio performance, risk and value without operational editing.",
     scope: "read_all"
   },
+  me: {
+    label: "M&E Officer",
+    workspace: "Monitoring & Evaluation Workspace",
+    home: "/monitoring",
+    shortDescription: "Update deliverables, evidence and partnership value records.",
+    scope: "active"
+  },
   admin: {
     label: "System Administrator",
     workspace: "System Administration Console",
     home: "/admin",
-    shortDescription: "Manage users, reference data and configuration without business approvals.",
+    shortDescription: "Manage users and inspect technical configuration without business approvals.",
     scope: "admin"
   },
   auditor: {
@@ -86,8 +79,8 @@ export const ROLE_CONFIG = {
 };
 
 export const ALL_ROLES = Object.keys(ROLE_CONFIG);
-export const INTERNAL_ROLES = ALL_ROLES.filter((role) => role !== "partner");
-export const READ_ONLY_ROLES = ["executive", "auditor"];
+export const INTERNAL_ROLES = ALL_ROLES;
+export const READ_ONLY_ROLES = ["executive", "auditor", "admin"];
 
 export function roleConfig(role) {
   return ROLE_CONFIG[role] || {
@@ -108,5 +101,5 @@ export function canCreateAgreement(role) {
 }
 
 export function canViewAllAgreements(role) {
-  return ["linkages", "director_linkages", "executive", "admin", "auditor"].includes(role);
+  return ["linkages", "director_linkages", "executive", "admin", "auditor", "dvc"].includes(role);
 }
