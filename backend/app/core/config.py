@@ -28,6 +28,7 @@ class Settings:
     storage_region: str = os.getenv("AWS_REGION", "us-east-2")
     storage_bucket: str = os.getenv("AWS_BUCKET_NAME", "accord-360")
     seed_demo_data: bool = env_bool("SEED_DEMO_DATA", True)
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
