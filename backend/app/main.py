@@ -6,6 +6,8 @@ import uuid
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from .core.config import settings
 from .db.base import Base
@@ -92,4 +94,15 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "environment": settings.environment}
+    """Report application and database readiness for Compose/load balancers."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("database_healthcheck_failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "environment": settings.environment, "database": "unavailable"},
+        )
+
+    return {"status": "healthy", "environment": settings.environment, "database": "connected"}
