@@ -91,20 +91,41 @@ The API is then available at `http://127.0.0.1:8000`.
 
 ## Run with Docker Compose
 
-The project-level `docker-compose.yml` starts PostgreSQL, this backend and the
-frontend together. From the repository root:
+To run the backend with its own lightweight PostgreSQL container, from this
+directory:
 
 ```bash
-docker compose up --build
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up --build
 ```
 
-The backend container:
+The Compose stack starts PostgreSQL and the backend on the same private
+network. The backend connects using the service hostname `database` (not
+`localhost`) and:
 
 1. Installs the pinned Python dependencies.
 2. Runs `alembic upgrade head` before serving traffic.
 3. Starts Uvicorn on `0.0.0.0:8000`.
-4. Stores local uploads in the named `accord360_uploads` volume when object
+4. Seeds demo users and agreements when `SEED_DEMO_DATA=true`.
+5. Stores local uploads in the named `accord360_uploads` volume when object
    storage is disabled.
+
+The database is persisted in the named `accord360_postgres` volume. Verify the
+complete API-to-database connection with:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy","environment":"development","database":"connected"}
+```
+
+If a frontend is running on port 5173 or 8080, add its origin to
+`CORS_ORIGINS` in `.env.docker`. The existing project-level Compose file can
+still run the frontend and use the same backend/database arrangement.
 
 PostgreSQL data is persisted in `accord360_postgres`. The database service is
 health-checked before the backend starts. Stop the stack with:
