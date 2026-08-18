@@ -42,7 +42,7 @@ app/
 │       ├── models.py                 # Workflow, M&E, notification, and audit mappings
 │       └── service.py                # Transitions, SLA/risk rules, and notifications
 └── utils/
-    └── storage.py                    # Neon S3-compatible object-storage adapter
+    └── storage.py                    # S3-compatible object-storage adapter
 ```
 
 ## Request flow
@@ -57,7 +57,8 @@ app/
    supplied by the router.
 5. The router returns a Pydantic response schema.
 
-Document bytes are stored in the configured Neon S3-compatible bucket. The
+Document bytes are stored in the configured S3-compatible bucket (MinIO in the
+Docker Compose deployment). The
 `documents` table stores the object key in `stored_name` plus the original
 filename, MIME type, size, uploader, confidentiality, and lifecycle metadata.
 Downloads stream bytes from object storage after the existing authorization
@@ -84,11 +85,11 @@ Important environment variables include:
 - `SECRET_KEY`: required to be non-development in production.
 - `ENVIRONMENT`: use `test` for test database initialization.
 - `SEED_DEMO_DATA`: controls demo users and agreements.
-- `OBJECT_STORAGE_ENABLED`: enables Neon object storage outside test environments.
-- `AWS_ENDPOINT_URL_S3`: Neon S3-compatible endpoint.
+- `OBJECT_STORAGE_ENABLED`: enables S3-compatible object storage outside test environments.
+- `AWS_ENDPOINT_URL_S3`: S3-compatible endpoint, such as `http://minio:9000` in Docker Compose.
 - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: object-storage credentials.
-- `AWS_REGION`: storage region, normally `us-east-2` for the configured endpoint.
-- `AWS_BUCKET_NAME`: configured bucket, currently `accord-360`.
+- `AWS_REGION`: storage region, normally `us-east-2` for the Docker Compose configuration.
+- `AWS_BUCKET_NAME`: configured bucket, normally `accord-360`.
 - `UPLOAD_DIR`: local fallback directory used by tests or when object storage is disabled.
 
 ## Local development

@@ -99,19 +99,34 @@ cp .env.docker.example .env.docker
 docker compose --env-file .env.docker up --build
 ```
 
-The Compose stack starts PostgreSQL and the backend on the same private
-network. The backend connects using the service hostname `database` (not
-`localhost`) and:
+The Compose stack starts PostgreSQL, MinIO, a one-time MinIO bucket
+initializer, and the backend on the same private network. The backend connects
+using the service hostnames `database` and `minio` (not `localhost`) and:
 
 1. Installs the pinned Python dependencies.
-2. Runs `alembic upgrade head` before serving traffic.
-3. Starts Uvicorn on `0.0.0.0:8000`.
-4. Seeds demo users and agreements when `SEED_DEMO_DATA=true`.
-5. Stores local uploads in the named `accord360_uploads` volume when object
-   storage is disabled.
+2. Waits for PostgreSQL and MinIO to become healthy.
+3. Creates the `accord-360` bucket automatically if it does not exist.
+4. Runs `alembic upgrade head` before serving traffic.
+5. Starts Uvicorn on `0.0.0.0:8000`.
+6. Seeds demo users and agreements when `SEED_DEMO_DATA=true`.
+7. Stores uploaded documents in the named `accord360_minio` volume through
+   MinIO's S3-compatible API.
 
-The database is persisted in the named `accord360_postgres` volume. Verify the
-complete API-to-database connection with:
+Changed storage setup:
+
+- MinIO replaces the previously configured Neon S3-compatible bucket for the
+  Docker Compose deployment.
+- MinIO's S3 API is available at `http://127.0.0.1:9000`.
+- The MinIO web console is available at `http://127.0.0.1:9001`.
+- The `minio-init` service creates the bucket automatically, so no manual
+  bucket setup is needed for a fresh Compose deployment.
+- Change `MINIO_ROOT_PASSWORD` in `.env.docker` before sharing or deploying.
+- The `accord360_minio` volume must be backed up in environments where
+  uploaded documents need to survive host or disk failure.
+
+The database and object storage are persisted in the named
+`accord360_postgres` and `accord360_minio` volumes. Verify the complete
+API-to-database and object-storage-backed application with:
 
 ```bash
 curl http://127.0.0.1:8000/health
@@ -127,8 +142,9 @@ If a frontend is running on port 5173 or 8080, add its origin to
 `CORS_ORIGINS` in `.env.docker`. The existing project-level Compose file can
 still run the frontend and use the same backend/database arrangement.
 
-PostgreSQL data is persisted in `accord360_postgres`. The database service is
-health-checked before the backend starts. Stop the stack with:
+PostgreSQL data is persisted in `accord360_postgres`, and MinIO data is
+persisted in `accord360_minio`. Both services are health-checked before the
+backend starts. Stop the stack with:
 
 ```bash
 docker compose down
