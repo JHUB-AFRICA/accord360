@@ -1,24 +1,31 @@
 # Requirements Traceability Summary
 
-| BRD capability | Implementation location |
-|---|---|
-| Secure researcher submission | `frontend/src/pages/AgreementForm.jsx`, `POST /api/agreements` |
-| Personalized tracking | Agreements list/detail with role scoping |
-| Partner records | Partners page and `/api/partners` |
-| Department approval | Workflow transition `approve_department` |
-| Linkages review | `approve_linkages` and `send_legal` transitions |
-| Legal review | Legal role, legal stage, SLA risk calculation |
-| Signing and activation | Signing dates, signed status, activation validation |
-| Lifecycle tracker | Agreements page, stage/status/next-action fields |
-| Executive KPIs | `/api/dashboard/stats`, dashboard KPI cards |
-| M&E targets and actuals | Deliverables endpoints and agreement M&E tab |
-| Value generated | Value records and dashboard total |
-| Alerts and notifications | Notification model and workflow notifications |
-| Expiry and legal risk colors | `refresh_risk_status` service |
-| Document repository | Upload API, filesystem storage and document tab |
-| Reports and exports | CSV endpoint and Reports page |
-| Role-based access | JWT, role dependencies and scoped queries |
-| Audit trail | Audit model, helper and audit report |
-| Responsive layout | `frontend/src/styles.css` media queries |
-| PostgreSQL deployment | `docker-compose.yml` |
+Status meanings: **Implemented** = covered and verified in the current code; **Partial** = useful MVP coverage but material BRD elements remain; **Backlog** = not yet implemented.
 
+| BRD/SRS capability | Status | Current implementation / remaining work |
+|---|---|---|
+| Secure researcher submission | Implemented | `AgreementForm.jsx`, `POST /api/agreements`, unique persisted-ID reference |
+| Personalized progress tracking | Implemented | Scoped register/detail, stage, status, next action, legal days and expiry days |
+| Partner registry | Partial | Partner records exist; duplicate-resolution and full history remain |
+| Department/faculty approval | Implemented | Scoped approver access and controlled `approve_department` transition |
+| Linkages review | Implemented | Separate `approve_linkages` and `send_legal` controls |
+| Legal review workspace | Partial | Role scope, reviewer fields, version metadata and SLA state exist; comments workspace/clause tools remain |
+| Draft version control | Partial | Document versions and official flags exist; richer comparison/approval workflow remains |
+| Signing and activation | Implemented | Ordered status controls and activation prerequisites enforced |
+| Lifecycle tracker | Implemented | Register and detail views expose stage, status, color, owner and next action |
+| Executive KPI dashboard | Partial | Active, pipeline, risk, stage/type and currency-separated values; drill-down and full trend set remain |
+| M&E targets, actuals and evidence | Partial | Deliverables and evidence linkage supported; reporting schedules and richer evidence workflow remain |
+| Dormancy and expiry guardrails | Implemented | 180-day dormancy, six-month warning, 90-day critical expiry and 21-day legal SLA |
+| Notifications and escalations | Partial | In-app workflow notifications exist; scheduled checks, email and escalation hierarchy remain |
+| Controlled document repository | Implemented | Authenticated downloads, confidentiality scope, official versions and audit |
+| Reports and exports | Partial | Scoped, filtered, timestamped CSV; full PDF/XLSX report catalogue remains |
+| Role-based access control | Implemented | Centralized organizational and record scope for core modules |
+| Audit trail | Partial | Material actions are logged; tamper-evident storage/retention enforcement remains |
+| Administration/configuration | Backlog | User administration exists; templates, SLAs, workflows, categories and alerts need governed configuration |
+| Template and clause library | Backlog | No controlled template generation or clause library yet |
+| SSO, e-signature, ERP and BI integration | Backlog | Architecture remains integration-ready only |
+| Historical migration | Backlog | Migration templates, deduplication and reconciliation are not implemented |
+| Performance, availability and recovery | Partial | Basic health endpoint/Docker deployment; formal load tests, monitoring, backups and RTO remain |
+| Accessibility and usability verification | Partial | Responsive UI exists; formal WCAG/keyboard/screen-reader testing remains |
+
+See `docs/REQUIREMENTS_GAP_ANALYSIS.md` for the full findings and prioritized backlog.

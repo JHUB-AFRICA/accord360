@@ -40,12 +40,14 @@ Use the demo accounts in `README.md`. Tick each item after testing.
 ## E. Workflow roles
 
 - [ ] Approver can approve the departmental stage
-- [ ] Linkages can route the request to Legal
+- [ ] Linkages can approve its review, then separately route the request to Legal
 - [ ] Legal can approve the draft
 - [ ] Linkages can send the agreement for signing
 - [ ] Linkages can mark the agreement fully signed
 - [ ] Activation fails when required fields are missing
-- [ ] Fill effective date, expiry date, champion and partner liaison
+- [ ] Fill signing/effective/expiry dates, champion and partner liaison
+- [ ] Add at least one M&E deliverable target
+- [ ] Upload and designate the official signed agreement
 - [ ] Activation succeeds
 - [ ] Workflow history shows each action, actor and time
 - [ ] Invalid role or invalid-stage action is blocked
@@ -54,7 +56,8 @@ Use the demo accounts in `README.md`. Tick each item after testing.
 
 - [ ] Upload a PDF or Word document
 - [ ] Uploaded file appears in the repository
-- [ ] File opens from the repository
+- [ ] File downloads only through an authenticated API route
+- [ ] Confidential file metadata and download are hidden from unauthorized roles
 - [ ] Version and document type are displayed
 - [ ] Unsupported file type is rejected
 - [ ] File larger than 25 MB is rejected
@@ -65,21 +68,21 @@ Use the demo accounts in `README.md`. Tick each item after testing.
 - [ ] Progress bar updates
 - [ ] Add a financial/resource value record
 - [ ] Value appears on the agreement
-- [ ] Dashboard total value updates
+- [ ] Dashboard value updates without combining different currencies
 
 ## H. Dashboard
 
 - [ ] Active partnership KPI is accurate
 - [ ] Pipeline KPI is accurate
 - [ ] At-risk KPI is accurate
-- [ ] Total value KPI is accurate
+- [ ] Value-by-currency KPI is accurate
 - [ ] Agreement type chart displays
 - [ ] Lifecycle stage chart displays
 - [ ] Recent agreements open correctly
 
 ## I. Reports and administration
 
-- [ ] CSV agreement register downloads
+- [ ] Scoped CSV agreement register downloads with generation time and applied filters
 - [ ] Administrator can create a user
 - [ ] Administrator can change a user's role
 - [ ] Audit trail records creation, updates, workflow and uploads

@@ -1,46 +1,89 @@
-import { useEffect, useState } from "react";
-import { Building2, Plus } from "lucide-react";
-import EmptyState from "../components/EmptyState";
-import PageHeader from "../components/PageHeader";
-import Toast from "../components/Toast";
-import { api } from "../lib/api";
+import { Building2, Filter, Plus, Search, UserCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import DataTable from "../components/DataTable.jsx";
+import ErrorState from "../components/ErrorState.jsx";
+import FormField from "../components/FormField.jsx";
+import LoadingState from "../components/LoadingState.jsx";
+import Modal from "../components/Modal.jsx";
+import PageHeader from "../components/PageHeader.jsx";
+import StatusBadge from "../components/StatusBadge.jsx";
+import Toast from "../components/Toast.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import { createPartner, listPartners } from "../lib/backend.js";
 
-const initial = { name: "", sector: "", partner_type: "Institution", country: "Kenya", contact_name: "", contact_email: "", legal_counterpart: "", liaison: "", status: "active" };
+const emptyForm = { name: "", sector: "", partner_type: "Institution", country: "Kenya", contact_name: "", contact_email: "", legal_counterpart: "", liaison: "", status: "active" };
 
 export default function Partners() {
-  const [items, setItems] = useState([]);
-  const [form, setForm] = useState(initial);
-  const [showForm, setShowForm] = useState(false);
-  const [message, setMessage] = useState("");
+  const { user } = useAuth();
+  const location = useLocation();
+  const initialStatus = new URLSearchParams(location.search).get("status") || "";
+  const [filters, setFilters] = useState({ search: "", status: initialStatus });
+  const [records, setRecords] = useState(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+  const canCreate = ["researcher", "linkages", "director_linkages"].includes(user.role);
+  const canVerify = ["linkages", "director_linkages"].includes(user.role);
 
-  async function load() { setItems(await api("/partners")); }
-  useEffect(() => { load(); }, []);
-  async function submit(event) {
-    event.preventDefault();
+  const load = useCallback(() => {
+    setError("");
+    listPartners().then(setRecords).catch((requestError) => setError(requestError.message));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filteredRecords = useMemo(() => {
+    if (!records) return null;
+    const search = filters.search.trim().toLowerCase();
+    return records.filter((item) => {
+      const matchesSearch = !search || [item.name, item.country, item.sector, item.partner_type].some((value) => String(value || "").toLowerCase().includes(search));
+      const matchesStatus = !filters.status || item.status === filters.status;
+      return matchesSearch && matchesStatus;
+    });
+  }, [records, filters]);
+
+  async function create() {
+    if (form.name.trim().length < 2 || form.sector.trim().length < 2) {
+      setError("Partner name and sector are required.");
+      return;
+    }
+    setSubmitting(true);
     try {
-      await api("/partners", { method: "POST", body: JSON.stringify({ ...form, contact_email: form.contact_email || null }) });
-      setMessage("Partner created."); setForm(initial); setShowForm(false); await load();
-    } catch (err) { setError(err.message); }
+      await createPartner({ ...form, contact_email: form.contact_email || null });
+      setForm(emptyForm);
+      setShowCreate(false);
+      setMessage("Partner created.");
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  return (
-    <>
-      <Toast message={message} onClose={() => setMessage("")} /><Toast message={error} type="error" onClose={() => setError("")} />
-      <PageHeader eyebrow="Partner registry" title="Partners" description="Maintain clean partner profiles, contacts, legal counterparts and institutional history." actions={<button className="primary-button" onClick={() => setShowForm(!showForm)}><Plus size={18} /> Add partner</button>} />
-      {showForm && <form className="panel form-section partner-form" onSubmit={submit}>
-        <div className="panel-head"><div><h3>New partner profile</h3><p>Create one authoritative record and prevent duplicate entries.</p></div></div>
-        <div className="form-grid form-grid-3">
-          {Object.entries(form).map(([key, value]) => key === "partner_type" ? <label key={key}>Partner type<select value={value} onChange={(e) => setForm({ ...form, [key]: e.target.value })}><option>Institution</option><option>University</option><option>Company</option><option>Government</option><option>NGO</option><option>Development Partner</option></select></label> : key === "status" ? <label key={key}>Status<select value={value} onChange={(e) => setForm({ ...form, [key]: e.target.value })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label> : <label key={key}>{key.replaceAll("_", " ")}<input type={key === "contact_email" ? "email" : "text"} required={["name", "sector"].includes(key)} value={value} onChange={(e) => setForm({ ...form, [key]: e.target.value })} /></label>)}
-        </div><button className="primary-button"><Plus size={17} /> Save partner</button>
-      </form>}
-      {items.length === 0 ? <div className="panel"><EmptyState title="No partners found" /></div> : <div className="partner-grid">{items.map((item) => (
-        <article className="partner-card panel" key={item.id}>
-          <div className="partner-card-top"><div className="partner-avatar"><Building2 size={22} /></div><span className={`partner-status ${item.status}`}>{item.status}</span></div>
-          <h3>{item.name}</h3><p>{item.sector} · {item.country}</p>
-          <div className="partner-meta"><div><span>Type</span><strong>{item.partner_type}</strong></div><div><span>Contact</span><strong>{item.contact_name || "Not set"}</strong></div><div><span>Liaison</span><strong>{item.liaison || "Not set"}</strong></div></div>
-        </article>
-      ))}</div>}
-    </>
-  );
+  const columns = useMemo(() => [
+    { key: "name", label: "Institution", render: (item) => <div className="partner-name-cell"><span className="partner-table-icon"><Building2 size={18} /></span><div><strong>{item.name}</strong><span>{item.sector}</span></div></div> },
+    { key: "country", label: "Country" },
+    { key: "partner_type", label: "Partner type" },
+    { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> },
+    { key: "contact_name", label: "Contact" },
+    { key: "contact_email", label: "Email" },
+    { key: "action", label: "Action", render: (item) => canVerify ? <Link className="text-link" to={`/partners/${item.id}/verify`}><UserCheck size={15} /> Review</Link> : <Link className="text-link" to={`/partners/${item.id}`}>View profile</Link> }
+  ], [canVerify]);
+
+  return <>
+    <Toast message={message} onClose={() => setMessage("")} />
+    <Toast message={error} type="error" onClose={() => setError("")} />
+    <PageHeader eyebrow="Partner management" title="Partner institution registry" description="GET /partners returns the complete authenticated partner registry; search and status filtering are applied locally." actions={canCreate && <button className="primary-button" onClick={() => setShowCreate(true)}><Plus size={17} /> Add partner</button>} />
+    <section className="panel filter-panel"><div className="search-field"><Search size={18} /><input placeholder="Search institution, country or sector…" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></div><div className="filter-controls always-open"><Filter size={17} /><select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">All statuses</option><option value="active">Active</option><option value="under_review">Under review</option><option value="additional_information_required">Additional information required</option><option value="rejected">Rejected</option><option value="inactive">Inactive</option></select></div></section>
+    <section className="panel data-panel"><div className="panel-head"><div><h2>Partner records</h2><p>{filteredRecords ? `${filteredRecords.length} institution${filteredRecords.length === 1 ? "" : "s"}` : "Loading institutions"}</p></div></div>{error && !records ? <ErrorState message={error} onRetry={load} /> : !filteredRecords ? <LoadingState label="Loading partner registry" /> : <DataTable columns={columns} rows={filteredRecords} onRowClick={(item) => navigate(`/partners/${item.id}`)} emptyTitle="No partner institutions match these filters" />}</section>
+
+    <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Add partner institution" description="This uses the implemented POST /partners endpoint." footer={<><button className="secondary-button" onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={create}>{submitting ? "Creating…" : "Create partner"}</button></>}>
+      <div className="form-grid"><FormField label="Institution name" required><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></FormField><FormField label="Sector" required><input value={form.sector} onChange={(event) => setForm({ ...form, sector: event.target.value })} /></FormField><FormField label="Partner type"><input value={form.partner_type} onChange={(event) => setForm({ ...form, partner_type: event.target.value })} /></FormField><FormField label="Country"><input value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })} /></FormField><FormField label="Contact name"><input value={form.contact_name} onChange={(event) => setForm({ ...form, contact_name: event.target.value })} /></FormField><FormField label="Contact email"><input type="email" value={form.contact_email} onChange={(event) => setForm({ ...form, contact_email: event.target.value })} /></FormField><FormField label="Legal counterpart"><input value={form.legal_counterpart} onChange={(event) => setForm({ ...form, legal_counterpart: event.target.value })} /></FormField><FormField label="Partner liaison"><input value={form.liaison} onChange={(event) => setForm({ ...form, liaison: event.target.value })} /></FormField></div>
+    </Modal>
+  </>;
 }
