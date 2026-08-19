@@ -1,282 +1,223 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, Download, FileCheck2, FileText, History, Pencil, Plus, Save, Upload } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
-import EmptyState from "../components/EmptyState";
-import LifecycleStrip from "../components/LifecycleStrip";
-import PageHeader from "../components/PageHeader";
-import SlaBadge from "../components/SlaBadge";
-import StatusBadge from "../components/StatusBadge";
-import Toast from "../components/Toast";
-import { useAuth } from "../context/AuthContext";
-import { api } from "../lib/api";
+import {
+  AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, FileCheck2, FileLock2,
+  FileText, History, Paperclip, RefreshCw, ShieldCheck, UploadCloud
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import DocumentRepository from "../components/DocumentRepository.jsx";
+import EmptyState from "../components/EmptyState.jsx";
+import ErrorState from "../components/ErrorState.jsx";
+import LegalReviewPanel from "../components/LegalReviewPanel.jsx";
+import LoadingState from "../components/LoadingState.jsx";
+import Modal from "../components/Modal.jsx";
+import PageHeader from "../components/PageHeader.jsx";
+import StatusBadge from "../components/StatusBadge.jsx";
+import Toast from "../components/Toast.jsx";
+import WorkflowTimeline from "../components/WorkflowTimeline.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import {
+  createDeliverable,
+  getAgreement,
+  transitionAgreement,
+  updateAgreement,
+  uploadAgreementDocument
+} from "../lib/backend.js";
+import { formatCurrency, formatDate, formatDateTime, humanize } from "../lib/format.js";
+import { calculateAgreementScore } from "../lib/normalize.js";
+import { getAvailableActions, stageLabel } from "../lib/workflow.js";
 
-const actions = [
-  { key: "submit", label: "Submit request", stages: ["initiation"], roles: ["researcher", "admin", "linkages"] },
-  { key: "approve_department", label: "Approve department", stages: ["department_approval"], roles: ["approver", "admin"] },
-  { key: "return_correction", label: "Return for correction", stages: ["department_approval", "linkages_review", "legal_review"], roles: ["approver", "linkages", "legal", "admin"] },
-  { key: "approve_linkages", label: "Approve to legal", stages: ["linkages_review"], roles: ["linkages", "admin"] },
-  { key: "send_legal", label: "Send to legal", stages: ["linkages_review"], roles: ["linkages", "admin"] },
-  { key: "approve_legal", label: "Approve legal draft", stages: ["legal_review"], roles: ["legal", "admin"] },
-  { key: "send_signing", label: "Send for signing", stages: ["validation_signing"], roles: ["linkages", "admin"] },
-  { key: "mark_signed", label: "Mark fully signed", stages: ["validation_signing"], roles: ["linkages", "admin"] },
-  { key: "activate", label: "Activate agreement", stages: ["validation_signing"], roles: ["linkages", "admin"] },
-  { key: "renew", label: "Start renewal", stages: ["active"], roles: ["linkages", "executive", "admin"] },
-  { key: "close", label: "Close", stages: ["active", "renewal_closure"], roles: ["linkages", "executive", "admin"] },
-  { key: "archive", label: "Archive", stages: ["renewal_closure"], roles: ["linkages", "admin"] },
-  { key: "reject", label: "Reject", stages: ["department_approval", "linkages_review", "legal_review", "validation_signing"], roles: ["approver", "linkages", "legal", "executive", "admin"] }
+const tabs = [
+  ["overview", "Overview"], ["workflow", "Workflow"], ["documents", "Documents"],
+  ["template", "Draft & template"], ["corrections", "Reviews & corrections"],
+  ["signing", "Signing"], ["monitoring", "M&E"], ["history", "Activity history"]
 ];
 
-export default function AgreementDetail() {
+function InfoItem({ label, children }) {
+  return <div className="info-item"><span>{label}</span><strong>{children || "—"}</strong></div>;
+}
+
+function latestEvent(record, action) {
+  return [...(record.workflow_events || [])].reverse().find((event) => event.action === action);
+}
+
+export default function AgreementDetail({ defaultTab = "overview" }) {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const [item, setItem] = useState(null);
-  const [tab, setTab] = useState("overview");
-  const [message, setMessage] = useState("");
+  const [record, setRecord] = useState(null);
   const [error, setError] = useState("");
-  const [upload, setUpload] = useState({ file: null, document_type: "supporting", version: "1.0", is_official: false });
-  const [deliverable, setDeliverable] = useState({ deliverable_type: "Internships", target_value: 0, actual_value: 0, reporting_period: "2026", notes: "" });
-  const [valueRecord, setValueRecord] = useState({ value_type: "Research grant", amount: 0, currency: "KES", reporting_period: "2026", source: "" });
-  const [edit, setEdit] = useState({});
+  const [message, setMessage] = useState("");
+  const [action, setAction] = useState(null);
+  const emptyActionForm = { reason: "", exact_item: "", requested_change: "", effective_date: "", expiry_date: "", partner_liaison: "", initial_deliverable: "", document: null };
+  const [actionForm, setActionForm] = useState(emptyActionForm);
+  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+  const tab = searchParams.get("tab") || defaultTab;
 
-  async function load() {
-    const data = await api(`/agreements/${id}`);
-    setItem(data);
-    setEdit({
-      internal_champion: data.internal_champion || "",
-      partner_liaison: data.partner_liaison || "",
-      effective_date: data.effective_date || "",
-      expiry_date: data.expiry_date || "",
-      date_sent_vc: data.date_sent_vc || "",
-      date_sent_partner: data.date_sent_partner || "",
-      signing_date: data.signing_date || "",
-      next_action: data.next_action || ""
-    });
+  const load = useCallback(() => {
+    setError("");
+    getAgreement(id).then(setRecord).catch((requestError) => setError(requestError.message));
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const availableActions = useMemo(() => getAvailableActions(record, user.role), [record, user.role]);
+  const score = useMemo(() => calculateAgreementScore(record), [record]);
+
+  function buildComment() {
+    const parts = [actionForm.reason.trim()];
+    if (actionForm.exact_item.trim()) parts.push(`Exact item: ${actionForm.exact_item.trim()}`);
+    if (actionForm.requested_change.trim()) parts.push(`Requested change: ${actionForm.requested_change.trim()}`);
+    return parts.filter(Boolean).join("\n");
   }
-  useEffect(() => { load().catch((err) => setError(err.message)); }, [id]);
 
-  async function transition(action) {
-    const requiresReason = ["return_correction", "reject"].includes(action);
-    const promptText = requiresReason ? "A reason is required for this action:" : "Add a workflow comment (optional):";
-    const comment = window.prompt(promptText, "");
-    if (comment === null) return;
-    if (requiresReason && !comment.trim()) {
-      setError("A reason is required when returning or rejecting a request.");
+  async function performAction() {
+    if (!action) return;
+    const requiresReason = action.requiresReason || ["return_correction", "return_dvc", "reject", "close"].includes(action.key);
+    if (requiresReason && !actionForm.reason.trim()) {
+      setError("A detailed reason is required for this decision.");
       return;
     }
-    try {
-      await api(`/agreements/${id}/transition`, { method: "POST", body: JSON.stringify({ action, comment: comment.trim() || null }) });
-      setMessage("Workflow updated successfully.");
-      await load();
-    } catch (err) { setError(err.message); }
-  }
-
-  async function saveDetails(event) {
-    event.preventDefault();
-    const payload = { ...edit };
-    Object.keys(payload).forEach((key) => { if (payload[key] === "") payload[key] = null; });
-    try {
-      await api(`/agreements/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-      setMessage("Agreement details saved.");
-      await load();
-    } catch (err) { setError(err.message); }
-  }
-
-  async function uploadFile(event) {
-    event.preventDefault();
-    if (!upload.file) return;
-    const data = new FormData();
-    data.append("file", upload.file);
-    data.append("document_type", upload.document_type);
-    data.append("version", upload.version);
-    data.append("is_official", upload.is_official);
-    try {
-      await api(`/agreements/${id}/documents`, { method: "POST", body: data });
-      setMessage("Document uploaded.");
-      setUpload({ file: null, document_type: "supporting", version: "1.0", is_official: false });
-      await load();
-    } catch (err) { setError(err.message); }
-  }
-
-  async function addDeliverable(event) {
-    event.preventDefault();
-    try {
-      await api(`/agreements/${id}/deliverables`, { method: "POST", body: JSON.stringify(deliverable) });
-      setMessage("Deliverable added.");
-      await load();
-    } catch (err) { setError(err.message); }
-  }
-
-  async function updateDeliverable(row) {
-    const raw = window.prompt(`Update actual value for ${row.deliverable_type}:`, String(row.actual_value));
-    if (raw === null) return;
-    const actual = Number(raw);
-    if (Number.isNaN(actual) || actual < 0) {
-      setError("Enter a valid non-negative actual value.");
+    if (["return_correction", "return_dvc"].includes(action.key) && (!actionForm.exact_item.trim() || !actionForm.requested_change.trim())) {
+      setError("Identify the exact field, document or clause and state the requested change.");
       return;
     }
+    if (action.key === "upload_official_signed" && !actionForm.document) {
+      setError("Choose the fully signed PDF before continuing.");
+      return;
+    }
+    if (action.key === "activate" && (!actionForm.effective_date || !actionForm.expiry_date || !actionForm.partner_liaison.trim() || (!record.deliverables.length && !actionForm.initial_deliverable.trim()))) {
+      setError("Activation requires effective and expiry dates, a partner liaison and at least one deliverable target.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
     try {
-      await api(`/agreements/${id}/deliverables/${row.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          deliverable_type: row.deliverable_type,
-          target_value: Number(row.target_value),
-          actual_value: actual,
-          reporting_period: row.reporting_period,
-          notes: row.notes || null
-        })
-      });
-      setMessage("Deliverable actual updated.");
-      await load();
-    } catch (err) { setError(err.message); }
+      let updated;
+      if (action.key === "upload_official_signed") {
+        await uploadAgreementDocument(record.id, {
+          file: actionForm.document,
+          documentType: "signed",
+          version: "1.0",
+          confidentiality: "internal",
+          isOfficial: true
+        });
+        updated = await getAgreement(record.id);
+      } else if (action.key === "activate") {
+        updated = await updateAgreement(record.id, {
+          effective_date: actionForm.effective_date,
+          expiry_date: actionForm.expiry_date,
+          partner_liaison: actionForm.partner_liaison.trim()
+        });
+        if (!updated.deliverables.length && actionForm.initial_deliverable.trim()) {
+          await createDeliverable(record.id, {
+            deliverable_type: actionForm.initial_deliverable.trim(),
+            target_value: 1,
+            actual_value: 0,
+            reporting_period: "Activation baseline",
+            notes: "Initial deliverable created during agreement activation.",
+            evidence_document_id: null
+          });
+        }
+        updated = await transitionAgreement(record.id, "activate", "Activation checklist completed in the Accord360 frontend.");
+      } else {
+        updated = await transitionAgreement(record.id, action.key, buildComment() || null);
+      }
+      setRecord(updated);
+      setMessage(`${action.label} completed.`);
+      setAction(null);
+      setActionForm(emptyActionForm);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  async function addValue(event) {
-    event.preventDefault();
-    try {
-      await api(`/agreements/${id}/values`, { method: "POST", body: JSON.stringify(valueRecord) });
-      setMessage("Value record added.");
-      await load();
-    } catch (err) { setError(err.message); }
-  }
+  if (error && !record) return <><PageHeader eyebrow="Agreement workspace" title="Unable to open agreement" /><ErrorState message={error} onRetry={load} /></>;
+  if (!record) return <LoadingState label="Loading agreement workspace" />;
 
-  if (!item) return <div className="panel page-loading">Loading agreement...</div>;
-
-  const canEditLifecycle = ["admin", "linkages"].includes(user.role);
-  const canEditMe = item.stage === "active" && ["admin", "linkages", "me", "researcher"].includes(user.role);
-  const canAddValue = item.stage === "active" && ["admin", "linkages", "me", "executive"].includes(user.role);
-  const canUploadDocument = ["admin", "linkages", "legal", "me"].includes(user.role) || (user.role === "researcher" && item.owner.id === user.id);
-
-  async function downloadDocument(doc) {
-    try {
-      const blob = await api(`/agreements/${id}/documents/${doc.id}/download`);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = doc.original_name;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (err) { setError(err.message); }
-  }
+  const signing = record.signing || {};
+  const officialSignedDocument = record.documents.find((item) => item.type === "signed" && item.is_official);
+  const activationChecks = [
+    ["Legal approval complete", Boolean(latestEvent(record, "approve_legal"))],
+    ["DVC RPE endorsement complete", Boolean(latestEvent(record, "approve_dvc"))],
+    ["VC package submitted", Boolean(latestEvent(record, "submit_vc"))],
+    ["VC signature recorded", signing.vc_signed],
+    ["Partner signature complete", signing.partner_signed],
+    ["Official signed PDF uploaded", Boolean(officialSignedDocument)],
+    ["Effective date entered", Boolean(record.effective_date)],
+    ["Expiry date entered", Boolean(record.expiry_date)],
+    ["Champion assigned", Boolean(record.champion_name)],
+    ["Partner liaison assigned", Boolean(record.partner_liaison_name)],
+    ["M&E deliverable created", Boolean(record.deliverables.length)]
+  ];
 
   return (
     <>
       <Toast message={message} onClose={() => setMessage("")} />
       <Toast message={error} type="error" onClose={() => setError("")} />
       <PageHeader
-        eyebrow={item.reference_number}
-        title={item.title}
-        description={`${item.agreement_type} with ${item.partner.name}`}
-        actions={<><Link to="/agreements" className="secondary-button"><ArrowLeft size={17} /> Back</Link><StatusBadge color={item.status_color}>{item.status.replaceAll("_", " ")}</StatusBadge></>}
+        eyebrow="Agreement workspace"
+        title={record.title}
+        description={`${record.reference} · ${record.partner_name}`}
+        actions={<><button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>{availableActions.slice(0, 2).map((item) => <button className={item.variant === "primary" ? "primary-button" : item.variant === "danger" ? "danger-button" : "secondary-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</>}
+        meta={<div className="header-badges"><StatusBadge tone="blue">{record.agreement_type}</StatusBadge><StatusBadge status={record.status} /><StatusBadge status={record.risk} risk /></div>}
       />
 
-      <LifecycleStrip currentStage={item.stage} status={item.status} compact />
+      <section className="agreement-sticky-summary panel">
+        <InfoItem label="Current stage">{stageLabel(record.stage)}</InfoItem>
+        <InfoItem label="Backend stage">{humanize(record.backend_stage)}</InfoItem>
+        <InfoItem label="Responsible office">{record.next_office}</InfoItem>
+        <InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem>
+        <InfoItem label="Effective date">{formatDate(record.effective_date)}</InfoItem>
+        <InfoItem label="Expiry date">{formatDate(record.expiry_date)}</InfoItem>
+        <div className="next-action-box"><span>Required next action</span><strong>{record.current_action}</strong></div>
+      </section>
 
-      <div className="detail-top-grid">
-        <div className="panel detail-summary span-2">
-          <div className="summary-title"><div><h3>Request summary</h3><p>{item.purpose}</p></div><span className="type-pill">{item.agreement_type}</span></div>
-          <div className="summary-grid">
-            <div><span>Partner</span><strong>{item.partner.name}</strong></div>
-            <div><span>Department</span><strong>{item.department}</strong></div>
-            <div><span>Owner</span><strong>{item.owner.full_name}</strong></div>
-            <div><span>Strategic alignment</span><strong>{item.strategic_alignment || "Not specified"}</strong></div>
-            <div><span>Current stage</span><strong>{item.stage.replaceAll("_", " ")}</strong></div>
-            <div><span>Stage timer</span><SlaBadge state={item.sla_state} days={item.days_in_stage} target={item.sla_target_days} /></div>
-            <div><span>Expiry position</span><strong>{item.expiry_days === null ? "Not set" : item.expiry_days < 0 ? `${Math.abs(item.expiry_days)} days overdue` : `${item.expiry_days} days remaining`}</strong></div>
-            <div><span>Next action</span><strong>{item.next_action || "No action"}</strong></div>
-          </div>
-        </div>
-        <div className="panel workflow-actions">
-          <h3>Workflow actions</h3><p>Available actions depend on your role and current process position.</p>
-          <div className="action-list">{actions.filter((action) => action.stages.includes(item.stage) && action.roles.includes(user.role)).map((action) => <button key={action.key} onClick={() => transition(action.key)}>{action.label}</button>)}</div>
-        </div>
-      </div>
+      {availableActions.length > 2 && <section className="action-strip"><span>Available actions</span>{availableActions.map((item) => <button className={item.variant === "danger" ? "danger-button compact-button" : item.variant === "primary" ? "primary-button compact-button" : "secondary-button compact-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</section>}
 
-      <div className="tabs">
-        {["overview", "documents", "m&e", "history"].map((name) => <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>{name === "m&e" ? "Monitoring & Evaluation" : name}</button>)}
-      </div>
+      <nav className="tabs" aria-label="Agreement sections">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setSearchParams({ tab: key })}>{label}</button>)}</nav>
 
-      {tab === "overview" && (
-        <form className="panel form-section" onSubmit={saveDetails}>
-          <div className="panel-head"><div><h3>Lifecycle and activation data</h3><p>{canEditLifecycle ? "Maintain signing, ownership and implementation fields." : "Read-only lifecycle information for your role."}</p></div>{canEditLifecycle && <button className="primary-button"><Save size={17} /> Save changes</button>}</div>
-          <fieldset className="form-fieldset" disabled={!canEditLifecycle}>
-          <div className="form-grid form-grid-3">
-            <label>Internal champion<input value={edit.internal_champion} onChange={(e) => setEdit({ ...edit, internal_champion: e.target.value })} /></label>
-            <label>Partner liaison<input value={edit.partner_liaison} onChange={(e) => setEdit({ ...edit, partner_liaison: e.target.value })} /></label>
-            <label>Next action<input value={edit.next_action} onChange={(e) => setEdit({ ...edit, next_action: e.target.value })} /></label>
-            <label>Date sent to VC<input type="date" value={edit.date_sent_vc} onChange={(e) => setEdit({ ...edit, date_sent_vc: e.target.value })} /></label>
-            <label>Date sent to partner<input type="date" value={edit.date_sent_partner} onChange={(e) => setEdit({ ...edit, date_sent_partner: e.target.value })} /></label>
-            <label>Signing date<input type="date" value={edit.signing_date} onChange={(e) => setEdit({ ...edit, signing_date: e.target.value })} /></label>
-            <label>Effective date<input type="date" value={edit.effective_date} onChange={(e) => setEdit({ ...edit, effective_date: e.target.value })} /></label>
-            <label>Expiry date<input type="date" value={edit.expiry_date} onChange={(e) => setEdit({ ...edit, expiry_date: e.target.value })} /></label>
-          </div>
-          </fieldset>
-        </form>
-      )}
+      {tab === "overview" && <div className="detail-grid">
+        <section className="panel detail-main-card">
+          <div className="panel-head"><div><h2>Agreement overview</h2><p>Fields returned by AgreementDetailOut</p></div></div>
+          <div className="info-grid"><InfoItem label="Partner institution">{record.partner_name}</InfoItem><InfoItem label="Agreement type">{record.agreement_type}</InfoItem><InfoItem label="Department">{record.department}</InfoItem><InfoItem label="Owner">{record.initiator_name}</InfoItem><InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem><InfoItem label="Confidentiality">{humanize(record.confidentiality)}</InfoItem><InfoItem label="Date sent to VC">{formatDate(record.date_sent_vc)}</InfoItem><InfoItem label="Date sent to partner">{formatDate(record.date_sent_partner)}</InfoItem></div>
+          <hr /><h3>Purpose</h3><p className="long-copy">{record.purpose}</p><h3>Strategic alignment</h3><p className="long-copy">{record.strategic_alignment}</p>
+        </section>
+        <aside className="panel detail-side-card"><div className="panel-head"><div><h2>Expected outcomes</h2><p>Recorded agreement outcomes</p></div></div>{record.expected_outcomes.length ? <ul className="outcome-list">{record.expected_outcomes.map((item) => <li key={item}><CheckCircle2 size={17} />{item}</li>)}</ul> : <EmptyState title="No expected outcomes recorded" text="The backend response did not include expected outcomes for this record." />}</aside>
+      </div>}
 
-      {tab === "documents" && (
-        <div className="detail-tab-grid">
-          {canUploadDocument ? <form className="panel form-section" onSubmit={uploadFile}>
-            <div className="section-heading"><span><Upload size={18} /></span><div><h3>Upload document</h3><p>Maximum 25 MB. PDF, Office, image, CSV and text formats.</p></div></div>
-            <div className="form-grid single-column">
-              <label>File<input type="file" onChange={(e) => setUpload({ ...upload, file: e.target.files[0] })} required /></label>
-              <label>Document type<select value={upload.document_type} onChange={(e) => setUpload({ ...upload, document_type: e.target.value })}><option value="supporting">Supporting document</option><option value="draft">Draft agreement</option><option value="signed">Signed agreement</option><option value="evidence">M&E evidence</option><option value="template">Template</option></select></label>
-              <label>Version<input value={upload.version} onChange={(e) => setUpload({ ...upload, version: e.target.value })} /></label>
-              <label className="checkbox-label"><input type="checkbox" checked={upload.is_official} onChange={(e) => setUpload({ ...upload, is_official: e.target.checked })} /> Mark as official version</label>
-              <button className="primary-button"><Upload size={17} /> Upload</button>
-            </div>
-          </form> : <div className="panel form-section read-only-card"><h3>Secure document access</h3><p>Your role can view authorized documents but cannot upload or replace files.</p></div>}
-          <div className="panel span-2">
-            <div className="panel-head"><div><h3>Document repository</h3><p>Controlled agreement files and evidence.</p></div></div>
-            {item.documents.length === 0 ? <EmptyState title="No documents uploaded" text="Use the upload form to add the first file." /> : <div className="document-list">{item.documents.map((doc) => (
-              <button key={doc.id} type="button" className="document-row document-download" onClick={() => downloadDocument(doc)}>
-                <div className="document-icon"><FileText size={21} /></div><div><strong>{doc.original_name}</strong><span>{doc.document_type} · version {doc.version} · {(doc.size_bytes / 1024).toFixed(1)} KB{doc.is_official ? " · official" : ""}</span></div><Download size={18} />
-              </button>
-            ))}</div>}
-          </div>
-        </div>
-      )}
+      {tab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Canonical lifecycle</h2><p>The 17-stage presentation is mapped to the implemented backend workflow stages and events.</p></div></div><WorkflowTimeline agreement={record} /></section>}
 
-      {tab === "m&e" && (
-        <div className="detail-tab-grid">
-          {canEditMe ? <form className="panel form-section" onSubmit={addDeliverable}>
-            <div className="section-heading"><span><Plus size={18} /></span><div><h3>Add deliverable</h3><p>Capture target and actual implementation outputs.</p></div></div>
-            <div className="form-grid single-column">
-              <label>Deliverable type<input value={deliverable.deliverable_type} onChange={(e) => setDeliverable({ ...deliverable, deliverable_type: e.target.value })} /></label>
-              <label>Target<input type="number" step="0.01" value={deliverable.target_value} onChange={(e) => setDeliverable({ ...deliverable, target_value: Number(e.target.value) })} /></label>
-              <label>Actual<input type="number" step="0.01" value={deliverable.actual_value} onChange={(e) => setDeliverable({ ...deliverable, actual_value: Number(e.target.value) })} /></label>
-              <label>Reporting period<input value={deliverable.reporting_period} onChange={(e) => setDeliverable({ ...deliverable, reporting_period: e.target.value })} /></label>
-              <label>Implementation notes<textarea rows="3" value={deliverable.notes} onChange={(e) => setDeliverable({ ...deliverable, notes: e.target.value })} /></label>
-              <button className="primary-button"><Plus size={17} /> Add deliverable</button>
-            </div>
-          </form> : <div className="panel form-section read-only-card"><h3>M&E access</h3><p>Your role can view performance results but cannot create or update deliverables.</p></div>}
-          <div className="panel span-2">
-            <div className="panel-head"><div><h3>Performance deliverables</h3><p>Target versus actual outputs for this agreement.</p></div></div>
-            {item.deliverables.length === 0 ? <EmptyState title="No deliverables" /> : <div className="metric-list">{item.deliverables.map((row) => {
-              const progressValue = Number(row.target_value) ? Math.min(100, (Number(row.actual_value) / Number(row.target_value)) * 100) : 0;
-              return <div className="metric-row" key={row.id}><div><strong>{row.deliverable_type}</strong><span>{row.reporting_period}{row.notes ? ` · ${row.notes}` : ""}</span></div><div className="metric-progress"><div><span style={{ width: `${progressValue}%` }} /></div><small>{row.actual_value} / {row.target_value}</small></div>{canEditMe && <button className="icon-button metric-edit" type="button" onClick={() => updateDeliverable(row)} title="Update actual"><Pencil size={16} /></button>}</div>;
-            })}</div>}
-            <div className="evidence-callout"><FileCheck2 size={20} /><div><strong>Implementation evidence</strong><span>{item.documents.filter((doc) => doc.document_type === "evidence").length} evidence file(s) attached to this agreement.</span></div>{canEditMe && <button type="button" className="secondary-button" onClick={() => { setUpload({ ...upload, document_type: "evidence" }); setTab("documents"); }}>Upload evidence</button>}</div>
-            <hr />
-            {canAddValue && <form className="inline-form" onSubmit={addValue}>
-              <h4>Add value generated</h4>
-              <input placeholder="Value type" value={valueRecord.value_type} onChange={(e) => setValueRecord({ ...valueRecord, value_type: e.target.value })} />
-              <input type="number" placeholder="Amount" value={valueRecord.amount} onChange={(e) => setValueRecord({ ...valueRecord, amount: Number(e.target.value) })} />
-              <select value={valueRecord.currency} onChange={(e) => setValueRecord({ ...valueRecord, currency: e.target.value })}><option>KES</option><option>USD</option><option>EUR</option></select>
-              <button className="secondary-button">Add</button>
-            </form>}
-            <div className="value-list">{item.values.map((value) => <div key={value.id}><span>{value.value_type}</span><strong>{value.currency} {Number(value.amount).toLocaleString()}</strong></div>)}</div>
-          </div>
-        </div>
-      )}
+      {tab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
-      {tab === "history" && (
-        <div className="panel timeline-panel">
-          <div className="panel-head"><div><h3>Workflow history</h3><p>Immutable record of material process actions.</p></div><History size={20} /></div>
-          <div className="timeline">{[...item.workflow_events].reverse().map((event) => (
-            <div className="timeline-item" key={event.id}><div className="timeline-dot" /><div><strong>{event.action.replaceAll("_", " ")}</strong><p>{event.comment || `${event.from_stage || "Start"} → ${event.to_stage}`}</p><span>{event.actor.full_name} · {new Date(event.created_at).toLocaleString()}</span></div></div>
-          ))}</div>
-        </div>
-      )}
+      {tab === "template" && <div className="detail-grid">
+        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Draft and template evidence</h2><p>The current backend does not expose template-library endpoints.</p></div><StatusBadge tone="yellow">Backend persistence pending</StatusBadge></div><div className="version-list">{record.documents.filter((item) => ["working_draft", "legal_approved", "partner_amendment", "supporting"].includes(item.type)).map((document) => <article key={document.id}><span>{humanize(document.type)}</span><strong>{document.name}</strong><small>Version {document.version} · {document.is_official ? "Official" : "Working"}</small></article>)}</div>{!record.documents.length && <EmptyState title="No draft documents" text="Upload a working draft or supporting document from the Documents tab." />}</section>
+        <aside className="panel detail-side-card"><h2>Version controls</h2><ul className="plain-check-list"><li><ShieldCheck /> File versions are stored by the backend.</li><li><FileLock2 /> Official status distinguishes approved documents.</li><li><History /> Workflow events provide the audit history.</li><li><Paperclip /> Downloads require agreement and document permission.</li></ul></aside>
+      </div>}
+
+      {tab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+
+      {tab === "signing" && <div className="detail-grid">
+        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Signing and execution</h2><p>Signing milestones are derived from workflow status and events.</p></div><StatusBadge status={record.status} /></div><div className="signing-tracks"><article className={signing.vc_signed ? "complete" : ""}><span className="signing-icon"><ShieldCheck /></span><div><h3>JKUAT signatory</h3><p>Vice Chancellor</p><strong>{signing.vc_signed ? `Recorded ${formatDate(signing.vc_signed_at)}` : "Awaiting signature"}</strong></div></article><article className={signing.partner_signed ? "complete" : ""}><span className="signing-icon"><FileCheck2 /></span><div><h3>Partner signatory</h3><p>Authorized partner officer</p><strong>{signing.partner_signed ? `Recorded ${formatDate(signing.partner_signed_at)}` : "Awaiting signature"}</strong></div></article><article className={officialSignedDocument ? "complete" : ""}><span className="signing-icon"><UploadCloud /></span><div><h3>Executed document</h3><p>Official signed PDF</p><strong>{officialSignedDocument ? officialSignedDocument.name : "Not uploaded"}</strong></div></article></div></section>
+        <aside className="panel detail-side-card"><h2>Activation checklist</h2><div className="activation-list">{activationChecks.map(([label, complete]) => <span className={complete ? "complete" : ""} key={label}>{complete ? <CheckCircle2 /> : <span className="empty-check" />}{label}</span>)}</div><p className="helper-note">The backend validates this checklist again before activation.</p></aside>
+      </div>}
+
+      {tab === "monitoring" && <div className="detail-grid">
+        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Monitoring and evaluation</h2><p>Deliverables and value records returned with the agreement</p></div><Link to={`/monitoring/reports/${record.id}`} className="text-link">Open M&E update</Link></div>{record.deliverables.length ? <div className="document-list">{record.deliverables.map((item) => <article className="document-row" key={item.id}><RefreshCw /><div><strong>{item.deliverable_type}</strong><span>{item.actual_value} actual / {item.target_value} target · {item.reporting_period || "No period"}</span><small>{item.notes || "No notes"}</small></div><StatusBadge tone={Number(item.actual_value) >= Number(item.target_value) ? "green" : "orange"}>{Number(item.actual_value) >= Number(item.target_value) ? "Target met" : "In progress"}</StatusBadge></article>)}</div> : <EmptyState title="No deliverables recorded" text="Create the first target from the M&E update screen." />}</section>
+        <aside className="panel detail-side-card"><h2>Current calculated score</h2><div className="score-preview"><strong>{score.overall}</strong><span>Client-calculated from backend deliverables</span><StatusBadge tone={score.overall >= 80 ? "green" : score.overall >= 60 ? "blue" : "orange"}>{score.category}</StatusBadge></div><div className="metric-preview">{record.values.map((item) => <article key={item.id}><span>{item.value_type}</span><strong>{formatCurrency(item.amount, item.currency)}</strong></article>)}</div><p className="helper-note">Score persistence requires a future backend scorecard endpoint. No unsupported endpoint is called.</p></aside>
+      </div>}
+
+      {tab === "history" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Agreement activity history</h2><p>Read-only workflow events from AgreementDetailOut.</p></div></div><div className="activity-timeline">{[...(record.workflow_events || [])].reverse().map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{humanize(item.action)}</strong><p>{humanize(item.from_stage || "Created")} → {humanize(item.to_stage)} · {item.actor?.full_name || "System"}</p>{item.comment && <p>{item.comment}</p>}<small>{formatDateTime(item.created_at)}</small></div></article>)}</div></section>}
+
+      <Modal open={Boolean(action)} onClose={() => setAction(null)} title={action?.label || "Confirm action"} description={`Agreement ${record.reference} · ${humanize(record.backend_stage)}`} footer={<><button className="secondary-button" onClick={() => setAction(null)}>Cancel</button><button className={action?.variant === "danger" ? "danger-button" : "primary-button"} disabled={submitting} onClick={performAction}>{submitting ? "Processing…" : `Confirm ${action?.label || "action"}`}</button></>}>
+        <div className="decision-summary"><AlertTriangle size={20} /><p>This action uses the implemented agreement transition, update, document or M&E endpoints and creates the backend audit event where supported.</p></div>
+        {(action?.requiresReason || ["return_correction", "return_dvc", "reject", "close"].includes(action?.key)) && <div className="form-grid single-column"><label className="form-field"><span>Decision reason *</span><textarea rows="4" value={actionForm.reason} onChange={(event) => setActionForm({ ...actionForm, reason: event.target.value })} placeholder="Provide a clear, specific and auditable reason." /></label>{["return_correction", "return_dvc"].includes(action?.key) && <><label className="form-field"><span>Exact field, document or clause *</span><input value={actionForm.exact_item} onChange={(event) => setActionForm({ ...actionForm, exact_item: event.target.value })} /></label><label className="form-field"><span>Requested change *</span><textarea rows="3" value={actionForm.requested_change} onChange={(event) => setActionForm({ ...actionForm, requested_change: event.target.value })} /></label></>}</div>}
+        {action?.key === "upload_official_signed" && <label className="upload-zone compact-upload"><UploadCloud /><strong>{actionForm.document?.name || "Choose fully signed PDF"}</strong><span>Uploaded as document_type=signed and is_official=true.</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setActionForm({ ...actionForm, document: event.target.files?.[0] || null })} /></label>}
+        {action?.key === "activate" && <div className="form-grid"><label className="form-field"><span>Effective date *</span><input type="date" value={actionForm.effective_date} onChange={(event) => setActionForm({ ...actionForm, effective_date: event.target.value })} /></label><label className="form-field"><span>Expiry date *</span><input type="date" value={actionForm.expiry_date} onChange={(event) => setActionForm({ ...actionForm, expiry_date: event.target.value })} /></label><label className="form-field"><span>Partner liaison *</span><input value={actionForm.partner_liaison} onChange={(event) => setActionForm({ ...actionForm, partner_liaison: event.target.value })} /></label>{!record.deliverables.length && <label className="form-field"><span>Initial deliverable *</span><input value={actionForm.initial_deliverable} onChange={(event) => setActionForm({ ...actionForm, initial_deliverable: event.target.value })} /></label>}</div>}
+      </Modal>
     </>
   );
 }

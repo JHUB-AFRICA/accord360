@@ -1,39 +1,8 @@
-# Accord 360
+# Accord 360 — JKUAT Linkages Agreement Lifecycle Platform
 
-**Accord 360** is a responsive MoU / CRA / CA lifecycle and partnership performance management system for the JKUAT Directorate of Linkages.
+Accord 360 is a responsive MoU / CRA / CA workflow and partnership-performance application for the JKUAT Directorate of Linkages. Version 1.2 introduces complete role-based routing and workspaces: users share one secure institutional platform, but they do not enter the same operational dashboard or receive the same actions.
 
-It includes:
-
-- React + Vite responsive frontend
-- FastAPI backend with interactive Swagger documentation
-- SQLite for local development and PostgreSQL through Docker Compose
-- JWT authentication and role-based access control
-- Agreement request, review, signing, activation, M&E, renewal and archive workflow
-- Partner registry
-- Document upload and authenticated, controlled file repository
-- Role-specific dashboards, priority work queues and executive Recharts visualizations
-- CSV reporting
-- Notifications and audit logging
-- Demo users and demo portfolio records
-- Desktop, tablet and mobile layouts with overflow protection
-
-
-## Supervisor-baseline improvements
-
-The current package includes the first improvement batch from the stakeholder validation briefing:
-
-- Role-specific channels for Researchers, Approvers, Linkages, Legal, Executives, M&E, Auditors and Administrators
-- Eight-stage lifecycle visualization and stage timers
-- Legal SLA, expiry, renewal and dormancy guardrails
-- Dedicated M&E portfolio workspace with evidence visibility
-- Secure authenticated document downloads and role-scoped exports
-- Required decision reasons for returns and rejections
-
-See `IMPROVEMENTS_V2.md` for the complete change list.
-
-## 1. Fastest way to run it
-
-### Option A: Docker Desktop
+## Run with Docker
 
 From the project root:
 
@@ -47,232 +16,164 @@ Open:
 - API documentation: `http://localhost:8000/docs`
 - API health: `http://localhost:8000/health`
 
-Docker uses PostgreSQL and persistent volumes for the database and uploaded documents.
+## Run locally on Windows
 
-### Option B: Local Windows development
-
-#### Backend
+Backend:
 
 ```powershell
 cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
+python -m alembic upgrade head
 python -m uvicorn app.main:app --reload
 ```
 
-Backend URLs:
-
-- API: `http://localhost:8000`
-- Swagger: `http://localhost:8000/docs`
-
-#### Frontend
-
-Open a second PowerShell window:
+Frontend in a second terminal:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Frontend URL:
+Open `http://localhost:5173`.
 
-```text
-http://localhost:5173
+## Database configuration and migrations
+
+The backend loads database configuration from `backend/.env`. SQLite works by
+default. To use Neon, copy `backend/.env.example` to `backend/.env` and replace
+`DATABASE_URL` with the SQLAlchemy-compatible connection string from Neon:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/DBNAME?sslmode=require
 ```
 
-After installing dependencies once, you can also double-click `start-local.bat` from the project root.
+Keep `.env` private; it is excluded from Git. Apply all schema migrations before
+starting the API:
 
-## 2. Demo accounts
+```bash
+cd backend
+python -m alembic upgrade head
+```
 
-| Role | Email | Password |
+After changing SQLAlchemy models, create and review a migration, then apply it:
+
+```bash
+python -m alembic revision --autogenerate -m "describe schema change"
+python -m alembic upgrade head
+```
+
+## Demo role accounts
+
+Run `python -m app.seed --reset` from the `backend` directory to recreate all demo users and role-specific queue records.
+
+| Workspace | Email | Password |
 |---|---|---|
-| Administrator | `admin@accord360.app` | `Admin@123` |
-| Researcher | `researcher@accord360.app` | `Research@123` |
-| Faculty approver | `approver@accord360.app` | `Approver@123` |
-| Linkages officer | `linkages@accord360.app` | `Linkages@123` |
-| Legal reviewer | `legal@accord360.app` | `Legal@123` |
-| Executive | `executive@accord360.app` | `Executive@123` |
-| M&E officer | `me@accord360.app` | `Measure@123` |
+| System Administrator | `admin@accord360.app` | `Admin@123` |
+| JKUAT Champion | `researcher@accord360.app` | `Research@123` |
+| Department / Faculty Approver | `approver@accord360.app` | `Approver@123` |
+| Linkages Officer | `linkages@accord360.app` | `Linkages@123` |
+| Director, Linkages | `director.linkages@accord360.app` | `Director@123` |
+| Legal Office Reviewer | `legal@accord360.app` | `Legal@123` |
+| DVC RPE | `dvc.rpe@accord360.app` | `DvcRpe@123` |
+| VC Office | `vc.office@accord360.app` | `VcOffice@123` |
+| M&E Officer | `me@accord360.app` | `Measure@123` |
+| Executive Viewer | `executive@accord360.app` | `Executive@123` |
+| Auditor | `auditor@accord360.app` | `Auditor@123` |
 
-**Change all demo passwords and the `SECRET_KEY` before deployment.**
+Do not deploy the demo credentials. Set `SEED_DEMO_DATA=false`, change `SECRET_KEY`, configure institutional accounts/SSO and remove or deactivate all demo users before production use.
 
-## 3. Main workflow
+## Role-based behavior
+
+After successful authentication, the frontend reads the user's role returned by the API and redirects to the appropriate workspace:
+
+```text
+researcher         → /champion
+approver           → /approvals
+linkages           → /linkages
+director_linkages  → /linkages
+legal              → /legal
+dvc                → /dvc
+vc_office          → /signing
+me                 → /monitoring
+executive          → /executive
+admin              → /admin
+auditor            → /audit-workspace
+```
+
+Each role receives its own navigation, KPI definitions, action queue, guidance and route permissions. Backend authorization independently enforces record scope and workflow actions, so manually calling a hidden endpoint does not bypass security.
+
+See `docs/ROLE_BASED_WORKSPACES.md` for the full access matrix.
+
+## Governed lifecycle
 
 ```text
 Initiation
 → Department / Faculty Approval
 → Linkages Review
-→ Drafting & Legal Review
-→ Validation & Signing
-→ Activation
-→ Monitoring & Evaluation
-→ Renewal / Closure / Archive
+→ Legal Review
+→ DVC RPE Endorsement
+→ VC Submission
+→ VC / Partner Signing
+→ Active Implementation
+→ Renewal / Closure
+→ Archive
 ```
 
-Workflow actions are controlled by both the user's role and the agreement's current stage.
+Key controls include:
 
-## 4. Main features
+- Legal approval cannot be performed by Linkages, DVC, VC Office or administrators.
+- DVC endorsement cannot occur before Legal approval.
+- Linkages cannot submit a package to VC Office before DVC endorsement.
+- VC Office can track signatures but cannot alter earlier approvals.
+- Administrators manage access and configuration but cannot forge business approvals.
+- Executives and auditors are read-only.
+- Agreement lists, dashboards, reports and document downloads are scoped on the server.
 
-### Authentication and access
+## JKUAT visual design
 
-- JWT login
-- Current-user endpoint
-- Account activation/deactivation
-- Roles: admin, researcher, approver, linkages, legal, executive, M&E and auditor
-- Researcher records are scoped to their own requests
-- Legal and approver workspaces are scoped to relevant records
+The portal uses the requested JKUAT-aligned green palette:
 
-### Agreement management
+```css
+--primary: #96be4c;
+--primary-dark: #6f9135;
+--sidebar: #153f28;
+```
 
-- Unique reference numbers
-- MoU, CRA, CA and configurable `Other` type
-- Partner, department, purpose, expected outcomes and strategic alignment
-- Signing and activation fields
-- Status colors: green, yellow, orange and red
-- Controlled workflow transitions and comments
-- Complete workflow history
+The login page does not expose or pre-fill demo credentials.
 
-### File storage
-
-- Upload PDF, Word, Excel, CSV, images and text files
-- 25 MB maximum per file
-- File type, version, confidentiality and official-version metadata
-- Local upload directory in development
-- Persistent Docker volume in container deployment
-
-### Monitoring and evaluation
-
-- Internal champion and partner liaison
-- Deliverable targets and actuals
-- Reporting periods
-- Value generated records
-- M&E progress visualization
-
-### Dashboard and reports
-
-- Active partnerships
-- Pipeline volume
-- Dormant / at-risk count
-- Total value generated
-- Charts by agreement type, workflow stage and monthly volume
-- CSV agreement register export
-- Audit report for authorized roles
-
-## 5. Database reset and demo data
+## Testing
 
 From `backend`:
-
-Reset the database and restore demo data:
-
-```powershell
-python -m app.seed --reset
-```
-
-Reset and keep only the demo user accounts, without demo agreements:
-
-```powershell
-python -m app.seed --reset --empty
-```
-
-For SQLite, you can also delete `backend/accord360.db` and restart the backend.
-
-## 6. Environment configuration
-
-Copy the examples:
-
-```powershell
-copy backend\.env.example backend\.env
-copy frontend\.env.example frontend\.env
-```
-
-Important backend variables:
-
-```text
-SECRET_KEY
-DATABASE_URL
-UPLOAD_DIR
-CORS_ORIGINS
-ACCESS_TOKEN_EXPIRE_MINUTES
-```
-
-The included application reads environment variables directly. In PowerShell, set them before starting the server or use Docker Compose.
-
-## 7. Project structure
-
-```text
-accord360/
-├── backend/
-│   ├── app/
-│   │   ├── routers/
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── deps.py
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   ├── schemas.py
-│   │   ├── security.py
-│   │   ├── seed.py
-│   │   └── services.py
-│   ├── tests/
-│   ├── uploads/
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── context/
-│   │   ├── lib/
-│   │   ├── pages/
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── styles.css
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   └── package.json
-├── docs/
-├── docker-compose.yml
-├── start-local.bat
-└── TESTING_CHECKLIST.md
-```
-
-## 8. Tests already included
-
-Backend smoke tests verify:
-
-- Administrator login
-- Authenticated dashboard access
-- Partner creation
-- Agreement creation and reference generation
-
-Run them from `backend`:
 
 ```powershell
 $env:PYTHONPATH="."
 pytest -q
 ```
 
-Frontend production build:
+Current automated result: **10 tests passed**, including role workspace definitions and an end-to-end workflow test proving that each approval is restricted to the correct role.
 
-```powershell
-cd frontend
-npm run build
+## Project structure
+
+```text
+Accord360_Role_Based_Final_Project/
+├── backend/
+│   ├── app/
+│   ├── tests/
+│   ├── uploads/
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── context/
+│   │   ├── lib/
+│   │   └── pages/
+│   └── package.json
+├── docs/
+├── docker-compose.yml
+├── start-local.bat
+├── start-local.sh
+└── README.md
 ```
-
-## 9. Production hardening before public launch
-
-This package is a working full-stack MVP. Before institutional production deployment, complete these tasks:
-
-- Replace all demo accounts and credentials
-- Set a long random `SECRET_KEY`
-- Configure HTTPS and a real domain
-- Confirm official meanings and workflows for CRA and CA
-- Connect JKUAT identity/SSO if approved
-- Configure institutional email notifications
-- Set backup, retention and recovery policies
-- Conduct stakeholder validation, security testing and UAT
-- Add antivirus/malware scanning for uploaded documents
-- Configure deployment monitoring and centralized logs
-- Review privacy and records-management requirements with JKUAT offices
-
