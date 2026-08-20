@@ -14,7 +14,6 @@ const configs = {
   approvals: {
     eyebrow: "Faculty / department approval",
     title: "Academic-fit review queue",
-    description: "Requests returned by GET /agreements?stage=department_approval within your backend scope.",
     backendStages: ["department_approval"],
     route: (id) => `/agreements/${id}?tab=overview`,
     labels: ["Awaiting review", "Within 7 days", "Over 7 days", "Backend scoped"]
@@ -22,7 +21,6 @@ const configs = {
   linkages: {
     eyebrow: "Directorate of Linkages (RPE)",
     title: "Linkages review queue",
-    description: "Requests returned by GET /agreements?stage=linkages_review within your backend scope.",
     backendStages: ["linkages_review"],
     route: (id) => `/agreements/${id}?tab=overview`,
     labels: ["Awaiting review", "Within 7 days", "Over 7 days", "Approved for Legal"]
@@ -30,7 +28,6 @@ const configs = {
   legal: {
     eyebrow: "University Legal Office",
     title: "Legal review queue",
-    description: "Legally scoped records returned by GET /agreements?stage=legal_review.",
     backendStages: ["legal_review"],
     route: (id) => `/legal/${id}`,
     labels: ["In Legal review", "Within 21-day SLA", "SLA attention", "Legal approved"]
@@ -38,7 +35,6 @@ const configs = {
   dvc: {
     eyebrow: "DVC RPE",
     title: "Endorsement queue",
-    description: "Legally approved packages returned by GET /agreements?stage=dvc_approval.",
     backendStages: ["dvc_approval"],
     route: (id) => `/dvc/${id}`,
     labels: ["Awaiting endorsement", "Within 7 days", "Over 7 days", "Returned by DVC"]
@@ -46,7 +42,6 @@ const configs = {
   signing: {
     eyebrow: "Vice Chancellor's Office",
     title: "Submission and signing queue",
-    description: "VC submission and validation/signing records returned by the implemented agreements route.",
     backendStages: ["vc_submission", "validation_signing"],
     route: (id) => `/signing/${id}`,
     labels: ["VC packages", "Awaiting VC signature", "Partner signature", "Fully signed"]

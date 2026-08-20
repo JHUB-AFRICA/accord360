@@ -1,6 +1,8 @@
 import { ArrowRight, Building2, CheckCircle2, FileCheck2, FileSignature, Gavel, GraduationCap, Landmark, LineChart, ShieldCheck, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
+
+import heroBackground from "../assets/hero-background.jpg";
 const agreementTypes = [
   { code: "MoU", title: "Memorandum of Understanding", text: "A broad framework for academic, research or institutional cooperation." },
   { code: "MoA", title: "Memorandum of Agreement", text: "An operational agreement with defined obligations, resources and measurable commitments." },
@@ -13,7 +15,12 @@ const process = ["Submit request", "Verify partner", "Assign Champion", "Faculty
 export default function LandingPage() {
   return (
     <>
-      <section className="hero-section">
+   <section
+  className="hero-section"
+  style={{
+    backgroundImage: `url(${heroBackground})`,
+  }}
+>
         <div className="hero-grid">
           <div className="hero-copy">
             <span className="hero-kicker">Official partnership lifecycle portal</span>
