@@ -29,6 +29,10 @@ class Settings:
     storage_bucket: str = os.getenv("AWS_BUCKET_NAME", "accord-360")
     seed_demo_data: bool = env_bool("SEED_DEMO_DATA", True)
     log_level: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    gemini_api_key: str | None = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    ai_session_ttl_seconds: int = int(os.getenv("AI_SESSION_TTL_SECONDS", "1800"))
+    ai_max_history_messages: int = int(os.getenv("AI_MAX_HISTORY_MESSAGES", "20"))
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"

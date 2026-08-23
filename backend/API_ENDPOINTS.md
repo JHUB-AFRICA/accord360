@@ -52,7 +52,41 @@ Errors normally have this shape:
 {"detail": "Human-readable explanation"}
 ```
 
-## 2. Roles
+## 2. Instructional AI assistant
+
+### `POST /ai/chat`
+
+Requires a valid bearer token. Sends a message to the L-ALPMS instructional
+assistant and maintains temporary context for the returned `session_id`.
+
+Request:
+
+```json
+{
+  "session_id": "optional-existing-session-id",
+  "message": "How do I submit an agreement for approval?"
+}
+```
+
+Response:
+
+```json
+{
+  "session_id": "generated-or-existing-session-id",
+  "message": "..."
+}
+```
+
+The session is held in backend memory, is isolated to the authenticated user,
+expires after inactivity, and is lost when the backend process restarts. If
+Gemini is not configured, the endpoint returns `503`.
+
+### `DELETE /ai/chat/{session_id}`
+
+Requires a valid bearer token. Immediately clears the authenticated user's
+temporary chat session and returns `204 No Content`.
+
+## 3. Roles
 
 The backend recognizes these role values:
 

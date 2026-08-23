@@ -168,6 +168,10 @@ available values; never commit real credentials.
 | `AWS_ENDPOINT_URL_S3` | S3-compatible endpoint | unset |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Storage credentials | unset |
 | `AWS_REGION` / `AWS_BUCKET_NAME` | Storage location and bucket | `us-east-2` / `accord-360` |
+| `GOOGLE_API_KEY` | Gemini API key for the instructional assistant | unset |
+| `GEMINI_MODEL` | Gemini chat model | `gemini-3.6-flash` |
+| `AI_SESSION_TTL_SECONDS` | In-memory chat session inactivity timeout | `1800` |
+| `AI_MAX_HISTORY_MESSAGES` | Maximum messages retained per in-memory session | `20` |
 | `SEED_DEMO_DATA` | Create demo users and records at startup | `true` |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins | localhost origins |
 | `LOG_LEVEL` | Application log level | `INFO` |
@@ -194,6 +198,31 @@ python -m alembic upgrade head
 ```
 
 Do not use `Base.metadata.create_all()` as a production migration strategy.
+
+## Instructional AI assistant
+
+The backend exposes a small authenticated chatbot at `POST /api/ai/chat`. It
+uses Gemini through LangChain and is restricted to giving text instructions
+about the L-ALPMS workflow. It cannot access user records, submit forms, or
+perform actions.
+
+Configure the integration by setting `GOOGLE_API_KEY` and, optionally,
+`GEMINI_MODEL`. Chat history is kept only in backend memory, is isolated by
+authenticated user and session ID, and is removed after
+`AI_SESSION_TTL_SECONDS` of inactivity or when the container restarts. The
+`DELETE /api/ai/chat/{session_id}` endpoint clears a session immediately.
+
+Example request:
+
+```json
+{
+  "session_id": "optional-existing-session-id",
+  "message": "How do I submit an agreement for approval?"
+}
+```
+
+The first request may omit `session_id`; the response returns the generated ID
+for subsequent messages.
 
 ## API and workflow
 
