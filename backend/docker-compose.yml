@@ -39,6 +39,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-accord360}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-password}
       AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-accord-360}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      AI_SESSION_TTL_SECONDS: ${AI_SESSION_TTL_SECONDS:-1800}
+      AI_MAX_HISTORY_MESSAGES: ${AI_MAX_HISTORY_MESSAGES:-20}
     depends_on:
       minio:
         condition: service_healthy
