@@ -33,6 +33,19 @@ class Settings:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     ai_session_ttl_seconds: int = int(os.getenv("AI_SESSION_TTL_SECONDS", "1800"))
     ai_max_history_messages: int = int(os.getenv("AI_MAX_HISTORY_MESSAGES", "20"))
+    email_enabled: bool = env_bool("EMAIL_ENABLED", False)
+    email_provider: str = os.getenv("EMAIL_PROVIDER", "console").strip().lower()
+    email_from: str = os.getenv("EMAIL_FROM", "notifications@example.com")
+    email_from_name: str = os.getenv("EMAIL_FROM_NAME", "Accord 360")
+    smtp_host: str | None = os.getenv("SMTP_HOST") or None
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str | None = os.getenv("SMTP_USERNAME") or None
+    smtp_password: str | None = os.getenv("SMTP_PASSWORD") or None
+    smtp_use_tls: bool = env_bool("SMTP_USE_TLS", True)
+    smtp_use_ssl: bool = env_bool("SMTP_USE_SSL", False)
+    smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
+    resend_api_key: str | None = os.getenv("RESEND_API_KEY") or None
+    resend_api_url: str = os.getenv("RESEND_API_URL", "https://api.resend.com/emails")
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
@@ -63,6 +76,14 @@ class Settings:
             (self.storage_endpoint_url, self.storage_access_key_id, self.storage_secret_access_key, self.storage_bucket)
         ):
             raise RuntimeError("Complete S3-compatible object-storage settings are required when enabled")
+        if self.email_provider not in {"console", "smtp", "resend"}:
+            raise RuntimeError("EMAIL_PROVIDER must be one of: console, smtp, resend")
+        if self.email_enabled and self.email_provider == "smtp" and not self.smtp_host:
+            raise RuntimeError("SMTP_HOST is required when SMTP email is enabled")
+        if self.email_enabled and self.email_provider == "resend" and not self.resend_api_key:
+            raise RuntimeError("RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
+        if self.email_enabled and self.email_provider == "smtp" and self.smtp_use_tls and self.smtp_use_ssl:
+            raise RuntimeError("SMTP_USE_TLS and SMTP_USE_SSL cannot both be true")
 
 
 settings = Settings()
