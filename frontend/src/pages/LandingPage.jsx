@@ -2,7 +2,7 @@ import { ArrowRight, Building2, CheckCircle2, FileCheck2, FileSignature, Gavel, 
 import { Link } from "react-router-dom";
 
 
-import heroBackground from "../assets/hero-background.jpg";
+import heroBackground from "../assets/jkuat-gate.jpg";
 const agreementTypes = [
   { code: "MoU", title: "Memorandum of Understanding", text: "A broad framework for academic, research or institutional cooperation." },
   { code: "MoA", title: "Memorandum of Agreement", text: "An operational agreement with defined obligations, resources and measurable commitments." },

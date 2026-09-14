@@ -1,19 +1,29 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ArrowRight, Menu, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import jkuatLogo from "../assets/jkuat-logo.jpg";
 
 export default function PublicLayout() {
   const [open, setOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    setOpen(false);
+    if (!location.hash) return;
+    const id = decodeURIComponent(location.hash.slice(1));
+    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [location.pathname, location.hash]);
+
   return (
     <div className="public-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="public-header">
         <Link className="public-brand" to="/">
-          <span className="brand-mark">A</span>
+          <span className="brand-mark brand-logo"><img src={jkuatLogo} alt="JKUAT logo" /></span>
           <span><strong>Accord360</strong><small>Directorate of Linkages (RPE)</small></span>
         </Link>
         <button className="icon-button public-menu-button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="Open navigation">{open ? <X /> : <Menu />}</button>
-        <nav className={`public-nav ${open ? "public-nav-open" : ""}`}>
+        <nav className={`public-nav ${open ? "public-nav-open" : ""}`} onClick={() => setOpen(false)}>
           <NavLink to="/#about">About Linkages</NavLink>
           <NavLink to="/#agreement-types">Agreement Types</NavLink>
           <NavLink to="/#process">Process</NavLink>
@@ -26,7 +36,7 @@ export default function PublicLayout() {
       <main id="main-content"><Outlet /></main>
       <footer className="public-footer">
         <div className="public-footer-grid">
-          <div><div className="public-brand footer-brand"><span className="brand-mark">A</span><span><strong>Accord360</strong><small>Directorate of Linkages (RPE)</small></span></div><p>Supporting transparent, accountable and measurable institutional partnerships at Jomo Kenyatta University of Agriculture and Technology.</p></div>
+          <div><div className="public-brand footer-brand"><span className="brand-mark brand-logo"><img src={jkuatLogo} alt="JKUAT logo" /></span><span><strong>Accord360</strong><small>Directorate of Linkages (RPE)</small></span></div><p>Supporting transparent, accountable and measurable institutional partnerships at Jomo Kenyatta University of Agriculture and Technology.</p></div>
           <div><h3>Resources</h3><a href="#agreement-types">Agreement types</a><a href="#process">Partnership process</a><a href="#eligibility">Eligibility guidance</a></div>
           <div><h3>Policies</h3><span>Intellectual Property Policy</span><span>Data Protection Policy</span><span>Governing Statutes</span></div>
           <div><h3>Contact</h3><span>Official contact to be confirmed</span><span>Official location to be confirmed</span><Link to="/login">System help</Link></div>
