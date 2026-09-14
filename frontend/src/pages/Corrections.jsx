@@ -52,7 +52,7 @@ export default function Corrections() {
   if (!records) return <LoadingState label="Loading returned agreements" />;
 
   return <>
-    <PageHeader eyebrow="Correction traceability" title="Returned agreements" description="The current backend records corrections as workflow transition comments. This workspace derives the exact return reason from each agreement's audit history." meta={<span className="scope-note"><AlertTriangle size={15} /> {records.length} active return{records.length === 1 ? "" : "s"}</span>} />
+    <PageHeader eyebrow="Correction traceability" title="Returned agreements" meta={<span className="scope-note"><AlertTriangle size={15} /> {records.length} active return{records.length === 1 ? "" : "s"}</span>} />
     <section className="panel filter-panel"><div className="search-field"><Search size={18} /><input aria-label="Search returned agreements" placeholder="Search reference, partner or correction reason…" value={search} onChange={(event) => setSearch(event.target.value)} /></div></section>
     <section className="panel data-panel"><DataTable columns={columns} rows={filtered} onRowClick={(item) => navigate(`/corrections/${item.id}`)} emptyTitle="No active corrections" emptyText="Returned agreements within your backend-authorized scope will appear here." /></section>
   </>;

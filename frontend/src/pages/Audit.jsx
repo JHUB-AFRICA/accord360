@@ -69,7 +69,6 @@ export default function Audit() {
     <PageHeader
       eyebrow="Security and compliance"
       title="System audit log"
-      description="Read-only audit events returned by GET /reports/audit. The backend controls role access and the maximum result limit."
       actions={<button className="secondary-button" onClick={() => window.print()}><Download size={17} /> Print current view</button>}
       meta={<span className="scope-note"><ShieldCheck size={15} /> Backend-authorized, read-only</span>}
     />

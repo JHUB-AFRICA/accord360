@@ -11,6 +11,7 @@ import { listNotifications, markNotificationRead } from "../lib/backend.js";
 import { initials } from "../lib/format";
 import { roleConfig } from "../lib/roles";
 import StatusBadge from "./StatusBadge";
+import jkuatLogo from "../assets/jkuat-logo.jpg";
 
 const iconMap = {
   home: Gauge,
@@ -155,7 +156,7 @@ export default function Layout() {
       <a className="skip-link" href="#workspace-main">Skip to main content</a>
       <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`} aria-label="Workspace navigation">
         <div className="brand-block">
-          <div className="brand-mark">A</div>
+          <div className="brand-mark brand-logo"><img src={jkuatLogo} alt="JKUAT logo" /></div>
           <div><strong>Accord360</strong><span>Directorate of Linkages (RPE)</span></div>
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={20} /></button>
         </div>

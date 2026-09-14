@@ -32,6 +32,7 @@ import RoleHomeRedirect from "./components/RoleHomeRedirect.jsx";
 import RoleRoute from "./components/RoleRoute.jsx";
 import { ALL_ROLES } from "./lib/roles.js";
 
+
 const role = (roles, element) => <RoleRoute roles={roles}>{element}</RoleRoute>;
 const agreementCreators = ["researcher", "linkages", "director_linkages"];
 const correctionRoles = ["researcher", "approver", "linkages", "director_linkages", "legal", "dvc"];
