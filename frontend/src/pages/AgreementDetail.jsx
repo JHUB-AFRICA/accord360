@@ -122,7 +122,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
         }
         updated = await transitionAgreement(record.id, "activate", "Activation checklist completed in the Accord360 frontend.");
       } else {
-        updated = await transitionAgreement(record.id, action.key, buildComment() || null);
+        updated = await transitionAgreement(record.id, action.key, buildComment() || null, ["return_correction", "return_dvc"].includes(action.key) ? { exact_item: actionForm.exact_item.trim(), requested_change: actionForm.requested_change.trim() } : {});
       }
       setRecord(updated);
       setMessage(`${action.label} completed.`);

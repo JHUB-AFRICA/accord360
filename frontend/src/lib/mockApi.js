@@ -96,20 +96,51 @@ function initialState() {
     makeAgreement(7, { reference_number: "JKUAT-MOU-2026-0007", title: "Climate Innovation and Capacity Building", partner: partners[3], stage: "initiation", status: "correction_required", status_color: "yellow", next_action: "Champion to correct and resubmit", workflow_events: [{ id: 70, from_stage: "linkages_review", to_stage: "initiation", action: "return_correction", comment: "Exact item: Project budget. Requested change: Upload the approved institutional contribution plan.", created_at: "2026-08-05T08:00:00Z", actor: users[2] }] })
   ];
 
+  const corrections = [{
+    id: 1,
+    agreement_id: 7,
+    agreement_reference: agreements[6].reference_number,
+    agreement_title: agreements[6].title,
+    partner_name: agreements[6].partner.name,
+    workflow_event_id: 70,
+    return_action: "return_correction",
+    status: "pending",
+    exact_item: "Project budget",
+    requested_change: "Upload the approved institutional contribution plan.",
+    details: null,
+    requested_by: users[2],
+    assigned_to: users[0],
+    response_text: null,
+    responded_by: null,
+    responded_at: null,
+    resolution_notes: null,
+    resolved_by: null,
+    resolved_at: null,
+    created_at: "2026-08-05T08:00:00Z",
+    updated_at: "2026-08-05T08:00:00Z"
+  }];
+
   return {
     users,
     partners,
     agreements,
+    corrections,
     notifications: [{ id: 1, user_id: 3, title: "Legal review update", message: "JKUAT-CRA-2026-0001 is currently under Legal review.", level: "info", is_read: false, agreement_id: 1, created_at: "2026-08-05T08:00:00Z" }],
     audit: [{ id: 1, action: "create_agreement", object_type: "agreement", object_id: "1", old_value: null, new_value: "JKUAT-CRA-2026-0001", source_ip: "127.0.0.1", created_at: "2026-01-10T08:00:00Z", actor: users[0] }],
-    next: { user: 12, partner: 6, agreement: 8, document: 20, workflow: 100, deliverable: 10, value: 10, notification: 10, audit: 10 }
+    partner_reviews: [],
+    next: { user: 12, partner: 6, partner_review: 1, agreement: 8, correction: 2, document: 20, workflow: 100, deliverable: 10, value: 10, notification: 10, audit: 10 }
   };
 }
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const state = JSON.parse(raw);
+      state.corrections ||= [];
+      state.next.correction ||= 1;
+      return state;
+    }
   } catch { /* reset below */ }
   const state = initialState();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -208,6 +239,8 @@ function dashboardStats(state, actor) {
 
 export async function mockRequest(path, options = {}) {
   const state = loadState();
+  state.partner_reviews ||= [];
+  state.next.partner_review ||= 1;
   const method = String(options.method || "GET").toUpperCase();
   const url = new URL(path, "http://mock.local");
   const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -219,12 +252,51 @@ export async function mockRequest(path, options = {}) {
     return json({ access_token: `${TOKEN_PREFIX}${actor.id}`, token_type: "bearer", user: actor });
   }
 
+  if (pathname === "/auth/register-partner" && method === "POST") {
+    return json({
+      reference_number: `MOCK-PAR-${String(Date.now()).slice(-8)}`,
+      status: "pending_email_verification",
+      message: "Application received. Check the official email address to verify the application."
+    }, 202);
+  }
+
   const actor = currentUser(state, options);
   if (!actor) return fail("Not authenticated", 401);
 
   if (pathname === "/auth/me" && method === "GET") return json(actor);
   if (pathname === "/dashboard/workspace" && method === "GET") return json(dashboardWorkspace(state, actor));
   if (pathname === "/dashboard/stats" && method === "GET") return json(dashboardStats(state, actor));
+
+  if (pathname === "/corrections" && method === "GET") {
+    const visible = new Set(scoped(state, actor).map((item) => item.id));
+    return json(state.corrections.filter((item) => visible.has(item.agreement_id)));
+  }
+  const correctionMatch = pathname.match(/^\/corrections\/(\d+)$/);
+  if (correctionMatch && method === "GET") {
+    const item = state.corrections.find((entry) => entry.id === Number(correctionMatch[1]));
+    return item ? json(item) : fail("Correction not found", 404);
+  }
+  const correctionRespondMatch = pathname.match(/^\/corrections\/(\d+)\/respond$/);
+  if (correctionRespondMatch && method === "POST") {
+    const correction = state.corrections.find((entry) => entry.id === Number(correctionRespondMatch[1]));
+    if (!correction) return fail("Correction not found", 404);
+    const allowed = correction.return_action === "return_correction" ? ["researcher", "linkages", "director_linkages"] : ["legal"];
+    if (!allowed.includes(actor.role)) return fail("Not enough permissions", 403);
+    if (correction.status !== "pending") return fail("This correction is no longer awaiting a response", 409);
+    const agreement = state.agreements.find((entry) => entry.id === correction.agreement_id);
+    if (agreement) Object.assign(agreement, correction.return_action === "return_correction" ? { stage: "department_approval", status: "pending_department", next_action: "Department/faculty approval required" } : { stage: "dvc_approval", status: "legal_approved", next_action: "DVC RPE endorsement required" });
+    Object.assign(correction, { status: "responded", response_text: payload.response_text, responded_by: actor, responded_at: now(), updated_at: now() });
+    saveState(state); return json(correction);
+  }
+  const correctionResolveMatch = pathname.match(/^\/corrections\/(\d+)\/resolve$/);
+  if (correctionResolveMatch && method === "POST") {
+    const correction = state.corrections.find((entry) => entry.id === Number(correctionResolveMatch[1]));
+    if (!correction) return fail("Correction not found", 404);
+    if (correction.status !== "responded") return fail("A correction can only be resolved after a response", 409);
+    if (actor.role !== "admin" && actor.role !== correction.requested_by.role && !( ["linkages", "director_linkages"].includes(actor.role) && ["linkages", "director_linkages"].includes(correction.requested_by.role))) return fail("Not enough permissions", 403);
+    Object.assign(correction, { status: "resolved", resolution_notes: payload.resolution_notes, resolved_by: actor, resolved_at: now(), updated_at: now() });
+    saveState(state); return json(correction);
+  }
 
   if (pathname === "/users" && method === "GET") return actor.role === "admin" ? json(state.users) : fail("Not enough permissions", 403);
   if (pathname === "/users/champions" && method === "GET") return ["admin", "linkages", "director_linkages"].includes(actor.role) ? json(state.users.filter((item) => item.role === "researcher" && item.is_active)) : fail("Not enough permissions", 403);
@@ -253,6 +325,27 @@ export async function mockRequest(path, options = {}) {
     if (!["linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = state.partners.find((entry) => entry.id === Number(partnerMatch[1])); if (!item) return fail("Partner not found", 404);
     Object.assign(item, payload); addAudit(state, actor, "update_partner", "partner", item.id, null, item.name); saveState(state); return json(item);
+  }
+  const partnerReviewsMatch = pathname.match(/^\/partners\/(\d+)\/reviews$/);
+  if (partnerReviewsMatch && method === "GET") {
+    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    const item = state.partners.find((entry) => entry.id === Number(partnerReviewsMatch[1]));
+    if (!item) return fail("Partner not found", 404);
+    return json(state.partner_reviews.filter((entry) => entry.partner_id === item.id));
+  }
+  const partnerReviewMatch = pathname.match(/^\/partners\/(\d+)\/review$/);
+  if (partnerReviewMatch && method === "POST") {
+    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    const item = state.partners.find((entry) => entry.id === Number(partnerReviewMatch[1]));
+    if (!item) return fail("Partner not found", 404);
+    if (item.status === payload.status) return fail("The partner already has this status", 409);
+    if (!String(payload.reason || "").trim()) return fail("A review reason is required", 422);
+    const review = { id: state.next.partner_review++, partner_id: item.id, reviewer: actor, old_status: item.status, new_status: payload.status, reason: payload.reason.trim(), created_at: now() };
+    item.status = payload.status;
+    state.partner_reviews.unshift(review);
+    addAudit(state, actor, "review_partner", "partner", item.id, review.old_status, `${review.new_status}: ${review.reason}`);
+    saveState(state);
+    return json(review, 201);
   }
 
   if (pathname === "/agreements" && method === "GET") {
@@ -286,7 +379,12 @@ export async function mockRequest(path, options = {}) {
     if (["return_correction", "return_dvc", "reject", "close"].includes(action) && !String(payload.comment || "").trim()) return fail("A reason/comment is required for this action", 400);
     if (action === "activate") { const missing = []; if (!item.signing_date) missing.push("signing date"); if (!item.effective_date) missing.push("effective date"); if (!item.expiry_date) missing.push("expiry date"); if (!item.internal_champion) missing.push("internal Champion"); if (!item.partner_liaison) missing.push("partner liaison"); if (!item.deliverables.length) missing.push("at least one M&E deliverable target"); if (!item.documents.some((doc) => doc.document_type === "signed" && doc.is_official)) missing.push("official signed agreement document"); if (missing.length) return fail(`Activation requires: ${missing.join(", ")}`, 400); }
     const from = item.stage; const [stage, status, color, nextAction] = transitionMap[action]; Object.assign(item, { stage, status, status_color: color, next_action: nextAction, updated_at: now() }); if (action === "submit_vc" && !item.date_sent_vc) item.date_sent_vc = new Date().toISOString().slice(0, 10); if (action === "mark_signed" && !item.signing_date) item.signing_date = new Date().toISOString().slice(0, 10);
-    item.workflow_events.push({ id: state.next.workflow++, from_stage: from, to_stage: stage, action, comment: payload.comment || null, created_at: now(), actor }); addAudit(state, actor, `workflow_${action}`, "agreement", item.id, from, stage); saveState(state); return json(item);
+    const event = { id: state.next.workflow++, from_stage: from, to_stage: stage, action, comment: payload.comment || null, created_at: now(), actor };
+    item.workflow_events.push(event);
+    if (["return_correction", "return_dvc"].includes(action)) {
+      state.corrections.push({ id: state.next.correction++, agreement_id: item.id, agreement_reference: item.reference_number, agreement_title: item.title, partner_name: item.partner.name, workflow_event_id: event.id, return_action: action, status: "pending", exact_item: payload.exact_item || "Workflow return", requested_change: payload.requested_change || payload.comment, details: payload.details || null, requested_by: actor, assigned_to: action === "return_correction" ? item.owner : null, response_text: null, responded_by: null, responded_at: null, resolution_notes: null, resolved_by: null, resolved_at: null, created_at: now(), updated_at: now() });
+    }
+    addAudit(state, actor, `workflow_${action}`, "agreement", item.id, from, stage); saveState(state); return json(item);
   }
 
   const docsListMatch = pathname.match(/^\/agreements\/(\d+)\/documents$/);

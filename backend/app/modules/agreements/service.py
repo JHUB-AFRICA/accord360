@@ -21,7 +21,7 @@ from ...deps import audit
 from .models import Agreement
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
-from app.modules.workflows.models import Notification, WorkflowEvent
+from app.modules.workflows.models import WorkflowEvent
 from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, DocumentOut
 from app.modules.workflows.schemas import TransitionRequest
 from ..workflows.service import (
@@ -31,6 +31,7 @@ from ..workflows.service import (
     REQUIRED_STATUS_BY_ACTION,
     TRANSITIONS,
     create_reference,
+    notify_user,
     notify_roles,
     refresh_risk_status,
 )
@@ -298,8 +299,7 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     elif payload.action == "activate":
         agreement.activated_at = now
 
-    db.add(
-        WorkflowEvent(
+    workflow_event = WorkflowEvent(
             agreement_id=agreement.id,
             from_stage=from_stage,
             to_stage=new_stage,
@@ -307,17 +307,31 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
             comment=(payload.comment or "").strip() or None,
             actor_id=user.id,
         )
-    )
-    audit(db, user, f"workflow_{payload.action}", "agreement", agreement.id, request, old_value=from_stage, new_value=new_stage)
-    db.add(
-        Notification(
-            user_id=agreement.owner_id,
-            title="Agreement status updated",
-            message=f"{agreement.reference_number} moved to {new_stage.replace('_', ' ')}.",
-            level=color,
-            agreement_id=agreement.id,
+    db.add(workflow_event)
+    db.flush()
+    if payload.action in {"return_correction", "return_dvc"}:
+        from app.modules.workflows.service import create_correction
+
+        create_correction(
+            db,
+            agreement,
+            workflow_event,
+            user,
+            exact_item=payload.exact_item,
+            requested_change=payload.requested_change,
+            details=payload.details,
         )
-    )
+    audit(db, user, f"workflow_{payload.action}", "agreement", agreement.id, request, old_value=from_stage, new_value=new_stage)
+    owner = db.get(User, agreement.owner_id)
+    if owner:
+        notify_user(
+            db,
+            owner,
+            "Agreement status updated",
+            f"{agreement.reference_number} moved to {new_stage.replace('_', ' ')}.",
+            agreement.id,
+            color,
+        )
     notify_roles(
         db,
         _transition_recipient_roles(payload.action),
