@@ -1,8 +1,18 @@
 import { ArrowRight, Building2, CheckCircle2, FileCheck2, FileSignature, Gavel, GraduationCap, Landmark, LineChart, ShieldCheck, Users } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 
+import heroGate from "../assets/jkuat-gate.jpg";
+import heroMonument from "../assets/mmt.png";
+import heroMonumentYard from "../assets/mmy.png";
+import heroImage1 from "../assets/image1.jpeg";
+import heroImage2 from "../assets/image2.jpeg";
+import heroImage3 from "../assets/image3.jpeg";
+import heroImage4 from "../assets/image4.jpeg";
 
-import heroBackground from "../assets/jkuat-gate.jpg";
+const heroSlides = [heroGate, heroMonument, heroMonumentYard, heroImage1, heroImage2, heroImage3, heroImage4];
+const HERO_SLIDE_INTERVAL = 6000;
+
 const agreementTypes = [
   { code: "MoU", title: "Memorandum of Understanding", text: "A broad framework for academic, research or institutional cooperation." },
   { code: "MoA", title: "Memorandum of Agreement", text: "An operational agreement with defined obligations, resources and measurable commitments." },
@@ -13,14 +23,32 @@ const agreementTypes = [
 const process = ["Submit request", "Verify partner", "Assign Champion", "Faculty review", "Linkages review", "Legal review", "DVC RPE & VC", "Signing", "Activation & M&E", "Renewal or closure"];
 
 export default function LandingPage() {
+  const [slide, setSlide] = useState({ current: 0, previous: null });
+
+  // Warm only the next slide so the first paint is not competing with the
+  // whole gallery (the monument PNGs are around 1 MB each).
+  useEffect(() => {
+    const next = new Image();
+    next.src = heroSlides[(slide.current + 1) % heroSlides.length];
+  }, [slide.current]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setSlide(({ current }) => ({ current: (current + 1) % heroSlides.length, previous: current })), HERO_SLIDE_INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <>
-   <section
-  className="hero-section"
-  style={{
-    backgroundImage: `url(${heroBackground})`,
-  }}
->
+      <section className="hero-section">
+        <div className="hero-backdrop" aria-hidden="true">
+          {heroSlides.map((src, index) => (
+            <div
+              key={src}
+              className={`hero-slide ${index === slide.current ? "is-active" : index === slide.previous ? "is-leaving" : ""}`}
+              style={{ backgroundImage: `url(${src})` }}
+            />
+          ))}
+        </div>
         <div className="hero-grid">
           <div className="hero-copy">
             <span className="hero-kicker">Official partnership lifecycle portal</span>
@@ -48,7 +76,7 @@ export default function LandingPage() {
 
       <section id="agreement-types" className="public-section soft-section">
         <div className="section-heading-public"><span className="section-kicker">Agreement frameworks</span><h2>Supported collaboration instruments</h2><p>Agreement types and document requirements are centrally configured and governed.</p></div>
-        <div className="agreement-type-grid">{agreementTypes.map((item) => <article key={item.code}><span>{item.code}</span><h3>{item.title}</h3><p>{item.text}</p></article>)}</div>
+        <div className="agreement-type-grid">{agreementTypes.map((item) => <article key={item.code}><h3>{item.title}</h3><p>{item.text}</p></article>)}</div>
       </section>
 
       <section id="process" className="public-section">
