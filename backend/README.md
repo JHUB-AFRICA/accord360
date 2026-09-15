@@ -172,6 +172,11 @@ available values; never commit real credentials.
 | `GEMINI_MODEL` | Gemini chat model | `gemini-3.6-flash` |
 | `AI_SESSION_TTL_SECONDS` | In-memory chat session inactivity timeout | `1800` |
 | `AI_MAX_HISTORY_MESSAGES` | Maximum messages retained per in-memory session | `20` |
+| `EMAIL_ENABLED` | Enable application notification email delivery | `false` |
+| `EMAIL_PROVIDER` | Delivery adapter: `console`, `smtp`, or `resend` | `console` |
+| `EMAIL_FROM` / `EMAIL_FROM_NAME` | Sender address and display name | example sender |
+| `SMTP_*` | Institutional SMTP host, port, credentials and TLS settings | unset / `587` |
+| `RESEND_API_KEY` / `RESEND_API_URL` | Resend API credentials and endpoint | unset / Resend default |
 | `SEED_DEMO_DATA` | Create demo users and records at startup | `true` |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins | localhost origins |
 | `LOG_LEVEL` | Application log level | `INFO` |
@@ -179,6 +184,20 @@ available values; never commit real credentials.
 For production, use a strong secret, PostgreSQL, managed object storage,
 `ENVIRONMENT=production`, and `SEED_DEMO_DATA=false`. The application refuses
 to start in production with the development secret or demo seeding enabled.
+
+## Email delivery
+
+Notification delivery is selected entirely through environment configuration;
+workflow code does not change when switching providers. Keep
+`EMAIL_ENABLED=false` for local development or use `EMAIL_PROVIDER=console` to
+log messages without sending them.
+
+For a JKUAT or other institutional mail server, set `EMAIL_PROVIDER=smtp` and
+configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`SMTP_USE_TLS` and `SMTP_USE_SSL`. For Resend, set `EMAIL_PROVIDER=resend`,
+`RESEND_API_KEY`, and a verified `EMAIL_FROM` address. The backend validates the
+required provider settings at startup, and delivery failures are logged without
+interrupting the underlying workflow transaction.
 
 ## Database migrations
 

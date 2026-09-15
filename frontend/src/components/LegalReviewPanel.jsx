@@ -27,7 +27,7 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
         `Requested change: ${form.requestedChange.trim()}`,
         form.details.trim() ? `Additional context: ${form.details.trim()}` : null
       ].filter(Boolean).join("\n");
-      const updated = await transitionAgreement(record.id, "return_correction", comment);
+      const updated = await transitionAgreement(record.id, "return_correction", comment, { exact_item: form.exactItem.trim(), requested_change: form.requestedChange.trim(), details: form.details.trim() || null });
       onRecordChange(updated);
       onMessage("The agreement was returned for correction using the supported workflow transition endpoint.");
       setForm({ exactItem: "", requestedChange: "", details: "" });
@@ -43,7 +43,7 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
     <>
       <section className="panel legal-comparison-panel">
         <div className="panel-head">
-          <div><h2>Legal review record</h2><p>The current backend exposes Legal feedback as workflow-event comments rather than separate clause-comment endpoints.</p></div>
+          <div><h2>Legal review record</h2><p>Legal feedback is stored as a structured correction linked to the workflow return event.</p></div>
           {canReturn && <button className="secondary-button compact-button" onClick={() => setCommentOpen(true)}><MessageSquarePlus size={16} /> Request amendment</button>}
         </div>
         <div className="comparison-table" role="table" aria-label="Legal review evidence">
@@ -56,7 +56,7 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
 
       <div className="detail-grid">
         <section className="panel detail-main-card">
-          <div className="panel-head"><div><h2>Review comments and events</h2><p>Every displayed item is sourced from the agreement workflow history.</p></div></div>
+          <div className="panel-head"><div><h2>Review comments and events</h2><p>Workflow history remains visible alongside structured correction records.</p></div></div>
           <div className="comment-list">
             {reviewEvents.map((event) => (
               <article key={event.id} className={["return_correction", "return_dvc"].includes(event.action) ? "blocking" : ""}>
@@ -70,9 +70,9 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
         </section>
 
         <aside className="panel detail-side-card">
-          <div className="panel-head"><div><h2>Correction response</h2><p>Corrections are derived from the agreement status and workflow comments.</p></div></div>
-          {record.status === "correction_required" || record.status === "dvc_returned" ? <Link className="quick-link-card" to={`/corrections/${record.id}`}><span className="list-icon orange"><AlertTriangle /></span><div><strong>Open correction workspace</strong><span>Review the latest return comment and resubmit the agreement.</span></div></Link> : <div className="inline-empty"><CheckCircle2 /> No active correction is recorded.</div>}
-          <div className="helper-note"><Scale size={16} /> Separate clause-level comments and resolution states require a future backend endpoint. This frontend does not call an endpoint that is not implemented.</div>
+          <div className="panel-head"><div><h2>Correction response</h2><p>Structured corrections are linked to the agreement workflow and available in the correction register.</p></div></div>
+          {record.status === "correction_required" || record.status === "dvc_returned" ? <Link className="quick-link-card" to="/corrections"><span className="list-icon orange"><AlertTriangle /></span><div><strong>Open correction workspace</strong><span>Review the structured return record and submit a response.</span></div></Link> : <div className="inline-empty"><CheckCircle2 /> No active correction is recorded.</div>}
+          <div className="helper-note"><Scale size={16} /> Correction requests now retain the exact item, requested change, response and resolution state in the backend.</div>
         </aside>
       </div>
 
@@ -80,7 +80,7 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
         open={commentOpen}
         onClose={() => setCommentOpen(false)}
         title="Return agreement for Legal correction"
-        description="This performs the implemented return_correction transition and stores the structured details in its comment."
+        description="This performs the return_correction transition and creates a structured correction record for the responsible user."
         footer={<><button className="secondary-button" onClick={() => setCommentOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={requestAmendment}>{submitting ? "Returning…" : "Return for correction"}</button></>}
       >
         <div className="form-grid single-column">

@@ -22,11 +22,14 @@ export const BACKEND_CAPABILITIES = Object.freeze({
   notifications: true,
   csvReports: true,
   audit: true,
+  partnerApplications: true,
+  corrections: true,
+  partnerReviewHistory: true,
   partnerAccounts: false,
   passwordReset: false,
   templates: false,
   configuration: false,
-  dedicatedCorrections: false,
+  dedicatedCorrections: true,
   scorecards: false,
   aiReports: false,
   pdfReports: false,
@@ -46,8 +49,25 @@ export async function loginRequest(email, password) {
   return { ...response, user: normalizeUser(response.user) };
 }
 
+export async function registerPartnerApplication(payload) {
+  const formData = new FormData();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (key === "documents") return;
+    if (value !== undefined && value !== null) formData.append(key, String(value));
+  });
+  (payload.documents || []).forEach((file) => formData.append("files", file));
+  return api("/auth/register-partner", { method: "POST", body: formData });
+}
+
 export async function getCurrentUser() {
   return normalizeUser(await api("/auth/me"));
+}
+
+export async function sendChatMessage(message, sessionId = null) {
+  return api("/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, ...(sessionId ? { session_id: sessionId } : {}) })
+  });
 }
 
 export async function getDashboard() {
@@ -88,6 +108,14 @@ export async function updatePartner(id, payload) {
   return normalizePartner(await api(`/partners/${Number(id)}`, { method: "PUT", body: JSON.stringify(payload) }));
 }
 
+export async function listPartnerReviews(id) {
+  return api(`/partners/${Number(id)}/reviews`);
+}
+
+export async function reviewPartner(id, status, reason) {
+  return api(`/partners/${Number(id)}/review`, { method: "POST", body: JSON.stringify({ status, reason }) });
+}
+
 export async function listAgreements(filters = {}) {
   const query = cleanParams(filters);
   const records = await api(`/agreements${query ? `?${query}` : ""}`);
@@ -106,11 +134,27 @@ export async function updateAgreement(id, payload) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) }));
 }
 
-export async function transitionAgreement(id, action, comment = null) {
+export async function transitionAgreement(id, action, comment = null, extra = {}) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}/transition`, {
     method: "POST",
-    body: JSON.stringify({ action, comment: comment || null })
+    body: JSON.stringify({ action, comment: comment || null, ...extra })
   }));
+}
+
+export async function listCorrections() {
+  return api("/corrections");
+}
+
+export async function getCorrection(id) {
+  return api(`/corrections/${Number(id)}`);
+}
+
+export async function respondCorrection(id, responseText) {
+  return api(`/corrections/${Number(id)}/respond`, { method: "POST", body: JSON.stringify({ response_text: responseText }) });
+}
+
+export async function resolveCorrection(id, resolutionNotes) {
+  return api(`/corrections/${Number(id)}/resolve`, { method: "POST", body: JSON.stringify({ resolution_notes: resolutionNotes }) });
 }
 
 export async function uploadAgreementDocument(id, { file, documentType = "supporting", version = "1.0", confidentiality = "internal", isOfficial = false }) {

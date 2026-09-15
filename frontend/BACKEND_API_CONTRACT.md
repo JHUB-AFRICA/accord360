@@ -14,6 +14,7 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 | Portfolio statistics | `GET /dashboard/stats` |
 | Champion directory | `GET /users/champions` |
 | Update partner | `PUT /partners/{partner_id}` |
+| Review partner | `POST /partners/{partner_id}/review` and `GET /partners/{partner_id}/reviews` |
 | Perform workflow action | `POST /agreements/{agreement_id}/transition` with `{ action, comment }` |
 | Filter agreement type | Query parameter `agreement_type` |
 | User and record IDs | Integers |
@@ -75,7 +76,6 @@ No production request is sent to:
 - `/templates`
 - `/reference-data`
 - `/directory/champions`
-- `/corrections`
 - `/scorecards`
 - `/reports/portfolio`
 - `/reports/ai-summary`
@@ -86,5 +86,9 @@ No production request is sent to:
 - `/me/reports`
 - notification resend routes
 - `/agreements/{id}/actions/{action}`
+
+Correction records are implemented through `GET /corrections`,
+`GET /corrections/{id}`, `POST /corrections/{id}/respond`, and
+`POST /corrections/{id}/resolve`.
 
 The related UI either maps to implemented agreement data or clearly displays that backend support is pending.

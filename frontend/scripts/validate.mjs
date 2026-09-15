@@ -61,14 +61,12 @@ const unsupportedBackendPaths = [
   "/configuration",
   "/templates",
   "/reference-data",
-  "/corrections",
   "/scorecards",
   "/reports/portfolio",
   "/reports/ai-summary",
   "/reports/export.pdf",
   "/reports/export.xlsx",
   "/auth/forgot-password",
-  "/auth/register-partner",
   "/me/reports",
   "/resend",
   "/actions/"
@@ -78,8 +76,8 @@ for (const value of unsupportedBackendPaths) {
 }
 
 const requiredBackendPaths = [
-  "/auth/login", "/auth/me", "/users", "/users/champions", "/partners", "/agreements",
-  "/transition", "/documents", "/deliverables", "/values", "/dashboard/workspace",
+  "/auth/login", "/auth/me", "/auth/register-partner", "/users", "/users/champions", "/partners", "/agreements",
+  "/transition", "/documents", "/corrections", "/deliverables", "/values", "/dashboard/workspace",
   "/dashboard/stats", "/notifications", "/reports/agreements.csv", "/reports/audit"
 ];
 for (const value of requiredBackendPaths) {

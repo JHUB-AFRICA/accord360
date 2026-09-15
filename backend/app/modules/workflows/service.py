@@ -3,11 +3,16 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.modules.agreements.models import Agreement
 from app.modules.users.models import User
 from app.modules.workflows.models import Notification
+from app.modules.workflows.models import Correction
+from app.access import apply_agreement_scope, ensure_can_view_agreement
+from app.modules.workflows.schemas import CorrectionResolution, CorrectionResponse
+from app.deps import audit
+from app.utils.email_service import send_notification_email
 from ...timeutils import utc_now
 
 STAGE_ORDER = [
@@ -99,6 +104,121 @@ REQUIRED_STATUS_BY_ACTION = {
 COMMENT_REQUIRED_ACTIONS = {"return_correction", "return_dvc", "reject", "close"}
 
 
+def _correction_requested_by_role(actor: User, return_action: str) -> bool:
+    if actor.role == "admin":
+        return True
+    if return_action == "return_dvc":
+        return actor.role == "dvc"
+    return actor.role in {"approver", "linkages", "director_linkages", "legal"}
+
+
+def create_correction(
+    db: Session,
+    agreement: Agreement,
+    event: WorkflowEvent,
+    actor: User,
+    *,
+    exact_item: str | None = None,
+    requested_change: str | None = None,
+    details: str | None = None,
+) -> Correction:
+    comment = (event.comment or "").strip()
+    parsed: dict[str, str] = {}
+    for line in comment.splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            parsed[key.strip().lower().replace(" ", "_")] = value.strip()
+    correction = Correction(
+        agreement_id=agreement.id,
+        workflow_event_id=event.id,
+        return_action=event.action,
+        exact_item=(exact_item or parsed.get("exact_item") or "Workflow return").strip(),
+        requested_change=(requested_change or parsed.get("requested_change") or comment).strip(),
+        details=(details or parsed.get("additional_context") or None),
+        requested_by_id=actor.id,
+        assigned_to_id=agreement.owner_id if event.action == "return_correction" else agreement.legal_reviewer_id,
+    )
+    db.add(correction)
+    return correction
+
+
+def _correction_query(user: User):
+    stmt = (
+        select(Correction)
+        .join(Correction.agreement)
+        .options(
+            selectinload(Correction.agreement).selectinload(Agreement.partner),
+            selectinload(Correction.workflow_event),
+            selectinload(Correction.requested_by),
+            selectinload(Correction.assigned_to),
+            selectinload(Correction.responded_by),
+            selectinload(Correction.resolved_by),
+        )
+    )
+    return apply_agreement_scope(stmt, user)
+
+
+def list_corrections(db: Session, user: User) -> list[Correction]:
+    return db.scalars(_correction_query(user).order_by(Correction.created_at.desc())).all()
+
+
+def get_correction(db: Session, user: User, correction_id: int) -> Correction:
+    correction = db.scalar(_correction_query(user).where(Correction.id == correction_id))
+    if not correction:
+        raise LookupError("Correction not found")
+    ensure_can_view_agreement(user, correction.agreement)
+    return correction
+
+
+def respond_to_correction(db: Session, user: User, correction_id: int, payload: CorrectionResponse, request) -> Correction:
+    correction = get_correction(db, user, correction_id)
+    if correction.status != "pending":
+        raise ValueError("This correction is no longer awaiting a response")
+    if correction.return_action == "return_correction":
+        if user.role not in {"researcher", "linkages", "director_linkages"}:
+            raise PermissionError("Only the assigned Champion or Linkages officer can respond")
+        transition_action = "submit"
+    else:
+        if user.role != "legal":
+            raise PermissionError("Only Legal can respond to a DVC return")
+        transition_action = "approve_legal"
+
+    from app.modules.agreements.service import transition_agreement
+    from app.modules.workflows.schemas import TransitionRequest
+
+    transition_agreement(
+        db,
+        user,
+        correction.agreement_id,
+        TransitionRequest(action=transition_action, comment=payload.response_text),
+        request,
+    )
+    correction.status = "responded"
+    correction.response_text = payload.response_text.strip()
+    correction.responded_by_id = user.id
+    correction.responded_at = utc_now()
+    db.commit()
+    return get_correction(db, user, correction.id)
+
+
+def resolve_correction(db: Session, user: User, correction_id: int, payload: CorrectionResolution, request) -> Correction:
+    correction = get_correction(db, user, correction_id)
+    if correction.status != "responded":
+        raise ValueError("A correction can only be resolved after a response")
+    if not _correction_requested_by_role(correction.requested_by, correction.return_action):
+        raise ValueError("The correction requester is not eligible to resolve this record")
+    if user.role != "admin" and user.role != correction.requested_by.role:
+        if not ({user.role, correction.requested_by.role} <= {"linkages", "director_linkages"}):
+            raise PermissionError("Only the requesting review function can resolve this correction")
+    correction.status = "resolved"
+    correction.resolution_notes = payload.resolution_notes.strip()
+    correction.resolved_by_id = user.id
+    correction.resolved_at = utc_now()
+    audit(db, user, "resolve_correction", "correction", correction.id, request, new_value=correction.resolution_notes)
+    db.commit()
+    return get_correction(db, user, correction.id)
+
+
 def create_reference(agreement_type: str, agreement_id: int) -> str:
     """Build a unique, stable reference using the persisted database ID."""
     year = utc_now().year
@@ -106,10 +226,22 @@ def create_reference(agreement_type: str, agreement_id: int) -> str:
     return f"JKUAT-{normalized_type}-{year}-{agreement_id:04d}"
 
 
+def notify_user(
+    db: Session,
+    user: User,
+    title: str,
+    message: str,
+    agreement_id: int | None = None,
+    level: str = "info",
+) -> None:
+    db.add(Notification(user_id=user.id, title=title, message=message, level=level, agreement_id=agreement_id))
+    send_notification_email(user.email, user.full_name, title, message)
+
+
 def notify_roles(db: Session, roles: set[str], title: str, message: str, agreement_id: int | None = None, level: str = "info") -> None:
     users = db.scalars(select(User).where(User.role.in_(roles), User.is_active.is_(True))).all()
     for user in users:
-        db.add(Notification(user_id=user.id, title=title, message=message, level=level, agreement_id=agreement_id))
+        notify_user(db, user, title, message, agreement_id, level)
 
 
 def refresh_risk_status(agreement: Agreement) -> None:

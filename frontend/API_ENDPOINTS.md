@@ -132,6 +132,45 @@ The `id` is an integer. Do not assume frontend mock IDs such as `usr-1`.
 
 Requires a valid token. Returns the authenticated `user` object shown above.
 
+### `POST /auth/register-partner`
+
+Public multipart form submission. This creates a pending partner application;
+it does not create a login account or allow the applicant to choose an internal
+role.
+
+Required form fields:
+
+```text
+institution_name, institution_type, country, website,
+contact_name, job_title, official_email, phone,
+collaboration_area, strategic_alignment, consent
+```
+
+Optional fields are `region` and `registration_number`. Supporting files are
+sent under the repeated `files` field and may be PDF, DOC or DOCX files up to
+10 MB each.
+
+Response status is `202`:
+
+```json
+{
+  "reference_number": "JKUAT-PAR-2026-A1B2C3",
+  "status": "pending_email_verification",
+  "message": "Application received. Check the official email address to verify the application."
+}
+```
+
+An active application for the same official email returns `409`. Verification
+tokens are hashed in the database and are never returned in the API response.
+In development, the verification token is written to the backend console email
+log; a configured email provider is used when email delivery is enabled.
+
+### `GET /auth/verify-partner-email?token=<token>`
+
+Public, single-use email verification route. A valid, unexpired token changes
+the application status to `pending_review` and returns its reference number.
+Invalid or expired tokens return `400`.
+
 ## 5. Users and administration
 
 ### `GET /users`
@@ -231,7 +270,89 @@ status `201`; duplicate/conflicting records return `409`.
 Requires `linkages` or `director_linkages`. Uses the same request body as
 `POST /partners` and returns the updated `PartnerOut`.
 
-## 7. Agreements
+### `GET /partners/{partner_id}/reviews`
+
+Requires `admin`, `linkages`, or `director_linkages`. Returns the partner's
+decision history, newest first, including reviewer, previous status, new status,
+mandatory reason and timestamp.
+
+### `POST /partners/{partner_id}/review`
+
+Requires `admin`, `linkages`, or `director_linkages`. Persists a status decision
+and its reason:
+
+```json
+{
+  "status": "additional_information_required",
+  "reason": "Please provide the signed institutional registration document."
+}
+```
+
+Allowed statuses are `active`, `under_review`,
+`additional_information_required` and `rejected`.
+
+### `GET /partners/applications`
+
+Requires `admin`, `linkages`, or `director_linkages`. Returns public partner
+applications, including supporting-document metadata but not document bytes.
+
+### `PATCH /partners/applications/{application_id}/review`
+
+Requires `admin`, `linkages`, or `director_linkages`.
+
+Request:
+
+```json
+{
+  "status": "approved",
+  "review_notes": "Verified for institutional collaboration."
+}
+```
+
+Allowed statuses are `needs_information`, `approved`, and `rejected`.
+Applications must have verified their official email before review. Approval
+creates an active record in the existing partner registry and records an audit
+event.
+
+## 7. Corrections
+
+Correction records are created automatically when an authorized workflow return
+uses `return_correction` or `return_dvc`. Each record remains linked to its
+originating workflow event.
+
+### `GET /corrections`
+
+Requires a valid token. Results are scoped to the user's agreement visibility.
+Returns structured correction records with the agreement reference, exact item,
+requested change, responsible users, response and resolution state.
+
+### `GET /corrections/{correction_id}`
+
+Requires a valid token and agreement access. Returns one correction record.
+
+### `POST /corrections/{correction_id}/respond`
+
+The assigned response role submits the correction response:
+
+```json
+{"response_text": "Updated the clause with the approved wording."}
+```
+
+For `return_correction`, the assigned Champion or Linkages user responds and
+the agreement advances through `submit`. For `return_dvc`, Legal responds and
+the agreement advances through `approve_legal`.
+
+### `POST /corrections/{correction_id}/resolve`
+
+The requesting review function closes a responded correction:
+
+```json
+{"resolution_notes": "Reviewed and confirmed the requested correction."}
+```
+
+The correction is retained with its response and resolution audit history.
+
+## 8. Agreements
 
 Agreement responses include nested `partner`, `owner`, and, for detail
 responses, `documents`, `workflow_events`, `deliverables`, and `values`.
@@ -606,10 +727,6 @@ GET/POST/PATCH /configuration
 GET/POST/PATCH /templates
 GET /reference-data
 GET /directory/champions
-GET /corrections
-GET /corrections/{id}
-POST /corrections/{id}/respond
-POST /corrections/{id}/resolve
 GET /scorecards
 POST /scorecards/{id}/recalculate
 GET /reports/portfolio
@@ -617,7 +734,6 @@ POST /reports/ai-summary
 GET /reports/export.pdf
 GET /reports/export.xlsx
 POST /auth/forgot-password
-POST /auth/register-partner
 ```
 
 Frontend developers must either use the implemented routes in this document,

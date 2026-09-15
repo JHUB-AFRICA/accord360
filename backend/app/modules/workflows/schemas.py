@@ -17,6 +17,38 @@ class WorkflowEventOut(ORMModel):
     created_at: datetime
     actor: UserOut
 
+
+class CorrectionResponse(BaseModel):
+    response_text: str = Field(min_length=3, max_length=4000)
+
+
+class CorrectionResolution(BaseModel):
+    resolution_notes: str = Field(min_length=3, max_length=4000)
+
+
+class CorrectionOut(ORMModel):
+    id: int
+    agreement_id: int
+    agreement_reference: str
+    agreement_title: str
+    partner_name: str
+    workflow_event_id: int
+    return_action: str
+    status: Literal["pending", "responded", "resolved"]
+    exact_item: str
+    requested_change: str
+    details: str | None
+    requested_by: UserOut
+    assigned_to: UserOut | None
+    response_text: str | None
+    responded_by: UserOut | None
+    responded_at: datetime | None
+    resolution_notes: str | None
+    resolved_by: UserOut | None
+    resolved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
 class DeliverableCreate(BaseModel):
     deliverable_type: str
     target_value: Decimal = Field(default=0, ge=0)
@@ -74,6 +106,9 @@ class TransitionRequest(BaseModel):
         "reject",
     ]
     comment: str | None = Field(default=None, max_length=4000)
+    exact_item: str | None = Field(default=None, max_length=300)
+    requested_change: str | None = Field(default=None, max_length=4000)
+    details: str | None = Field(default=None, max_length=4000)
 
 class NotificationOut(ORMModel):
     id: int
