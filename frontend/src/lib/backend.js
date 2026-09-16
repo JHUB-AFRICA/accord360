@@ -66,13 +66,6 @@ export async function getCurrentUser() {
   return normalizeUser(await api("/auth/me"));
 }
 
-export async function sendChatMessage(message, sessionId = null) {
-  return api("/ai/chat", {
-    method: "POST",
-    body: JSON.stringify({ message, ...(sessionId ? { session_id: sessionId } : {}) })
-  });
-}
-
 export async function getDashboard() {
   const [workspace, stats] = await Promise.all([api("/dashboard/workspace"), api("/dashboard/stats")]);
   return normalizeDashboard(workspace, stats);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  BarChart3, Bell, BookOpen, Building2, ChevronDown, ClipboardCheck, ClipboardList,
+  BarChart3, Bell, BookOpen, Building2, ClipboardCheck, ClipboardList,
   FileBarChart, FileCheck2, FileSignature, FileText, Gauge, Gavel, HelpCircle, History,
   LogOut, Menu, MonitorCheck, PlusCircle, Scale, Search, Settings, ShieldCheck, UserCheck,
   Users, X
@@ -172,7 +172,6 @@ export default function Layout() {
         <div className="workspace-chip">
           <div className="workspace-icon"><FileText size={18} /></div>
           <div><span>Workspace</span><strong>{config.label}</strong></div>
-          <ChevronDown size={16} aria-hidden="true" />
         </div>
 
         <nav className="side-nav">

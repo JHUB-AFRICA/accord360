@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+backend/venv/
 backend/accord360.db
 accord360.db
 backend/demo_accord360.db
@@ -15,11 +16,10 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env
 backend/node_modules/
-backend/package.json
-backend/package-lock.json
 
 # Environment and IDE
 .env
+backend/.env.docker
 .vscode/
 .idea/
 .DS_Store
