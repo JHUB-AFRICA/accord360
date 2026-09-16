@@ -15,6 +15,10 @@ from .schemas import (
     PartnerReviewCreate,
     PartnerReviewOut,
     PartnerRegistrationResponse,
+    PartnerInvitationAccept,
+    PartnerInvitationCreate,
+    PartnerInvitationOut,
+    PartnerInvitationAcceptOut,
 )
 
 router = APIRouter(prefix="/partners", tags=["Partners"])
@@ -93,6 +97,17 @@ def verify_partner_email(token: str, db: Session = Depends(get_db)):
     )
 
 
+@auth_router.post("/partner-invitations/{token}/accept", response_model=PartnerInvitationAcceptOut)
+def accept_partner_invitation(token: str, payload: PartnerInvitationAccept, db: Session = Depends(get_db)):
+    try:
+        user = service.accept_partner_invitation(db, token, payload.password)
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PartnerInvitationAcceptOut(reference_number=f"PARTNER-USER-{user.id}", status="accepted", message="Partner account created. You can now sign in to the partner workspace.")
+
+
 @router.get("", response_model=list[PartnerOut])
 def list_partners(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return service.list_partners(db)
@@ -131,6 +146,23 @@ def update_partner(
     db.commit()
     db.refresh(partner)
     return partner
+
+
+@router.post("/{partner_id}/invitations", response_model=PartnerInvitationOut, status_code=status.HTTP_201_CREATED)
+def invite_partner_user(
+    partner_id: int,
+    payload: PartnerInvitationCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("admin", "linkages", "director_linkages")),
+):
+    try:
+        invitation, _ = service.create_partner_invitation(db, partner_id, payload, actor, request)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PartnerInvitationOut.model_validate(invitation).model_copy(update={"message": "Invitation created. The acceptance token is delivered through the configured email provider."})
 
 
 @router.get("/{partner_id}/reviews", response_model=list[PartnerReviewOut])

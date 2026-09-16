@@ -265,10 +265,45 @@ status `201`; duplicate/conflicting records return `409`.
 Requires `linkages` or `director_linkages`. Uses the same request body as
 `POST /partners` and returns the updated `PartnerOut`.
 
-## 7. Agreements
+## 7. Templates and configuration
+
+### `GET /templates`
+
+Requires authentication. Returns active versioned templates. Filter with
+`agreement_type`; `include_archived=true` includes archived records.
+
+### `POST /templates`
+
+Requires `admin`, `linkages`, or `director_linkages`. Uses multipart form data
+for `name`, `agreement_type`, `version`, optional `description`, and an optional
+DOC, DOCX, ODT or PDF file up to 25 MB.
+
+### `PATCH /templates/{template_id}`
+
+Requires `admin`, `linkages`, or `director_linkages`. Updates template metadata
+or status (`active`/`archived`).
+
+### `GET /templates/{template_id}/download`
+
+Requires authentication and returns the authorized template file.
+
+### `GET/POST /configuration` and `PATCH /configuration/{key}`
+
+Configuration reads and writes require `admin`. Values are audited and only
+editable values can be changed.
+
+### `GET /reference-data`
+
+Requires authentication and returns active reference values, optionally filtered
+by category. `POST /reference-data` and `PATCH /reference-data/{item_id}` require
+`admin`.
+
+## 8. Agreements
 
 Agreement responses include nested `partner`, `owner`, and, for detail
 responses, `documents`, `workflow_events`, `deliverables`, and `values`.
+Agreement responses also include `template_id` when a versioned template was
+selected during drafting.
 
 ### `GET /agreements`
 
@@ -585,6 +620,23 @@ expiry_to=YYYY-MM-DD
 The result is scoped by the authenticated user. The response includes a
 `Content-Disposition` filename.
 
+### `GET /reports/portfolio`
+
+Returns a filter-aware portfolio snapshot scoped to the authenticated user's
+authorized agreements, including totals, distributions, approved value totals
+and visible agreement rows.
+
+### `GET /reports/export.pdf` and `GET /reports/export.xlsx`
+
+Generate filter-aware portfolio exports from the same authorization scope and
+record audit events.
+
+### `POST /reports/ai-summary`
+
+Accepts portfolio filters as JSON and returns a server-generated narrative from
+the authorized portfolio snapshot. The response marks the result as requiring
+human review.
+
 ### `GET /reports/audit`
 
 Requires `admin`, `auditor`, `executive`, or `director_linkages`.
@@ -596,6 +648,46 @@ limit=100
 ```
 
 `limit` must be between 1 and 500. Returns `AuditLogOut[]`.
+
+### External partner workspace
+
+`POST /auth/partner-invitations/{token}/accept` accepts a single-use,
+expiring invitation and creates a `partner` account. Authenticated partner
+users use `GET /partner/me`, `GET /partner/agreements`,
+`GET /partner/agreements/{agreement_id}`, and the partner-scoped document
+download route. Confidential documents are never exposed to partner users;
+internal agreement routes reject the partner role.
+
+## Agreement ownership and personal visibility
+
+Each agreement records `owner_id` for the assigned Champion and `initiator_id`
+for the user who created the request. Champion/researcher accounts can only
+list and open agreements where they are the owner or initiator. Linkages and
+Director of Linkages accounts retain the office-wide operational view. This
+scope is enforced by the backend query and detail authorization checks, not
+only by frontend filtering.
+
+## Historical data review
+
+Linkages users can review imported historical records through:
+
+- `GET /data-review/summary`
+- `GET /data-review?status=pending_review`
+- `GET /data-review/{agreement_id}`
+- `PATCH /data-review/{agreement_id}`
+- `POST /data-review/{agreement_id}/verify`
+
+Imported records retain source-row metadata and remain marked `pending_review`
+until a Linkages reviewer corrects the record and verifies it. Corrections and
+verification actions are written to the audit log.
+
+## Persisted scorecards
+
+`GET /scorecards` returns authorized active-agreement snapshots. M&E and
+Linkages roles can create immutable snapshots with
+`POST /scorecards/{agreement_id}/recalculate`; history is available through
+`GET /scorecards/{agreement_id}/history`. Definitions are read and administered
+through `GET/POST /scorecards/definitions`.
 
 ## 13. Frontend integration example
 
@@ -636,22 +728,12 @@ The following paths are present in some frontend code/contracts but are not
 currently exposed by this backend:
 
 ```text
-GET/POST/PATCH /configuration
-GET/POST/PATCH /templates
-GET /reference-data
 GET /directory/champions
 GET /corrections
 GET /corrections/{id}
 POST /corrections/{id}/respond
 POST /corrections/{id}/resolve
-GET /scorecards
-POST /scorecards/{id}/recalculate
-GET /reports/portfolio
-POST /reports/ai-summary
-GET /reports/export.pdf
-GET /reports/export.xlsx
 POST /auth/forgot-password
-POST /auth/register-partner
 ```
 
 Frontend developers must either use the implemented routes in this document,

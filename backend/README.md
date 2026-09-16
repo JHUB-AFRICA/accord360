@@ -268,6 +268,23 @@ Initiation → Department approval → Linkages review → Legal review
 Workflow transitions are validated on the server. A UI control being hidden is
 not sufficient to authorize an action.
 
+## Historical collaboration import
+
+The reviewed workbook is stored at
+`data/imports/JKUAT_Accord360_Import.xlsx`. Install backend dependencies, run
+the migration, and perform a dry run first:
+
+```bash
+python -m scripts.import_collaborations \
+  --file data/imports/JKUAT_Accord360_Import.xlsx \
+  --owner-email researcher@accord360.app
+```
+
+The importer is dry-run by default. To persist the records, add `--commit`.
+Imported agreements are assigned to the supplied temporary Champion account,
+marked `pending_review`, and must be corrected and verified by Linkages in the
+Historical Data Review workspace.
+
 ## Tests
 
 Run the backend test suite from this directory:

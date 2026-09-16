@@ -75,11 +75,18 @@ export const ROLE_CONFIG = {
     home: "/audit-workspace",
     shortDescription: "Review authorized records and immutable audit history without editing.",
     scope: "read_all"
+  },
+  partner: {
+    label: "External Partner User",
+    workspace: "Partner Workspace",
+    home: "/partner-portal",
+    shortDescription: "View agreements and approved documents shared with your organization.",
+    scope: "partner"
   }
 };
 
 export const ALL_ROLES = Object.keys(ROLE_CONFIG);
-export const INTERNAL_ROLES = ALL_ROLES;
+export const INTERNAL_ROLES = ALL_ROLES.filter((role) => role !== "partner");
 export const READ_ONLY_ROLES = ["executive", "auditor", "admin"];
 
 export function roleConfig(role) {

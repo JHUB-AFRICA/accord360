@@ -16,27 +16,12 @@ import StatusBadge from "../components/StatusBadge.jsx";
 const kpiIcons = [Gauge, ClipboardCheck, AlertTriangle, CheckCircle2];
 const pieColors = ["#1b5e3b", "#7bc67e", "#1976d2", "#e5a100", "#6f42c1"];
 
-const primaryLinks = {
-  researcher: ["Create request", "/agreements/new"],
-  approver: ["Open approval queue", "/approvals/queue"],
-  linkages: ["Open Linkages queue", "/linkages/queue"],
-  director_linkages: ["Open portfolio", "/agreements"],
-  legal: ["Open Legal queue", "/legal/queue"],
-  dvc: ["Open endorsement queue", "/dvc/queue"],
-  vc_office: ["Open signing queue", "/signing/queue"],
-  me: ["Open M&E workspace", "/monitoring"],
-  executive: ["Open reports", "/reports"],
-  admin: ["Manage users", "/users"],
-  auditor: ["Open audit trail", "/audit"]
-};
-
 export default function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const navigate = useNavigate();
   const config = roleConfig(user.role);
-  const primary = primaryLinks[user.role] || ["Open agreements", "/agreements"];
 
   const load = useCallback(() => {
     setError("");
@@ -59,6 +44,7 @@ export default function Dashboard() {
 
   const workspace = data.workspace || {};
   const total = data.totals.total_partnerships;
+  const primaryAction = workspace.primary_action;
 
   return (
     <>
@@ -66,8 +52,7 @@ export default function Dashboard() {
         eyebrow={workspace.eyebrow || config.label}
         title={workspace.title || config.workspace}
         description={workspace.description || config.shortDescription}
-        actions={<Link className="primary-button" to={primary[1]}>{primary[0]} <ArrowRight size={17} /></Link>}
-        meta={<span className="demo-label">Live role-scoped data from /dashboard/workspace and /dashboard/stats</span>}
+        actions={primaryAction?.path && primaryAction?.label ? <Link className="primary-button" to={primaryAction.path}>{primaryAction.label} <ArrowRight size={17} /></Link> : null}
       />
 
       <section className="kpi-grid">

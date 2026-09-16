@@ -34,7 +34,8 @@ const iconMap = {
   help: HelpCircle,
   documents: FileText,
   history: History,
-  templates: BookOpen
+  templates: BookOpen,
+  review: ClipboardCheck
 };
 
 const navigation = {
@@ -59,6 +60,7 @@ const navigation = {
     ["verification", "Partner verification", "/partners?status=under_review"],
     ["partners", "Partner registry", "/partners"],
     ["approvals", "Linkages review queue", "/linkages/queue"],
+    ["review", "Historical data review", "/data-review"],
     ["agreements", "Agreement lifecycle", "/agreements"],
     ["corrections", "Corrections", "/corrections"],
     ["monitoring", "M&E reports", "/monitoring"],
@@ -68,6 +70,7 @@ const navigation = {
   director_linkages: [
     ["home", "Directorate dashboard", "/director"],
     ["agreements", "Portfolio", "/agreements"],
+    ["review", "Historical data review", "/data-review"],
     ["partners", "Partners", "/partners"],
     ["corrections", "Escalations", "/corrections"],
     ["monitoring", "M&E & scorecards", "/monitoring"],
@@ -121,6 +124,11 @@ const navigation = {
     ["agreements", "Authorized records", "/agreements"],
     ["reports", "Compliance reports", "/reports"],
     ["audit", "Audit trail", "/audit"]
+  ],
+  partner: [
+    ["home", "Partner workspace", "/partner-portal"],
+    ["agreements", "Shared agreements", "/partner-portal"],
+    ["help", "Help", "/help"]
   ]
 };
 

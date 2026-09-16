@@ -125,8 +125,8 @@ export function normalizeAgreementList(item) {
     reference: item.reference_number,
     partner_id: item.partner?.id ? Number(item.partner.id) : null,
     partner_name: item.partner?.name || "Unknown partner",
-    initiator_id: item.owner?.id ? Number(item.owner.id) : null,
-    initiator_name: item.owner?.full_name || "Unknown owner",
+    initiator_id: item.initiator?.id ? Number(item.initiator.id) : null,
+    initiator_name: item.initiator?.full_name || item.owner?.full_name || "Unknown initiator",
     champion_id: item.owner?.id ? Number(item.owner.id) : null,
     champion_name: item.owner?.full_name || null,
     stage,
@@ -271,7 +271,7 @@ export function normalizeDashboard(workspace, stats) {
       updated_at: item.updated_at
     })),
     totals: {
-      total_partnerships: byType.reduce((sum, item) => sum + Number(item.value || 0), 0),
+      total_partnerships: Number(stats?.kpis?.total_partnerships ?? byType.reduce((sum, item) => sum + Number(item.value || 0), 0)),
       active_agreements: Number(stats?.kpis?.active_partnerships || 0),
       pipeline: Number(stats?.kpis?.pipeline_volume || 0),
       at_risk: Number(stats?.kpis?.at_risk || 0),

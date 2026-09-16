@@ -368,6 +368,7 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
     currencies = [{"currency": key, "amount": float(value_by_currency[key])} for key in sorted(value_by_currency)]
     return {
         "kpis": {
+            "total_partnerships": len(agreements),
             "active_partnerships": len(active),
             "pipeline_volume": len(pipeline),
             "at_risk": len(at_risk),
@@ -391,4 +392,3 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
             for a in recent
         ],
     }
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -26,6 +26,7 @@ class Partner(Base, TimestampMixin):
     review_events: Mapped[list["PartnerReviewEvent"]] = relationship(
         back_populates="partner", cascade="all, delete-orphan", order_by="PartnerReviewEvent.created_at.desc()"
     )
+    memberships: Mapped[list["PartnerMembership"]] = relationship(back_populates="partner", cascade="all, delete-orphan")
 
 
 class PartnerReviewEvent(Base):
@@ -41,6 +42,38 @@ class PartnerReviewEvent(Base):
 
     partner: Mapped[Partner] = relationship(back_populates="review_events")
     reviewer: Mapped["User"] = relationship()
+
+
+class PartnerMembership(Base, TimestampMixin):
+    __tablename__ = "partner_memberships"
+    __table_args__ = (UniqueConstraint("partner_id", "user_id", name="uq_partner_memberships_partner_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    membership_role: Mapped[str] = mapped_column(String(40), default="member", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="active", nullable=False, index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    partner: Mapped[Partner] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship()
+
+
+class PartnerInvitation(Base):
+    __tablename__ = "partner_invitations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    partner: Mapped[Partner] = relationship()
+    invited_by: Mapped["User"] = relationship()
 
 
 class PartnerApplication(Base, TimestampMixin):

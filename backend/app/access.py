@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 
-from .models import Agreement, Document, User
+from .models import Agreement, Document, PartnerMembership, User
 
 FULL_READ_ROLES = {"admin", "linkages", "director_linkages", "executive", "auditor", "dvc"}
 OPERATIONAL_EDIT_ROLES = {"linkages", "director_linkages"}
@@ -16,7 +16,9 @@ def apply_agreement_scope(stmt, user: User):
     if user.role in FULL_READ_ROLES:
         return stmt
     if user.role == "researcher":
-        return stmt.where(Agreement.owner_id == user.id)
+        return stmt.where(or_(Agreement.owner_id == user.id, Agreement.initiator_id == user.id))
+    if user.role == "partner":
+        return stmt.where(Agreement.partner_id.in_(select(PartnerMembership.partner_id).where(PartnerMembership.user_id == user.id, PartnerMembership.status == "active")))
     if user.role == "approver":
         clauses = [Agreement.assigned_approver_id == user.id]
         if user.department:
@@ -35,7 +37,9 @@ def can_view_agreement(user: User, agreement: Agreement) -> bool:
     if user.role in FULL_READ_ROLES:
         return True
     if user.role == "researcher":
-        return agreement.owner_id == user.id
+        return agreement.owner_id == user.id or agreement.initiator_id == user.id
+    if user.role == "partner":
+        return any(member.user_id == user.id and member.status == "active" for member in agreement.partner.memberships)
     if user.role == "approver":
         return agreement.assigned_approver_id == user.id or bool(user.department and agreement.department == user.department)
     if user.role == "legal":
@@ -99,6 +103,8 @@ def can_download_document(user: User, agreement: Agreement, document: Document) 
         return False
     if document.confidentiality != "confidential":
         return True
+    if user.role == "partner":
+        return False
     if user.role in {"admin", "linkages", "director_linkages", "legal", "dvc", "vc_office"}:
         return True
     if agreement.owner_id == user.id or agreement.assigned_approver_id == user.id:

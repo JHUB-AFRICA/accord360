@@ -17,7 +17,7 @@
 4. **No duplicated API paths in pages.** Pages call named integration functions.
 5. **Correction compatibility.** Structured correction text is stored in transition comments until dedicated correction endpoints exist.
 6. **M&E compatibility.** The six-month form writes supported deliverable, evidence and value records.
-7. **Score transparency.** Client score previews show each component and weight and are not presented as stored official scores.
+7. **Score transparency.** Scorecards show each persisted component, weight, calculation timestamp and source update; recalculation is restricted to M&E and Linkages roles.
 8. **Template honesty.** Template names shown in the request wizard are local guidance and are not submitted as nonexistent fields.
 9. **Public partner honesty.** The registration form is visually complete but cannot submit until an approved public endpoint and partner identity model exist.
 10. **Human review wording.** Generated narrative previews clearly require review and never claim that AI cannot hallucinate.

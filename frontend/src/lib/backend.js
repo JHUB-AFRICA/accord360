@@ -25,15 +25,18 @@ export const BACKEND_CAPABILITIES = Object.freeze({
   partnerApplications: true,
   corrections: true,
   partnerReviewHistory: true,
-  partnerAccounts: false,
+  partnerAccounts: true,
   passwordReset: false,
-  templates: false,
-  configuration: false,
+  templates: true,
+  configuration: true,
+  referenceData: true,
   dedicatedCorrections: true,
-  scorecards: false,
+  scorecards: true,
   aiReports: false,
-  pdfReports: false,
-  excelReports: false
+  pdfReports: true,
+  excelReports: true,
+  portfolioReports: true,
+  historicalDataReview: true
 });
 
 function cleanParams(params = {}) {
@@ -109,6 +112,74 @@ export async function reviewPartner(id, status, reason) {
   return api(`/partners/${Number(id)}/review`, { method: "POST", body: JSON.stringify({ status, reason }) });
 }
 
+export async function listTemplates({ agreementType = "", includeArchived = false } = {}) {
+  const query = cleanParams({ agreement_type: agreementType, include_archived: includeArchived ? "true" : undefined });
+  return api(`/templates${query ? `?${query}` : ""}`);
+}
+
+export async function createTemplate(payload) {
+  const formData = new FormData();
+  Object.entries(payload).forEach(([key, value]) => { if (value !== undefined && value !== null) formData.append(key, value); });
+  return api("/templates", { method: "POST", body: formData });
+}
+
+export async function updateTemplate(id, payload) {
+  return api(`/templates/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function downloadTemplate(id, fallbackName = "template") {
+  return downloadFile(`/templates/${Number(id)}/download`, fallbackName);
+}
+
+export async function listConfiguration() {
+  return api("/configuration");
+}
+
+export async function createConfiguration(payload) {
+  return api("/configuration", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateConfiguration(key, payload) {
+  return api(`/configuration/${encodeURIComponent(key)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function listReferenceData(category = "") {
+  const query = cleanParams({ category });
+  return api(`/reference-data${query ? `?${query}` : ""}`);
+}
+
+export async function createReferenceData(payload) {
+  return api("/reference-data", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateReferenceData(id, payload) {
+  return api(`/reference-data/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function acceptPartnerInvitation(token, password) {
+  return api(`/auth/partner-invitations/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({ password }) });
+}
+
+export async function invitePartnerUser(partnerId, payload) {
+  return api(`/partners/${Number(partnerId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getPartnerWorkspace() {
+  return api("/partner/me");
+}
+
+export async function listPartnerAgreements() {
+  return api("/partner/agreements");
+}
+
+export async function getPartnerAgreement(id) {
+  return api(`/partner/agreements/${Number(id)}`);
+}
+
+export async function downloadPartnerDocument(agreementId, documentId, fallbackName = "partner-document") {
+  return downloadFile(`/partner/agreements/${Number(agreementId)}/documents/${Number(documentId)}/download`, fallbackName);
+}
+
 export async function listAgreements(filters = {}) {
   const query = cleanParams(filters);
   const records = await api(`/agreements${query ? `?${query}` : ""}`);
@@ -121,6 +192,46 @@ export async function createAgreement(payload) {
 
 export async function getAgreement(id) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}`));
+}
+
+export async function listScorecards() {
+  return api("/scorecards");
+}
+
+export async function recalculateScorecard(agreementId) {
+  return api(`/scorecards/${Number(agreementId)}/recalculate`, { method: "POST" });
+}
+
+export async function listScorecardHistory(agreementId) {
+  return api(`/scorecards/${Number(agreementId)}/history`);
+}
+
+export async function listScorecardDefinitions() {
+  return api("/scorecards/definitions");
+}
+
+export async function createScorecardDefinition(payload) {
+  return api("/scorecards/definitions", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getHistoricalReviewSummary() {
+  return api("/data-review/summary");
+}
+
+export async function listHistoricalReviews(status = "pending_review") {
+  return api(`/data-review?status=${encodeURIComponent(status)}`);
+}
+
+export async function getHistoricalReview(id) {
+  return api(`/data-review/${Number(id)}`);
+}
+
+export async function updateHistoricalReview(id, payload) {
+  return api(`/data-review/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function verifyHistoricalReview(id, review_notes = null) {
+  return api(`/data-review/${Number(id)}/verify`, { method: "POST", body: JSON.stringify({ review_notes }) });
 }
 
 export async function updateAgreement(id, payload) {
@@ -187,6 +298,25 @@ export async function markNotificationRead(id) {
 export async function exportAgreementsCsv(filters = {}) {
   const query = cleanParams(filters);
   return downloadFile(`/reports/agreements.csv${query ? `?${query}` : ""}`, "accord360-agreements.csv");
+}
+
+export async function getPortfolioReport(filters = {}) {
+  const query = cleanParams(filters);
+  return api(`/reports/portfolio${query ? `?${query}` : ""}`);
+}
+
+export async function exportPortfolioPdf(filters = {}) {
+  const query = cleanParams(filters);
+  return downloadFile(`/reports/export.pdf${query ? `?${query}` : ""}`, "accord360-portfolio.pdf");
+}
+
+export async function exportPortfolioExcel(filters = {}) {
+  const query = cleanParams(filters);
+  return downloadFile(`/reports/export.xlsx${query ? `?${query}` : ""}`, "accord360-portfolio.xlsx");
+}
+
+export async function generatePortfolioSummary(filters = {}) {
+  return api("/reports/ai-summary", { method: "POST", body: JSON.stringify(filters) });
 }
 
 export async function listAudit(limit = 100) {

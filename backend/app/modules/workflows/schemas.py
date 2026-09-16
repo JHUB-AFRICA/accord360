@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.modules.users.schemas import ORMModel, UserOut
 
@@ -85,6 +85,67 @@ class ValueRecordOut(ORMModel):
     source: str | None
     reporting_period: str | None
     approved: bool
+
+
+SCORECARD_COMPONENTS = {
+    "deliverable_achievement",
+    "evidence_completeness",
+    "compliance_timeliness",
+    "financial_value",
+}
+
+
+class ScoreComponent(BaseModel):
+    name: str
+    weight: int
+    score: int
+
+
+class ScorecardDefinitionCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    version: str = Field(min_length=1, max_length=30)
+    weights: dict[str, int]
+
+    @model_validator(mode="after")
+    def validate_weights(self):
+        if set(self.weights) != SCORECARD_COMPONENTS:
+            raise ValueError("Weights must define all four scorecard components")
+        if any(value < 0 for value in self.weights.values()) or sum(self.weights.values()) != 100:
+            raise ValueError("Scorecard weights must be non-negative and total 100")
+        return self
+
+
+class ScorecardDefinitionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    version: str
+    weights: dict[str, int]
+    is_active: bool
+    created_by: UserOut | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScorecardSnapshotOut(BaseModel):
+    id: int
+    definition_id: int
+    overall: int
+    category: str
+    components: list[ScoreComponent]
+    source_updated_at: datetime
+    calculated_by: UserOut | None
+    created_at: datetime
+
+
+class ScorecardOut(BaseModel):
+    agreement_id: int
+    reference_number: str
+    title: str
+    partner_name: str
+    agreement_type: str
+    snapshot: ScorecardSnapshotOut
 
 class TransitionRequest(BaseModel):
     action: Literal[

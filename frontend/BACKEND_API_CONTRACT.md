@@ -15,11 +15,16 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 | Champion directory | `GET /users/champions` |
 | Update partner | `PUT /partners/{partner_id}` |
 | Review partner | `POST /partners/{partner_id}/review` and `GET /partners/{partner_id}/reviews` |
+| Template library | `GET/POST /templates`, `PATCH /templates/{template_id}`, `GET /templates/{template_id}/download` |
+| Configuration | `GET/POST /configuration`, `PATCH /configuration/{key}` |
+| Reference data | `GET /reference-data`, `POST/PATCH /reference-data` |
 | Perform workflow action | `POST /agreements/{agreement_id}/transition` with `{ action, comment }` |
 | Filter agreement type | Query parameter `agreement_type` |
 | User and record IDs | Integers |
 | Audit report | `GET /reports/audit` |
 | Agreement export | `GET /reports/agreements.csv` |
+| Portfolio report | `GET /reports/portfolio` |
+| Generated reports | `GET /reports/export.pdf`, `GET /reports/export.xlsx`, `POST /reports/ai-summary` |
 
 ## Agreement type values
 
@@ -67,20 +72,28 @@ The frontend sends `FormData` to `POST /agreements/{agreement_id}/documents` wit
 
 It does not set `Content-Type` manually, allowing the browser to supply the multipart boundary.
 
+## Implemented scorecard routes
+
+Scorecard pages use persisted, role-scoped snapshots through `GET /scorecards`,
+`POST /scorecards/{agreement_id}/recalculate`, and
+`GET /scorecards/{agreement_id}/history`. Administrators can inspect and publish
+versioned definitions through `GET/POST /scorecards/definitions`.
+
+Agreement responses include both `owner` (the assigned Champion) and
+`initiator` (the user who created the request). Personal Champion views are
+backend-scoped to agreements where either field identifies the current user;
+Linkages office roles retain their authorized office-wide scope.
+
+Historical records are reviewed through the protected `/data-review` routes.
+The UI preserves the original source fields, saves Linkages corrections, and
+requires a Champion assignment before marking a record verified.
+
 ## Unsupported backend capabilities
 
 No production request is sent to:
 
 - `/dashboard`
-- `/configuration`
-- `/templates`
-- `/reference-data`
 - `/directory/champions`
-- `/scorecards`
-- `/reports/portfolio`
-- `/reports/ai-summary`
-- `/reports/export.pdf`
-- `/reports/export.xlsx`
 - `/auth/forgot-password`
 - `/auth/register-partner`
 - `/me/reports`
@@ -90,5 +103,12 @@ No production request is sent to:
 Correction records are implemented through `GET /corrections`,
 `GET /corrections/{id}`, `POST /corrections/{id}/respond`, and
 `POST /corrections/{id}/resolve`.
+
+Template, configuration and reference-data routes are implemented and are
+centralized in `src/lib/backend.js`.
+
+Partner workspace routes are implemented through invitation acceptance at
+`POST /auth/partner-invitations/{token}/accept`, then `GET /partner/me`,
+`GET /partner/agreements`, and the partner-scoped document download route.
 
 The related UI either maps to implemented agreement data or clearly displays that backend support is pending.

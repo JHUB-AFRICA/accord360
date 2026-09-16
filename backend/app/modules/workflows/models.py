@@ -93,6 +93,37 @@ class ValueRecord(Base, TimestampMixin):
 
     agreement: Mapped[Agreement] = relationship(back_populates="values")
 
+
+class ScorecardDefinition(Base, TimestampMixin):
+    __tablename__ = "scorecard_definitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    version: Mapped[str] = mapped_column(String(30), nullable=False)
+    weights_json: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    created_by: Mapped[User | None] = relationship()
+
+
+class ScorecardSnapshot(Base):
+    __tablename__ = "scorecard_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreements.id"), nullable=False, index=True)
+    definition_id: Mapped[int] = mapped_column(ForeignKey("scorecard_definitions.id"), nullable=False)
+    overall: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(String(80), nullable=False)
+    components_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    calculated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    agreement: Mapped[Agreement] = relationship()
+    definition: Mapped[ScorecardDefinition] = relationship()
+    calculated_by: Mapped[User | None] = relationship(foreign_keys=[calculated_by_id])
+
 class Notification(Base):
     __tablename__ = "notifications"
 

@@ -61,6 +61,7 @@ function initialState() {
     next_action: "Complete the request and submit for departmental approval",
     partner: partners[0],
     owner: users[0],
+    initiator: users[0],
     confidentiality: "internal",
     internal_champion: users[0].full_name,
     partner_liaison: partners[0].liaison,
@@ -128,7 +129,10 @@ function initialState() {
     notifications: [{ id: 1, user_id: 3, title: "Legal review update", message: "JKUAT-CRA-2026-0001 is currently under Legal review.", level: "info", is_read: false, agreement_id: 1, created_at: "2026-08-05T08:00:00Z" }],
     audit: [{ id: 1, action: "create_agreement", object_type: "agreement", object_id: "1", old_value: null, new_value: "JKUAT-CRA-2026-0001", source_ip: "127.0.0.1", created_at: "2026-01-10T08:00:00Z", actor: users[0] }],
     partner_reviews: [],
-    next: { user: 12, partner: 6, partner_review: 1, agreement: 8, correction: 2, document: 20, workflow: 100, deliverable: 10, value: 10, notification: 10, audit: 10 }
+    templates: [{ id: 1, name: "Standard institutional MoU", agreement_type: "MoU", version: "1.0", description: "Approved institutional memorandum template", status: "active", original_name: null, size_bytes: 0, uploaded_by: users[0], created_at: "2026-01-10T08:00:00Z", updated_at: "2026-01-10T08:00:00Z" }],
+    configuration: [],
+    reference_data: ["MoU", "CRA", "CA", "Other"].map((code, index) => ({ id: index + 1, category: "agreement_type", code, label: code, value: code, is_active: true, sort_order: index + 1, created_at: "2026-01-10T08:00:00Z", updated_at: "2026-01-10T08:00:00Z" })),
+    next: { user: 12, partner: 6, partner_review: 1, template: 2, agreement: 8, correction: 2, document: 20, workflow: 100, deliverable: 10, value: 10, notification: 10, audit: 10 }
   };
 }
 
@@ -139,6 +143,10 @@ function loadState() {
       const state = JSON.parse(raw);
       state.corrections ||= [];
       state.next.correction ||= 1;
+      state.templates ||= [];
+      state.configuration ||= [];
+      state.reference_data ||= [];
+      state.next.template ||= 1;
       return state;
     }
   } catch { /* reset below */ }
@@ -163,7 +171,7 @@ function addAudit(state, actor, action, objectType, objectId, oldValue = null, n
 }
 function scoped(state, actor) {
   if (["linkages", "director_linkages", "executive", "admin", "auditor"].includes(actor.role)) return state.agreements;
-  if (actor.role === "researcher") return state.agreements.filter((item) => item.owner.id === actor.id);
+  if (actor.role === "researcher") return state.agreements.filter((item) => item.owner.id === actor.id || item.initiator?.id === actor.id);
   if (actor.role === "approver") return state.agreements.filter((item) => item.department === actor.department || item.stage === "department_approval");
   if (actor.role === "legal") return state.agreements.filter((item) => item.stage === "legal_review" || item.workflow_events.some((event) => event.action === "approve_legal"));
   if (actor.role === "dvc") return state.agreements.filter((item) => ["dvc_approval", "vc_submission", "validation_signing", "active"].includes(item.stage));
@@ -237,6 +245,20 @@ function dashboardStats(state, actor) {
   return { kpis: { active_partnerships: records.filter((item) => item.stage === "active").length, pipeline_volume: records.filter((item) => !["active", "renewal_closure", "archived"].includes(item.stage)).length, at_risk: records.filter((item) => ["orange", "red"].includes(item.status_color)).length, value_by_currency: [...values].map(([currency, amount]) => ({ currency, amount })) }, by_stage: count("stage"), by_type: count("agreement_type"), by_risk: count("status_color"), monthly_pipeline: [{ month: "Aug 2026", count: records.length }], recent_agreements: records.slice(0, 6).map((item) => ({ id: item.id, reference_number: item.reference_number, title: item.title, partner: item.partner.name, stage: item.stage, status: item.status, status_color: item.status_color, next_action: item.next_action, updated_at: item.updated_at })) };
 }
 
+const mockScorecardWeights = { deliverable_achievement: 50, evidence_completeness: 20, compliance_timeliness: 20, financial_value: 10 };
+function mockScorecard(state, agreement, actor) {
+  if (!agreement.deliverables.length) return { id: agreement.id, definition_id: 1, overall: 0, category: "No baseline", components: [], source_updated_at: agreement.updated_at, calculated_by: actor, created_at: now() };
+  const completion = agreement.deliverables.reduce((total, item) => total + (item.target_value > 0 ? Math.min(100, item.actual_value / item.target_value * 100) : item.actual_value > 0 ? 100 : 0), 0) / agreement.deliverables.length;
+  const evidence = agreement.deliverables.filter((item) => item.evidence_document_id).length / agreement.deliverables.length * 100;
+  const timeliness = { green: 90, yellow: 70, orange: 45 }[agreement.status_color] || 25;
+  const value = agreement.values.some((item) => Number(item.amount) > 0) ? 80 : 40;
+  const scores = { deliverable_achievement: Math.round(completion), evidence_completeness: Math.round(evidence), compliance_timeliness: timeliness, financial_value: value };
+  const labels = { deliverable_achievement: "Deliverable achievement", evidence_completeness: "Evidence completeness", compliance_timeliness: "Compliance and timeliness", financial_value: "Financial/resource value" };
+  const components = Object.keys(mockScorecardWeights).map((key) => ({ name: labels[key], weight: mockScorecardWeights[key], score: scores[key] }));
+  const overall = Math.round(components.reduce((total, item) => total + item.score * item.weight / 100, 0));
+  return { id: agreement.id, definition_id: 1, overall, category: overall >= 80 ? "Strong partnership" : overall >= 60 ? "Stable partnership" : overall >= 40 ? "At-risk partnership" : "Critical attention", components, source_updated_at: agreement.updated_at, calculated_by: actor, created_at: now() };
+}
+
 export async function mockRequest(path, options = {}) {
   const state = loadState();
   state.partner_reviews ||= [];
@@ -266,6 +288,54 @@ export async function mockRequest(path, options = {}) {
   if (pathname === "/auth/me" && method === "GET") return json(actor);
   if (pathname === "/dashboard/workspace" && method === "GET") return json(dashboardWorkspace(state, actor));
   if (pathname === "/dashboard/stats" && method === "GET") return json(dashboardStats(state, actor));
+
+  if (pathname === "/scorecards" && method === "GET") {
+    if (actor.role === "partner") return fail("Partner users must use the partner workspace", 403);
+    return json(scoped(state, actor).filter((item) => item.stage === "active").map((item) => ({ agreement_id: item.id, reference_number: item.reference_number, title: item.title, partner_name: item.partner.name, agreement_type: item.agreement_type, snapshot: mockScorecard(state, item, actor) })));
+  }
+  const scorecardRecalculateMatch = pathname.match(/^\/scorecards\/(\d+)\/recalculate$/);
+  if (scorecardRecalculateMatch && method === "POST") {
+    if (!["me", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    const item = scoped(state, actor).find((entry) => entry.id === Number(scorecardRecalculateMatch[1]));
+    if (!item) return fail("Agreement not found", 404);
+    const snapshot = mockScorecard(state, item, actor);
+    addAudit(state, actor, "recalculate_scorecard", "scorecard", item.id, null, `overall=${snapshot.overall}`);
+    saveState(state);
+    return json({ agreement_id: item.id, reference_number: item.reference_number, title: item.title, partner_name: item.partner.name, agreement_type: item.agreement_type, snapshot });
+  }
+  const scorecardHistoryMatch = pathname.match(/^\/scorecards\/(\d+)\/history$/);
+  if (scorecardHistoryMatch && method === "GET") {
+    const item = scoped(state, actor).find((entry) => entry.id === Number(scorecardHistoryMatch[1]));
+    return item ? json([mockScorecard(state, item, actor)]) : fail("Agreement not found", 404);
+  }
+  if (pathname === "/scorecards/definitions" && method === "GET") return json([{ id: 1, name: "Institutional collaboration scorecard", version: "1.0", weights: mockScorecardWeights, is_active: true, created_by: null, created_at: "2026-01-10T08:00:00Z", updated_at: "2026-01-10T08:00:00Z" }]);
+
+  if (pathname === "/templates" && method === "GET") {
+    const includeArchived = url.searchParams.get("include_archived") === "true";
+    const type = url.searchParams.get("agreement_type");
+    return json(state.templates.filter((item) => (includeArchived || item.status === "active") && (!type || item.agreement_type === type)));
+  }
+  if (pathname === "/templates" && method === "POST") {
+    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    const created = { id: state.next.template++, ...payload, status: "active", original_name: payload.file?.name || null, size_bytes: Number(payload.file?.size || 0), uploaded_by: actor, created_at: now(), updated_at: now() };
+    state.templates.push(created); saveState(state); return json(created, 201);
+  }
+  const templateMatch = pathname.match(/^\/templates\/(\d+)$/);
+  if (templateMatch && method === "PATCH") {
+    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    const item = state.templates.find((entry) => entry.id === Number(templateMatch[1])); if (!item) return fail("Template not found", 404);
+    Object.assign(item, payload, { updated_at: now() }); saveState(state); return json(item);
+  }
+  if (pathname === "/configuration" && method === "GET") return actor.role === "admin" ? json(state.configuration) : fail("Not enough permissions", 403);
+  const configurationMatch = pathname.match(/^\/configuration\/([^/]+)$/);
+  if (configurationMatch && method === "PATCH") {
+    if (actor.role !== "admin") return fail("Not enough permissions", 403);
+    const item = state.configuration.find((entry) => entry.key === decodeURIComponent(configurationMatch[1])); if (!item) return fail("Configuration key not found", 404);
+    Object.assign(item, payload, { updated_at: now(), updated_by: actor }); saveState(state); return json(item);
+  }
+  if (pathname === "/reference-data" && method === "GET") {
+    const category = url.searchParams.get("category"); return json(state.reference_data.filter((item) => item.is_active && (!category || item.category === category)));
+  }
 
   if (pathname === "/corrections" && method === "GET") {
     const visible = new Set(scoped(state, actor).map((item) => item.id));
@@ -361,7 +431,7 @@ export async function mockRequest(path, options = {}) {
     let owner = actor;
     if (["linkages", "director_linkages"].includes(actor.role)) { owner = state.users.find((item) => item.id === Number(payload.champion_user_id) && item.role === "researcher" && item.is_active); if (!owner) return fail("The assigned Champion must be an active JKUAT Champion account", 400); }
     const id = state.next.agreement++;
-    const created = { id, reference_number: `JKUAT-${String(payload.agreement_type).replace(/[^a-z0-9]/gi, "").toUpperCase()}-2026-${String(id).padStart(4, "0")}`, title: payload.title, agreement_type: payload.agreement_type, purpose: payload.purpose, expected_outcomes: payload.expected_outcomes || null, strategic_alignment: payload.strategic_alignment || null, department: payload.department, stage: "initiation", status: "draft", status_color: "green", next_action: "Complete the request and submit for departmental approval", partner, owner, confidentiality: payload.confidentiality || "internal", internal_champion: payload.internal_champion || owner.full_name, partner_liaison: payload.partner_liaison || null, effective_date: payload.effective_date || null, expiry_date: payload.expiry_date || null, signing_date: null, date_sent_vc: null, date_sent_partner: null, legal_review_days: null, days_to_expiry: null, documents: [], workflow_events: [{ id: state.next.workflow++, from_stage: null, to_stage: "initiation", action: "create", comment: "Collaboration request created", created_at: now(), actor }], deliverables: [], values: [], created_at: now(), updated_at: now() };
+    const created = { id, reference_number: `JKUAT-${String(payload.agreement_type).replace(/[^a-z0-9]/gi, "").toUpperCase()}-2026-${String(id).padStart(4, "0")}`, title: payload.title, agreement_type: payload.agreement_type, purpose: payload.purpose, expected_outcomes: payload.expected_outcomes || null, strategic_alignment: payload.strategic_alignment || null, department: payload.department, stage: "initiation", status: "draft", status_color: "green", next_action: "Complete the request and submit for departmental approval", partner, owner, initiator: actor, confidentiality: payload.confidentiality || "internal", internal_champion: payload.internal_champion || owner.full_name, partner_liaison: payload.partner_liaison || null, effective_date: payload.effective_date || null, expiry_date: payload.expiry_date || null, signing_date: null, date_sent_vc: null, date_sent_partner: null, legal_review_days: null, days_to_expiry: null, documents: [], workflow_events: [{ id: state.next.workflow++, from_stage: null, to_stage: "initiation", action: "create", comment: "Collaboration request created", created_at: now(), actor }], deliverables: [], values: [], created_at: now(), updated_at: now() };
     state.agreements.push(created); addAudit(state, actor, "create_agreement", "agreement", id, null, created.reference_number); saveState(state); return json(created, 201);
   }
   const agreementMatch = pathname.match(/^\/agreements\/(\d+)$/);
@@ -410,6 +480,16 @@ export async function mockRequest(path, options = {}) {
   if (readMatch && method === "POST") { const item = state.notifications.find((entry) => entry.id === Number(readMatch[1]) && entry.user_id === actor.id); if (!item) return fail("Notification not found", 404); item.is_read = true; saveState(state); return json(item); }
 
   if (pathname === "/reports/audit" && method === "GET") return ["admin", "auditor", "executive", "director_linkages"].includes(actor.role) ? json(state.audit.slice(0, Number(url.searchParams.get("limit") || 100))) : fail("Not enough permissions", 403);
+  if (pathname === "/reports/portfolio" && method === "GET") {
+    const records = scoped(state, actor);
+    const active = records.filter((item) => item.stage === "active" && !["expired", "archived", "closed"].includes(item.status));
+    const pipeline = records.filter((item) => ["initiation", "department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing"].includes(item.stage));
+    const distribution = (key) => Object.entries(records.reduce((result, item) => { const value = key === "partner_sector" ? item.partner.sector : item[key]; result[value] = (result[value] || 0) + 1; return result; }, {})).map(([name, value]) => ({ name, value }));
+    return json({ totals: { total_partnerships: records.length, active_agreements: active.length, pipeline: pipeline.length, at_risk: records.filter((item) => ["orange", "red"].includes(item.status_color)).length }, by_stage: distribution("stage"), by_type: distribution("agreement_type"), by_sector: distribution("partner_sector"), by_department: distribution("department"), value_by_currency: [], records: records.map((item) => ({ id: item.id, reference_number: item.reference_number, title: item.title, agreement_type: item.agreement_type, partner: item.partner.name, sector: item.partner.sector, department: item.department, owner: item.owner.full_name, stage: item.stage, status: item.status, expiry_date: item.expiry_date, days_to_expiry: item.days_to_expiry })) });
+  }
+  if (pathname === "/reports/export.pdf" && method === "GET") return new Response(new Blob(["Mock Accord360 portfolio PDF"]), { status: 200, headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="accord360-portfolio.pdf"' } });
+  if (pathname === "/reports/export.xlsx" && method === "GET") return new Response(new Blob(["Mock Accord360 portfolio Excel"]), { status: 200, headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": 'attachment; filename="accord360-portfolio.xlsx"' } });
+  if (pathname === "/reports/ai-summary" && method === "POST") return json({ summary: `The authorized portfolio contains ${scoped(state, actor).length} agreement records. This summary requires human review.`, source: "authorized_portfolio_snapshot", requires_human_review: true });
   if (pathname === "/reports/agreements.csv" && method === "GET") { const records = scoped(state, actor); const csv = ["Reference,Title,Type,Partner,Stage,Status", ...records.map((item) => [item.reference_number, item.title, item.agreement_type, item.partner.name, item.stage, item.status].map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","))].join("\n"); return new Response(csv, { status: 200, headers: { "Content-Type": "text/csv", "Content-Disposition": 'attachment; filename="accord360-agreements.csv"' } }); }
 
   return fail("Route not found", 404);

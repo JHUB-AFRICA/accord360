@@ -16,13 +16,14 @@ from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from ...access import apply_agreement_scope, can_download_document, ensure_can_edit_agreement, ensure_can_view_agreement
+from ...access import apply_agreement_scope, can_download_document, can_view_agreement, ensure_can_edit_agreement, ensure_can_view_agreement
 from ...deps import audit
 from .models import Agreement
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
-from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, DocumentOut
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, DocumentOut, HistoricalReviewUpdate, HistoricalReviewVerify
+from app.modules.templates.models import Template
 from app.modules.workflows.schemas import TransitionRequest
 from ..workflows.service import (
     ALLOWED_BY_ROLE,
@@ -53,6 +54,8 @@ __all__ = [
 LOAD_OPTIONS = (
     selectinload(Agreement.partner),
     selectinload(Agreement.owner),
+    selectinload(Agreement.initiator),
+    selectinload(Agreement.reviewed_by),
     selectinload(Agreement.documents),
     selectinload(Agreement.workflow_events).selectinload(WorkflowEvent.actor),
     selectinload(Agreement.deliverables),
@@ -74,6 +77,8 @@ def scoped_query(user: User):
     stmt = select(Agreement).options(
         selectinload(Agreement.partner),
         selectinload(Agreement.owner),
+        selectinload(Agreement.initiator),
+        selectinload(Agreement.reviewed_by),
         selectinload(Agreement.deliverables),
     )
     return apply_agreement_scope(stmt, user)
@@ -106,6 +111,8 @@ def list_agreements(
     agreement_type: str | None,
     department: str | None,
 ):
+    if user.role == "partner":
+        raise HTTPException(status_code=403, detail="Use the partner workspace for external agreement access")
     stmt = scoped_query(user)
     if search:
         pattern = f"%{search.strip()}%"
@@ -137,6 +144,12 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
     partner = db.get(Partner, payload.partner_id)
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
+    if payload.template_id is not None:
+        template = db.get(Template, payload.template_id)
+        if not template or template.status != "active":
+            raise HTTPException(status_code=400, detail="Selected template is not active or does not exist")
+        if template.agreement_type != payload.agreement_type:
+            raise HTTPException(status_code=400, detail="Selected template does not match the agreement type")
     if payload.effective_date and payload.expiry_date and payload.expiry_date <= payload.effective_date:
         raise HTTPException(status_code=400, detail="Expiry date must be after the effective date")
 
@@ -155,6 +168,7 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
         **data,
         reference_number=f"PENDING-{uuid.uuid4().hex}",
         owner_id=owner.id,
+        initiator_id=user.id,
         next_action="Complete the request and submit for departmental approval",
     )
     db.add(agreement)
@@ -177,10 +191,16 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
 
 
 def get_agreement_detail(db: Session, user: User, agreement_id: int) -> AgreementDetailOut:
+    if user.role == "partner":
+        raise HTTPException(status_code=403, detail="Use the partner workspace for external agreement access")
     agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).options(*LOAD_OPTIONS))
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
-    ensure_can_view_agreement(user, agreement)
+    # Conceal out-of-scope records on direct reads. Mutating endpoints retain
+    # their explicit 403 responses so callers can distinguish read-only access
+    # from an authorization failure when attempting a change.
+    if not can_view_agreement(user, agreement):
+        raise HTTPException(status_code=404, detail="Agreement not found")
     refresh_risk_status(agreement)
     db.commit()
     result = AgreementDetailOut.model_validate(agreement)
@@ -215,6 +235,46 @@ def update_agreement(db: Session, user: User, agreement_id: int, payload: Agreem
     audit(db, user, "update_agreement", "agreement", agreement.id, request, old_value=old, new_value=json.dumps(changes, default=str))
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
+
+
+def _review_agreement(db: Session, agreement_id: int) -> Agreement:
+    agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).options(*LOAD_OPTIONS))
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    return agreement
+
+
+def update_historical_review(db: Session, reviewer: User, agreement_id: int, payload: HistoricalReviewUpdate, request: Request) -> AgreementDetailOut:
+    agreement = _review_agreement(db, agreement_id)
+    changes = payload.model_dump(exclude_unset=True)
+    if "owner_id" in changes:
+        owner = db.get(User, changes["owner_id"]) if changes["owner_id"] else None
+        if not owner or owner.role != "researcher" or not owner.is_active:
+            raise HTTPException(status_code=422, detail="The owner must be an active Champion/researcher")
+    for field in ("initiator_id", "assigned_linkages_id", "assigned_approver_id", "legal_reviewer_id"):
+        if field in changes and changes[field] is not None and not db.get(User, changes[field]):
+            raise HTTPException(status_code=422, detail=f"User for {field} was not found")
+    old_value = {field: getattr(agreement, field) for field in changes}
+    for field, value in changes.items():
+        setattr(agreement, field, value)
+    agreement.data_quality_status = "in_review"
+    audit(db, reviewer, "update_historical_agreement", "agreement", agreement.id, request, old_value=json.dumps(old_value, default=str), new_value=json.dumps(changes, default=str))
+    db.commit()
+    return get_agreement_detail(db, reviewer, agreement.id)
+
+
+def verify_historical_review(db: Session, reviewer: User, agreement_id: int, payload: HistoricalReviewVerify, request: Request) -> AgreementDetailOut:
+    agreement = _review_agreement(db, agreement_id)
+    if not agreement.owner_id:
+        raise HTTPException(status_code=422, detail="Assign a Champion before verifying this record")
+    old_status = agreement.data_quality_status
+    agreement.data_quality_status = "verified"
+    agreement.data_quality_note = payload.review_notes
+    agreement.reviewed_by_id = reviewer.id
+    agreement.reviewed_at = utc_now()
+    audit(db, reviewer, "verify_historical_agreement", "agreement", agreement.id, request, old_value=old_status, new_value="verified")
+    db.commit()
+    return get_agreement_detail(db, reviewer, agreement.id)
 
 
 def transition_agreement(db: Session, user: User, agreement_id: int, payload: TransitionRequest, request: Request) -> AgreementDetailOut:
