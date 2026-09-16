@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-Role = Literal["admin", "researcher", "approver", "linkages", "director_linkages", "legal", "dvc", "vc_office", "executive", "me", "auditor"]
+Role = Literal["admin", "researcher", "approver", "linkages", "director_linkages", "legal", "dvc", "vc_office", "executive", "me", "auditor", "partner"]
 
 
 class ORMModel(BaseModel):
@@ -42,4 +42,3 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
-

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import logging
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -13,16 +14,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.security import hash_password
 from app.deps import audit
 from app.timeutils import utc_now
 
-from .models import Partner, PartnerApplication, PartnerApplicationDocument, PartnerReviewEvent
-from .schemas import PartnerApplicationReview, PartnerCreate, PartnerReviewCreate
+from .models import Partner, PartnerApplication, PartnerApplicationDocument, PartnerReviewEvent, PartnerMembership, PartnerInvitation
+from app.modules.users.models import User
+from app.modules.agreements.models import Agreement
+from .schemas import PartnerApplicationReview, PartnerCreate, PartnerInvitationCreate, PartnerReviewCreate
 
 logger = logging.getLogger(__name__)
 MAX_APPLICATION_FILE_BYTES = 10 * 1024 * 1024
 ALLOWED_APPLICATION_EXTENSIONS = {".pdf", ".doc", ".docx"}
 VERIFICATION_TTL = timedelta(hours=24)
+INVITATION_TTL = timedelta(hours=72)
 
 
 def get_partner(db: Session, partner_id: int) -> Partner | None:
@@ -91,6 +96,67 @@ def review_partner(db: Session, partner_id: int, payload: PartnerReviewCreate, a
     db.commit()
     db.refresh(review)
     return review
+
+
+def create_partner_invitation(db: Session, partner_id: int, payload: PartnerInvitationCreate, actor, request) -> tuple[PartnerInvitation, str]:
+    partner = db.get(Partner, partner_id)
+    if not partner:
+        raise LookupError("Partner not found")
+    email = payload.email.lower()
+    existing_user = db.scalar(select(User).where(User.email == email))
+    if existing_user and existing_user.role != "partner":
+        raise ValueError("This email already belongs to an internal account")
+    duplicate = db.scalar(select(PartnerInvitation).where(PartnerInvitation.partner_id == partner_id, PartnerInvitation.email == email, PartnerInvitation.accepted_at.is_(None)))
+    if duplicate:
+        raise ValueError("An active invitation already exists for this email")
+    token = secrets.token_urlsafe(32)
+    invitation = PartnerInvitation(
+        partner_id=partner_id,
+        email=email,
+        full_name=payload.full_name.strip(),
+        token_hash=_token_hash(token),
+        expires_at=utc_now() + INVITATION_TTL,
+        invited_by_id=actor.id,
+        created_at=utc_now(),
+    )
+    db.add(invitation)
+    db.flush()
+    audit(db, actor, "invite_partner_user", "partner_invitation", invitation.id, request, new_value=f"{partner.name}:{email}")
+    db.commit()
+    db.refresh(invitation)
+    logger.info("partner_invitation_email partner=%s email=%s token=%s expires_at=%s", partner.name, email, token, invitation.expires_at.isoformat())
+    return invitation, token
+
+
+def accept_partner_invitation(db: Session, token: str, password: str):
+    invitation = db.scalar(select(PartnerInvitation).where(PartnerInvitation.token_hash == _token_hash(token)))
+    if not invitation or invitation.accepted_at or invitation.expires_at < utc_now():
+        raise LookupError("The partner invitation is invalid or expired")
+    existing = db.scalar(select(User).where(User.email == invitation.email))
+    if existing:
+        raise ValueError("An account already exists for this invitation email")
+    user = User(full_name=invitation.full_name, email=invitation.email, password_hash=hash_password(password), role="partner")
+    db.add(user)
+    db.flush()
+    db.add(PartnerMembership(partner_id=invitation.partner_id, user_id=user.id, membership_role="member", status="active", joined_at=utc_now()))
+    invitation.accepted_at = utc_now()
+    audit(db, None, "accept_partner_invitation", "partner_invitation", invitation.id, new_value=invitation.email)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def get_partner_membership(db: Session, user) -> PartnerMembership | None:
+    return db.scalar(select(PartnerMembership).where(PartnerMembership.user_id == user.id, PartnerMembership.status == "active"))
+
+
+def list_partner_agreements(db: Session, user):
+    membership = get_partner_membership(db, user)
+    if not membership:
+        return []
+    return db.scalars(
+        select(Agreement).where(Agreement.partner_id == membership.partner_id).order_by(Agreement.updated_at.desc())
+    ).all()
 
 
 def _new_reference(db: Session) -> str:

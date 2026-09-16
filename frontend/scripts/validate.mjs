@@ -58,14 +58,6 @@ const backendContent = readFileSync(join(root, "src/lib/backend.js"), "utf8");
 const unsupportedBackendPaths = [
   "/dashboard\"",
   "/directory/champions",
-  "/configuration",
-  "/templates",
-  "/reference-data",
-  "/scorecards",
-  "/reports/portfolio",
-  "/reports/ai-summary",
-  "/reports/export.pdf",
-  "/reports/export.xlsx",
   "/auth/forgot-password",
   "/me/reports",
   "/resend",
@@ -78,14 +70,15 @@ for (const value of unsupportedBackendPaths) {
 const requiredBackendPaths = [
   "/auth/login", "/auth/me", "/auth/register-partner", "/users", "/users/champions", "/partners", "/agreements",
   "/transition", "/documents", "/corrections", "/deliverables", "/values", "/dashboard/workspace",
-  "/dashboard/stats", "/notifications", "/reports/agreements.csv", "/reports/audit"
+  "/dashboard/stats", "/notifications", "/reports/agreements.csv", "/reports/audit", "/scorecards", "/scorecards/", "/data-review"
+  , "/templates", "/configuration", "/reference-data"
 ];
 for (const value of requiredBackendPaths) {
   if (!backendContent.includes(value)) failures.push(`src/lib/backend.js is missing implemented endpoint ${value}`);
 }
 
 const rolesContent = readFileSync(join(root, "src/lib/roles.js"), "utf8");
-if (/\bpartner\s*:/.test(rolesContent)) failures.push("src/lib/roles.js contains unsupported partner authentication role");
+if (!/partner\s*:/.test(rolesContent)) failures.push("src/lib/roles.js is missing the implemented partner role");
 
 const envContent = readFileSync(join(root, ".env.example"), "utf8");
 if (!envContent.includes("VITE_API_URL=http://127.0.0.1:8000/api")) failures.push(".env.example does not use the documented local API base URL");

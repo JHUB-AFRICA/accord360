@@ -6,7 +6,7 @@ import LoadingState from "../components/LoadingState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
-import { BACKEND_CAPABILITIES, exportAgreementsCsv, getDashboard } from "../lib/backend.js";
+import { BACKEND_CAPABILITIES, exportAgreementsCsv, exportPortfolioExcel, exportPortfolioPdf, generatePortfolioSummary, getPortfolioReport } from "../lib/backend.js";
 
 const initialFilters = { stage: "", status: "", agreement_type: "", department: "", partner_sector: "", expiry_from: "", expiry_to: "" };
 
@@ -21,19 +21,20 @@ export default function Reports() {
   const [data, setData] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
   const [narrative, setNarrative] = useState("");
+  const [serverSummary, setServerSummary] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
-    try { setData(await getDashboard()); }
+    try { setData(await getPortfolioReport(filters)); }
     catch (requestError) { setError(requestError.message); }
-  }, []);
+  }, [filters]);
 
   useEffect(() => { load(); }, [load]);
 
-  const valueSummary = useMemo(() => (data?.totals?.value_by_currency || []).map((item) => `${item.currency} ${Number(item.amount || 0).toLocaleString()}`).join(" · ") || "No approved value totals", [data]);
+  const valueSummary = useMemo(() => (data?.value_by_currency || []).map((item) => `${item.currency} ${Number(item.amount || 0).toLocaleString()}`).join(" · ") || "No approved value totals", [data]);
 
   async function exportCsv() {
     setExporting(true);
@@ -45,17 +46,33 @@ export default function Reports() {
     finally { setExporting(false); }
   }
 
+  async function exportFile(exporter, message) {
+    setExporting(true);
+    setError("");
+    try { await exporter(filters); setMessage(message); }
+    catch (requestError) { setError(requestError.message); }
+    finally { setExporting(false); }
+  }
+
+  async function generateSummary() {
+    setExporting(true);
+    setError("");
+    try { const response = await generatePortfolioSummary(filters); setServerSummary(response.summary); setMessage("Server-generated portfolio summary is ready for review."); }
+    catch (requestError) { setError(requestError.message); }
+    finally { setExporting(false); }
+  }
+
   if (error && !data) return <><PageHeader eyebrow="Analytics and reporting" title="Reports centre" /><ErrorState message={error} onRetry={load} /></>;
   if (!data) return <LoadingState label="Loading backend portfolio statistics" />;
 
   return <>
     <Toast message={message} onClose={() => setMessage("")} /><Toast message={error} type="error" onClose={() => setError("")} />
-    <PageHeader eyebrow="Analytics and reporting" title="Reports centre"  actions={<><button className="secondary-button" disabled title="No Excel export endpoint is currently implemented"><FileSpreadsheet size={17} /> Excel</button><button className="secondary-button" disabled title="No PDF export endpoint is currently implemented"><FileText size={17} /> PDF</button><button className="primary-button" disabled={!BACKEND_CAPABILITIES.aiReports} title="No AI report endpoint is currently implemented"><Sparkles size={17} /> Generate AI summary</button></>} />
+    <PageHeader eyebrow="Analytics and reporting" title="Reports centre"  actions={<><button className="secondary-button" disabled={exporting || !BACKEND_CAPABILITIES.excelReports} onClick={() => exportFile(exportPortfolioExcel, "Excel portfolio report downloaded.")}><FileSpreadsheet size={17} /> Excel</button><button className="secondary-button" disabled={exporting || !BACKEND_CAPABILITIES.pdfReports} onClick={() => exportFile(exportPortfolioPdf, "PDF portfolio report downloaded.")}><FileText size={17} /> PDF</button><button className="primary-button" disabled={exporting || !BACKEND_CAPABILITIES.aiReports} onClick={generateSummary}><Sparkles size={17} /> Generate summary</button></>} />
 
     <section className="kpi-grid"><KpiCard label="Total agreements" value={data.totals.total_partnerships} tone="blue" icon={BarChart3} /><KpiCard label="Active partnerships" value={data.totals.active_agreements} tone="green" icon={BarChart3} /><KpiCard label="Pipeline volume" value={data.totals.pipeline} tone="orange" icon={BarChart3} /><KpiCard label="At risk" value={data.totals.at_risk} tone="red" icon={BarChart3} /></section>
 
     <section className="panel">
-      <div className="panel-head"><div><h2>Agreement CSV export</h2><p>Every filter below maps directly to GET /reports/agreements.csv.</p></div><StatusBadge tone="green">Implemented</StatusBadge></div>
+      <div className="panel-head"><div><h2>Scoped portfolio exports</h2><p>Every filter maps to the authorized portfolio snapshot and export endpoints.</p></div><StatusBadge tone="green">Implemented</StatusBadge></div>
       <div className="form-grid three-column">
         <label className="form-field"><span>Stage</span><select value={filters.stage} onChange={(event) => setFilters({ ...filters, stage: event.target.value })}><option value="">All stages</option>{["initiation", "department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing", "active", "renewal_closure", "archived"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
         <label className="form-field"><span>Status</span><input value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })} placeholder="e.g. active" /></label>
@@ -69,8 +86,8 @@ export default function Reports() {
     </section>
 
     <section className="content-grid two-column">
-      <article className="panel"><div className="panel-head"><div><h2>Verified portfolio distributions</h2><p>Returned by GET /dashboard/stats.</p></div></div><div className="report-distribution"><h3>By workflow stage</h3>{data.by_stage.map((item) => <div className="distribution-row" key={item.name}><span>{item.name}</span><strong>{item.value}</strong></div>)}<h3>By agreement type</h3>{data.by_type.map((item) => <div className="distribution-row" key={item.name}><span>{item.name}</span><strong>{item.value}</strong></div>)}</div><p className="form-help">Portfolio value: {valueSummary}</p></article>
-      <article className="panel"><div className="panel-head"><div><h2>Human-review narrative preview</h2><p>Generated locally from verified dashboard totals; not an AI backend response.</p></div><StatusBadge tone="blue">Deterministic preview</StatusBadge></div>{narrative ? <textarea rows="12" value={narrative} onChange={(event) => setNarrative(event.target.value)} /> : <div className="inline-empty"><Sparkles /> Generate a reviewable preview without creating a server record.</div>}<div className="form-actions"><button className="secondary-button" onClick={() => setNarrative(buildVerifiedNarrative(data))}><Sparkles size={17} /> Build preview</button>{narrative && <button className="secondary-button" onClick={() => window.print()}><FileText size={17} /> Print reviewed page</button>}</div><p className="form-help">This summary was generated from selected system statistics. All figures and conclusions must be reviewed before approval or distribution.</p></article>
+      <article className="panel"><div className="panel-head"><div><h2>Verified portfolio distributions</h2><p>Returned by GET /reports/portfolio and scoped to your authorized records.</p></div></div><div className="report-distribution"><h3>By workflow stage</h3>{data.by_stage.map((item) => <div className="distribution-row" key={item.name}><span>{item.name}</span><strong>{item.value}</strong></div>)}<h3>By agreement type</h3>{data.by_type.map((item) => <div className="distribution-row" key={item.name}><span>{item.name}</span><strong>{item.value}</strong></div>)}</div><p className="form-help">Portfolio value: {valueSummary}</p></article>
+      <article className="panel"><div className="panel-head"><div><h2>Portfolio narrative</h2><p>Generated server-side from the same authorized portfolio snapshot.</p></div><StatusBadge tone={serverSummary ? "green" : "blue"}>{serverSummary ? "Ready for review" : "Human review required"}</StatusBadge></div>{serverSummary ? <textarea rows="12" value={serverSummary} onChange={(event) => setServerSummary(event.target.value)} /> : narrative ? <textarea rows="12" value={narrative} onChange={(event) => setNarrative(event.target.value)} /> : <div className="inline-empty"><Sparkles /> Generate a reviewable server summary or local preview.</div>}<div className="form-actions"><button className="secondary-button" onClick={() => setNarrative(buildVerifiedNarrative(data))}><Sparkles size={17} /> Build local preview</button>{(narrative || serverSummary) && <button className="secondary-button" onClick={() => window.print()}><FileText size={17} /> Print reviewed page</button>}</div><p className="form-help">All figures and conclusions must be reviewed before approval or distribution.</p></article>
     </section>
   </>;
 }

@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 .venv/
 backend/accord360.db
+accord360.db
+backend/demo_accord360.db
 backend/test_accord360.db
 backend/test_uploads/
 backend/uploads/*

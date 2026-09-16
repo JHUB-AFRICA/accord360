@@ -13,7 +13,8 @@ import {
   listChampions,
   listPartners,
   transitionAgreement,
-  uploadAgreementDocument
+  uploadAgreementDocument,
+  listTemplates
 } from "../lib/backend.js";
 
 const steps = ["Partner", "Agreement details", "JKUAT ownership", "Template & draft", "Documents", "Review & submit"];
@@ -40,6 +41,7 @@ const initialForm = {
   effective_date: "",
   expiry_date: "",
   template_name: "Standard institutional MoU",
+  template_id: "",
   submitNow: true
 };
 
@@ -51,6 +53,7 @@ export default function AgreementForm() {
   const [form, setForm] = useState({ ...initialForm, department: user.department || "", internal_champion: user.role === "researcher" ? user.full_name : "" });
   const [partners, setPartners] = useState(null);
   const [champions, setChampions] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [errors, setErrors] = useState({});
   const [error, setError] = useState("");
@@ -61,18 +64,19 @@ export default function AgreementForm() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([listPartners(), isLinkages ? listChampions() : Promise.resolve([])])
-      .then(([partnerList, championList]) => {
+    Promise.all([listPartners(), isLinkages ? listChampions() : Promise.resolve([]), listTemplates({ agreementType: form.agreement_type })])
+      .then(([partnerList, championList, templateList]) => {
         if (!active) return;
         setPartners(partnerList);
         setChampions(championList);
+        setTemplates(templateList);
       })
       .catch((requestError) => setError(requestError.message));
     return () => { active = false; };
-  }, [isLinkages]);
+  }, [isLinkages, form.agreement_type]);
 
   useEffect(() => {
-    setForm((current) => ({ ...current, template_name: localTemplates[current.agreement_type]?.[0] || "Approved custom agreement draft" }));
+    setForm((current) => ({ ...current, template_id: "", template_name: localTemplates[current.agreement_type]?.[0] || "Approved custom agreement draft" }));
   }, [form.agreement_type]);
 
   const selectedPartner = useMemo(() => partners?.find((item) => Number(item.id) === Number(form.partner_id)), [partners, form.partner_id]);
@@ -141,7 +145,8 @@ export default function AgreementForm() {
         internal_champion: isLinkages ? selectedChampion?.full_name || null : user.full_name,
         partner_liaison: form.partner_liaison.trim() || null,
         effective_date: form.effective_date || null,
-        expiry_date: form.expiry_date || null
+        expiry_date: form.expiry_date || null,
+        template_id: form.template_id ? Number(form.template_id) : null
       };
       let created = await createAgreement(payload);
       for (const document of documents) {
@@ -174,7 +179,7 @@ export default function AgreementForm() {
 
           {step === 2 && <div className="form-section"><div className="section-heading"><h2>JKUAT ownership</h2><p>Researchers become the owner automatically. Linkages users must assign an active researcher returned by GET /users/champions.</p></div><div className="form-grid"><FormField label="Department" required error={errors.department}><input value={form.department} onChange={(event) => update("department", event.target.value)} /></FormField>{isLinkages ? <FormField label="Internal JKUAT Champion" required error={errors.champion_user_id}><select value={form.champion_user_id} onChange={(event) => update("champion_user_id", event.target.value)}><option value="">Select Champion…</option>{champions.map((champion) => <option value={champion.id} key={champion.id}>{champion.full_name} · {champion.department || "No department"}</option>)}</select></FormField> : <FormField label="Internal JKUAT Champion"><input value={user.full_name} disabled /></FormField>}<FormField label="Partner liaison"><input value={form.partner_liaison} onChange={(event) => update("partner_liaison", event.target.value)} /></FormField><FormField label="Effective date"><input type="date" value={form.effective_date} onChange={(event) => update("effective_date", event.target.value)} /></FormField><FormField label="Expiry date" error={errors.expiry_date}><input type="date" value={form.expiry_date} onChange={(event) => update("expiry_date", event.target.value)} /></FormField></div></div>}
 
-          {step === 3 && <div className="form-section"><div className="section-heading"><h2>Template and draft guidance</h2><p>The current backend has no template endpoint. This selection guides the interface only and is not sent as an arbitrary API field.</p></div><div className="template-grid">{(localTemplates[form.agreement_type] || []).map((template) => <button key={template} className={`template-card ${form.template_name === template ? "selected" : ""}`} onClick={() => update("template_name", template)}><FileText /><div><strong>{template}</strong><span>Frontend drafting aid · backend template persistence pending</span></div>{form.template_name === template && <CheckCircle2 />}</button>)}</div></div>}
+          {step === 3 && <div className="form-section"><div className="section-heading"><h2>Template and draft</h2><p>Select an active, versioned template from the backend library. The selected template is saved with this agreement.</p></div><div className="template-grid">{templates.map((template) => <button type="button" key={template.id} className={`template-card ${Number(form.template_id) === Number(template.id) ? "selected" : ""}`} onClick={() => update("template_id", String(template.id))}><FileText /><div><strong>{template.name}</strong><span>Version {template.version} · {template.description || "Approved institutional template"}</span></div>{Number(form.template_id) === Number(template.id) && <CheckCircle2 />}</button>)}</div>{!templates.length && <div className="inline-alert warning"><span>No active templates are available for {form.agreement_type}. An administrator or Linkages officer must publish one before drafting can proceed.</span></div>}</div>}
 
           {step === 4 && <div className="form-section"><div className="section-heading"><h2>Supporting documents</h2><p>Files are uploaded after agreement creation using multipart/form-data.</p></div><label className="upload-zone"><UploadCloud /><strong>Choose supporting documents</strong><span>PDF, DOC, DOCX, XLS, XLSX, CSV, PNG, JPG, JPEG or TXT · maximum 25 MB each</span><input type="file" multiple onChange={(event) => setDocuments(Array.from(event.target.files || []))} /></label><div className="document-list">{documents.map((file) => <article className="document-row" key={`${file.name}-${file.lastModified}`}><FileText /><div><strong>{file.name}</strong><span>{Math.ceil(file.size / 1024)} KB</span></div><StatusBadge status="uploaded" /></article>)}</div></div>}
 

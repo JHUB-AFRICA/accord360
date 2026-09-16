@@ -314,6 +314,58 @@ Applications must have verified their official email before review. Approval
 creates an active record in the existing partner registry and records an audit
 event.
 
+### `POST /auth/partner-invitations/{token}/accept`
+
+Public single-use invitation acceptance. The request contains a password of at
+least eight characters. It creates a dedicated `partner` account and active
+organization membership.
+
+### Partner workspace routes
+
+`GET /partner/me` returns the signed-in partner user's organization context.
+`GET /partner/agreements` lists only agreements linked to that organization.
+`GET /partner/agreements/{agreement_id}` returns a partner-safe agreement view,
+and `GET /partner/agreements/{agreement_id}/documents/{document_id}/download`
+allows only non-confidential shared documents. Internal agreement routes reject
+the `partner` role.
+
+## 7. Templates and configuration
+
+### `GET /templates?agreement_type=<type>&include_archived=<bool>`
+
+Requires authentication. Returns active, versioned agreement templates. Admin,
+Linkages and Directorate Linkages users may request archived records as well.
+
+### `POST /templates`
+
+Requires `admin`, `linkages`, or `director_linkages`. Uses multipart form data
+with `name`, `agreement_type`, `version`, optional `description` and optional
+`file`. Template files may be DOC, DOCX, ODT or PDF up to 25 MB.
+
+### `PATCH /templates/{template_id}`
+
+Requires `admin`, `linkages`, or `director_linkages`. Updates the description,
+name or `status` (`active` or `archived`). Template versions are immutable.
+
+### `GET /templates/{template_id}/download`
+
+Requires authentication and returns the authorized template file.
+
+### `GET /configuration`
+
+Requires `admin`. Returns audited operational configuration values.
+
+### `POST /configuration` and `PATCH /configuration/{key}`
+
+Require `admin`. Create or update editable configuration values. Every write is
+recorded in the audit log.
+
+### `GET /reference-data?category=<category>`
+
+Requires authentication. Returns active reference values for UI selectors.
+Administrators may create and update values through `POST /reference-data` and
+`PATCH /reference-data/{item_id}`.
+
 ## 7. Corrections
 
 Correction records are created automatically when an authorized workflow return
@@ -672,6 +724,23 @@ expiry_to=YYYY-MM-DD
 The result is scoped by the authenticated user. The response includes a
 `Content-Disposition` filename.
 
+### `GET /reports/portfolio`
+
+Returns a filter-aware portfolio snapshot scoped to the authenticated user's
+authorized agreements. It includes totals, distributions by workflow stage,
+agreement type, sector and department, approved value totals and visible rows.
+
+### `GET /reports/export.pdf` and `GET /reports/export.xlsx`
+
+Generate filter-aware PDF and Excel portfolio downloads from the same
+authorization scope and record audit events.
+
+### `POST /reports/ai-summary`
+
+Accepts the portfolio filters as JSON and returns a server-generated narrative
+from the authorized portfolio snapshot. The response identifies its source and
+requires human review before distribution.
+
 ### `GET /reports/audit`
 
 Requires `admin`, `auditor`, `executive`, or `director_linkages`.
@@ -717,6 +786,13 @@ const agreements = await api("/agreements?stage=legal_review");
 For uploads, pass `FormData` and do not manually set its `Content-Type`; the
 browser must add the multipart boundary.
 
+## Historical data review
+
+Linkages users use `GET /data-review/summary`,
+`GET /data-review?status=pending_review`, `GET /data-review/{id}`,
+`PATCH /data-review/{id}`, and `POST /data-review/{id}/verify` to correct and
+verify imported historical collaboration records.
+
 ## 14. Routes expected by the newer frontend but not currently implemented
 
 The following paths are present in some frontend code/contracts but are not
@@ -727,8 +803,6 @@ GET/POST/PATCH /configuration
 GET/POST/PATCH /templates
 GET /reference-data
 GET /directory/champions
-GET /scorecards
-POST /scorecards/{id}/recalculate
 GET /reports/portfolio
 POST /reports/ai-summary
 GET /reports/export.pdf

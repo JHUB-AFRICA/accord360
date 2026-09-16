@@ -8,6 +8,7 @@ import Configuration from "./pages/Configuration.jsx";
 import CorrectionDetail from "./pages/CorrectionDetail.jsx";
 import Corrections from "./pages/Corrections.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import HistoricalDataReview from "./pages/HistoricalDataReview.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Help from "./pages/Help.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
@@ -17,6 +18,8 @@ import NotFound from "./pages/NotFound.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import PartnerDetail from "./pages/PartnerDetail.jsx";
 import PartnerRegister from "./pages/PartnerRegister.jsx";
+import PartnerInvitationAccept from "./pages/PartnerInvitationAccept.jsx";
+import PartnerPortal from "./pages/PartnerPortal.jsx";
 import PartnerVerification from "./pages/PartnerVerification.jsx";
 import Partners from "./pages/Partners.jsx";
 import RegistrationSubmitted from "./pages/RegistrationSubmitted.jsx";
@@ -30,7 +33,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import PublicLayout from "./components/PublicLayout.jsx";
 import RoleHomeRedirect from "./components/RoleHomeRedirect.jsx";
 import RoleRoute from "./components/RoleRoute.jsx";
-import { ALL_ROLES } from "./lib/roles.js";
+import { ALL_ROLES, INTERNAL_ROLES } from "./lib/roles.js";
 
 
 const role = (roles, element) => <RoleRoute roles={roles}>{element}</RoleRoute>;
@@ -48,6 +51,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/partner/register" element={<PartnerRegister />} />
+      <Route path="/partner/accept" element={<PartnerInvitationAccept />} />
       <Route path="/partner/submitted" element={<RegistrationSubmitted />} />
       <Route path="/verify-email" element={<AccountState type="verify-email" />} />
       <Route path="/pending-review" element={<AccountState type="pending-review" />} />
@@ -63,6 +67,7 @@ export default function App() {
         <Route path="/approvals/queue" element={role(["approver"], <WorkflowQueue mode="approvals" />)} />
         <Route path="/linkages" element={role(["linkages"], <Dashboard />)} />
         <Route path="/linkages/queue" element={role(["linkages", "director_linkages"], <WorkflowQueue mode="linkages" />)} />
+        <Route path="/data-review" element={role(["linkages", "director_linkages", "admin"], <HistoricalDataReview />)} />
         <Route path="/director" element={role(["director_linkages"], <Dashboard />)} />
         <Route path="/legal" element={role(["legal"], <Dashboard />)} />
         <Route path="/legal/queue" element={role(["legal"], <WorkflowQueue mode="legal" />)} />
@@ -81,9 +86,10 @@ export default function App() {
         <Route path="/admin" element={role(["admin"], <Dashboard />)} />
         <Route path="/audit-workspace" element={role(["auditor"], <Dashboard />)} />
 
-        <Route path="/agreements" element={role(ALL_ROLES, <Agreements />)} />
+        <Route path="/partner-portal" element={role(["partner"], <PartnerPortal />)} />
+        <Route path="/agreements" element={role(INTERNAL_ROLES, <Agreements />)} />
         <Route path="/agreements/new" element={role(agreementCreators, <AgreementForm />)} />
-        <Route path="/agreements/:id" element={role(ALL_ROLES, <AgreementDetail />)} />
+        <Route path="/agreements/:id" element={role(INTERNAL_ROLES, <AgreementDetail />)} />
         <Route path="/partners" element={role(["researcher", "linkages", "director_linkages", "admin"], <Partners />)} />
         <Route path="/partners/:id" element={role(["researcher", "linkages", "director_linkages", "admin"], <PartnerDetail />)} />
         <Route path="/partners/:id/verify" element={role(["linkages", "director_linkages"], <PartnerVerification />)} />

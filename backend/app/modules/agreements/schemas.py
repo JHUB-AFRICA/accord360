@@ -19,6 +19,7 @@ class AgreementCreate(BaseModel):
     strategic_alignment: str | None = None
     department: str = Field(min_length=2, max_length=180)
     partner_id: int
+    template_id: int | None = None
     champion_user_id: int | None = None
     confidentiality: str = "internal"
     internal_champion: str | None = None
@@ -45,6 +46,30 @@ class AgreementUpdate(BaseModel):
     legal_reviewer_id: int | None = None
     next_action: str | None = None
 
+class HistoricalReviewUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=300)
+    agreement_type: AgreementType | None = None
+    purpose: str | None = Field(default=None, min_length=10)
+    expected_outcomes: str | None = None
+    strategic_alignment: str | None = None
+    department: str | None = Field(default=None, min_length=2, max_length=180)
+    effective_date: date | None = None
+    expiry_date: date | None = None
+    owner_id: int | None = None
+    initiator_id: int | None = None
+    partner_liaison: str | None = None
+    assigned_linkages_id: int | None = None
+    assigned_approver_id: int | None = None
+    legal_reviewer_id: int | None = None
+    status: str | None = None
+    stage: str | None = None
+    status_color: str | None = None
+    next_action: str | None = None
+    data_quality_note: str | None = None
+
+class HistoricalReviewVerify(BaseModel):
+    review_notes: str | None = Field(default=None, max_length=4000)
+
 class AgreementListOut(ORMModel):
     id: int
     reference_number: str
@@ -56,7 +81,16 @@ class AgreementListOut(ORMModel):
     status_color: str
     next_action: str | None
     partner: PartnerOut
+    template_id: int | None
     owner: UserOut
+    initiator: UserOut | None
+    source_row_number: int | None = None
+    source_section: str | None = None
+    source_date_raw: str | None = None
+    source_type_raw: str | None = None
+    source_status_raw: str | None = None
+    data_quality_status: str
+    data_quality_note: str | None = None
     effective_date: date | None
     expiry_date: date | None
     legal_review_days: int | None = None
