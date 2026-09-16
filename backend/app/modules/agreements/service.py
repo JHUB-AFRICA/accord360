@@ -16,7 +16,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from ...access import apply_agreement_scope, can_download_document, ensure_can_edit_agreement, ensure_can_view_agreement
+from ...access import apply_agreement_scope, can_download_document, can_view_agreement, ensure_can_edit_agreement, ensure_can_view_agreement
 from ...deps import audit
 from .models import Agreement
 from app.modules.partners.models import Partner
@@ -196,7 +196,11 @@ def get_agreement_detail(db: Session, user: User, agreement_id: int) -> Agreemen
     agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).options(*LOAD_OPTIONS))
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
-    ensure_can_view_agreement(user, agreement)
+    # Conceal out-of-scope records on direct reads. Mutating endpoints retain
+    # their explicit 403 responses so callers can distinguish read-only access
+    # from an authorization failure when attempting a change.
+    if not can_view_agreement(user, agreement):
+        raise HTTPException(status_code=404, detail="Agreement not found")
     refresh_risk_status(agreement)
     db.commit()
     result = AgreementDetailOut.model_validate(agreement)

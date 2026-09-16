@@ -81,7 +81,7 @@ def create_linkages_owned_agreement(name: str) -> int:
 def test_researcher_cannot_read_or_update_another_users_record():
     agreement_id = create_linkages_owned_agreement("Scope Test Partner")
     researcher_headers = headers("researcher@accord360.app", "Research@123")
-    assert client.get(f"/api/agreements/{agreement_id}", headers=researcher_headers).status_code == 403
+    assert client.get(f"/api/agreements/{agreement_id}", headers=researcher_headers).status_code == 404
     assert client.patch(
         f"/api/agreements/{agreement_id}",
         headers=researcher_headers,
