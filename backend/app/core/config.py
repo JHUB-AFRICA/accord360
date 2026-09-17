@@ -91,4 +91,10 @@ def sqlalchemy_database_url(url: str) -> str:
         return url.replace("postgres://", "postgresql+psycopg://", 1)
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+        relative_path = url.removeprefix("sqlite:///")
+        if relative_path.startswith("./"):
+            relative_path = relative_path[2:]
+        backend_root = Path(__file__).resolve().parents[2]
+        return f"sqlite:///{(backend_root / relative_path).resolve()}"
     return url

@@ -195,6 +195,7 @@ def _is_queue_item(agreement: Agreement, user: User) -> bool:
     if role in {"linkages", "director_linkages"}:
         return (
             agreement.stage in {"linkages_review", "vc_submission"}
+            or agreement.data_quality_status == "pending_review"
             or agreement.status in {"legal_stalled", "fully_signed", "dormant", "expiry_warning", "expiry_critical", "renewal_review"}
             or (agreement.stage == "validation_signing" and agreement.status in {"awaiting_vc_signature", "awaiting_partner_signature"})
         )
