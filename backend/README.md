@@ -114,8 +114,7 @@ using the service hostnames `database` and `minio` (not `localhost`) and:
 
 Changed storage setup:
 
-- MinIO replaces the previously configured Neon S3-compatible bucket for the
-  Docker Compose deployment.
+- MinIO provides local S3-compatible storage for the Docker Compose deployment.
 - MinIO's S3 API is available at `http://127.0.0.1:9000`.
 - The MinIO web console is available at `http://127.0.0.1:9001`.
 - The `minio-init` service creates the bucket automatically, so no manual

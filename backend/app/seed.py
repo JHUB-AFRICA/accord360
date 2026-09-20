@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, timedelta
+from mimetypes import guess_type
+from pathlib import Path
 
 from sqlalchemy import delete, select
 
 from .db.session import SessionLocal
-from .models import Agreement, AuditLog, Deliverable, Document, Notification, Partner, User, ValueRecord, WorkflowEvent
+from .models import Agreement, AuditLog, Deliverable, Document, Notification, Partner, Template, User, ValueRecord, WorkflowEvent
+from .core.config import settings
 from .core.security import hash_password
 from .timeutils import utc_now
 
@@ -25,12 +28,78 @@ DEFAULT_USERS = [
     ("Audit Reviewer", "auditor@accord360.app", "Auditor@123", "auditor", "Internal Audit"),
 ]
 
+SEEDED_TEMPLATES = [
+    {
+        "source_name": "Sample MoU (1).docx",
+        "name": "JKUAT Standard Memorandum of Understanding",
+        "agreement_type": "MoU",
+        "version": "1.0",
+        "description": "Editable Word draft for a Memorandum of Understanding.",
+        "stored_name": "templates/seeded-jkuat-mou-v1.0.docx",
+    },
+    {
+        "source_name": "Sample CRA (1).docx",
+        "name": "JKUAT Standard Collaboration Agreement",
+        "agreement_type": "CA",
+        "version": "1.0",
+        "description": "Editable Word draft for a Collaboration Agreement.",
+        "stored_name": "templates/seeded-jkuat-ca-v1.0.docx",
+    },
+]
+
+
+def seed_templates(db, admin: User) -> None:
+    """Register the repository's initial editable Word templates once."""
+    imports_path = Path(__file__).resolve().parents[1] / "data" / "imports"
+    templates_path = settings.upload_path / "templates"
+
+    for definition in SEEDED_TEMPLATES:
+        source = imports_path / definition["source_name"]
+        if not source.is_file():
+            # A deployment without the optional import assets can still start.
+            continue
+
+        template = db.scalar(
+            select(Template).where(
+                Template.name == definition["name"],
+                Template.version == definition["version"],
+            )
+        )
+        target = settings.upload_path / definition["stored_name"]
+        if not target.is_file():
+            templates_path.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+
+        if template is None:
+            template = Template(
+                name=definition["name"],
+                agreement_type=definition["agreement_type"],
+                version=definition["version"],
+                description=definition["description"],
+                status="active",
+                original_name=source.name,
+                stored_name=definition["stored_name"],
+                mime_type=guess_type(source.name)[0] or "application/octet-stream",
+                size_bytes=source.stat().st_size,
+                uploaded_by_id=admin.id,
+                created_at=utc_now(),
+            )
+            db.add(template)
+        elif template.stored_name != definition["stored_name"] or not template.original_name:
+            # Repair metadata/file placement if a prior seed was incomplete.
+            template.original_name = source.name
+            template.stored_name = definition["stored_name"]
+            template.mime_type = guess_type(source.name)[0] or "application/octet-stream"
+            template.size_bytes = source.stat().st_size
+
+    db.flush()
+
 
 def seed(reset: bool = False, demo: bool = True) -> None:
     db = SessionLocal()
     try:
         if reset:
-            for model in [Notification, AuditLog, Deliverable, ValueRecord, Document, WorkflowEvent, Agreement, Partner, User]:
+            for model in [Notification, AuditLog, Deliverable, ValueRecord, Document, WorkflowEvent, Agreement, Partner, Template, User]:
                 db.execute(delete(model))
             db.commit()
 
@@ -48,6 +117,8 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 db.add(user)
                 db.flush()
             users[role] = user
+
+        seed_templates(db, users["admin"])
 
         # Lightweight compatibility update for databases created before the DVC/VC role gates.
         legacy_ready = db.scalars(select(Agreement).where(Agreement.status == "ready_for_signing")).all()

@@ -80,8 +80,7 @@ paths.
 
 Important environment variables include:
 
-- `DATABASE_URL`: defaults to `sqlite:///./accord360.db`; use a PostgreSQL URL
-  for a managed database.
+- `DATABASE_URL`: defaults to the local `sqlite:///./accord360.db` database.
 - `SECRET_KEY`: required to be non-development in production.
 - `ENVIRONMENT`: use `test` for test database initialization.
 - `SEED_DEMO_DATA`: controls demo users and agreements.
