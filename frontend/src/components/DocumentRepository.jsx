@@ -6,7 +6,7 @@ import EmptyState from "./EmptyState.jsx";
 import Modal from "./Modal.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 
-const uploadRoles = ["researcher", "linkages", "director_linkages", "legal", "vc_office", "me"];
+const uploadRoles = ["champion", "linkages", "legal", "me"];
 const allowedExtensions = ["pdf", "doc", "docx", "xls", "xlsx", "csv", "png", "jpg", "jpeg", "txt"];
 
 export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {

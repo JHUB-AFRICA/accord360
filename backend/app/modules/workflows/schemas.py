@@ -17,29 +17,25 @@ class WorkflowEventOut(ORMModel):
     actor: UserOut
 
 
+# Exactly the transition-graph edges in REBUILD_BRIEF.md Section 2.4 that are
+# triggered by a user action (as opposed to the two system/automatic edges —
+# draft_generated -> pending_legal_review on draft generation (Phase 2), and
+# fully_executed -> expired on the daily expiry job (Phase 3) — neither of
+# which is exposed through this endpoint).
+TransitionAction = Literal[
+    "request_corrections",
+    "approve",
+    "resubmit_for_verification",
+    "start_signing",
+    "mark_fully_executed",
+    "renew",
+    "archive",
+]
+
+
 class TransitionRequest(BaseModel):
-    action: Literal[
-        "submit",
-        "approve_department",
-        "return_correction",
-        "approve_linkages",
-        "send_legal",
-        "approve_legal",
-        "approve_dvc",
-        "return_dvc",
-        "submit_vc",
-        "record_vc_signature",
-        "mark_signed",
-        "activate",
-        "renew",
-        "close",
-        "archive",
-        "reject",
-    ]
+    action: TransitionAction
     comment: str | None = Field(default=None, max_length=4000)
-    exact_item: str | None = Field(default=None, max_length=300)
-    requested_change: str | None = Field(default=None, max_length=4000)
-    details: str | None = Field(default=None, max_length=4000)
 
 class NotificationOut(ORMModel):
     id: int

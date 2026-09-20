@@ -25,7 +25,7 @@ def create_partner(
     payload: PartnerCreate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("linkages", "researcher")),
+    actor: User = Depends(require_roles("linkages", "champion")),
 ):
     try:
         partner = service.create_partner(db, payload)

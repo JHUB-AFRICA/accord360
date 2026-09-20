@@ -1,14 +1,10 @@
-// TODO(spec): REBUILD_BRIEF.md Section 2.1 names the champion-side role
-// "champion", but this codebase still calls it "researcher" everywhere
-// (routes, ROLE_CONFIG key, RoleRoute guards). Renaming it is Phase 1 work,
-// not this Phase 0 subtractive pass, so the key is left as "researcher" here
-// — flagging so a human can confirm this is the same role before Phase 1
-// proceeds.
+// REBUILD_BRIEF.md Section 2.1 names this role "champion" (exact string
+// value). Renamed from the legacy "researcher" key in Phase 1.
 export const ROLE_CONFIG = {
-  researcher: {
-    label: "Researcher / Initiator",
-    workspace: "Researcher & Champion Workspace",
-    home: "/researcher",
+  champion: {
+    label: "Champion",
+    workspace: "Champion Workspace",
+    home: "/champion",
     shortDescription: "Initiate collaborations, respond to corrections and track assigned partnerships.",
     scope: "own"
   },
@@ -55,7 +51,7 @@ export function roleHome(role) {
 }
 
 export function canCreateAgreement(role) {
-  return ["researcher", "linkages"].includes(role);
+  return ["champion", "linkages"].includes(role);
 }
 
 export function canViewAllAgreements(role) {

@@ -38,14 +38,13 @@ const iconMap = {
   review: ClipboardCheck
 };
 
-// TODO(spec): navigation entries below were trimmed per REBUILD_BRIEF.md
-// Section 1 to drop links to removed pages/routes (data-review, scorecards,
-// users, admin, audit) and removed roles (approver, director_linkages, dvc,
-// vc_office, executive, admin, auditor). This still keys off "researcher"
-// rather than the spec's "champion" — see the TODO in lib/roles.js.
+// Navigation entries below were trimmed per REBUILD_BRIEF.md Section 1 to
+// drop links to removed pages/routes (data-review, scorecards, users, admin,
+// audit) and removed roles (approver, director_linkages, dvc, vc_office,
+// executive, admin, auditor). Keyed by the four Section 2.1 roles.
 const navigation = {
-  researcher: [
-    ["home", "Dashboard", "/researcher"],
+  champion: [
+    ["home", "Dashboard", "/champion"],
     ["new", "Create request", "/agreements/new"],
     ["agreements", "My requests", "/agreements"],
     ["corrections", "Corrections", "/corrections"],

@@ -16,9 +16,7 @@ router = APIRouter(prefix="/agreements", tags=["Agreements"])
 @router.get("", response_model=list[AgreementListOut])
 def list_agreements(
     search: str | None = None,
-    stage: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
-    agreement_type: str | None = None,
     department: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -27,9 +25,7 @@ def list_agreements(
         db,
         user,
         search=search,
-        stage=stage,
         status_filter=status_filter,
-        agreement_type=agreement_type,
         department=department,
     )
 

@@ -7,6 +7,7 @@ if TEST_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["UPLOAD_DIR"] = "test_uploads"
 os.environ["ENVIRONMENT"] = "test"
+os.environ["SEED_DEMO_DATA"] = "true"
 
 from fastapi.testclient import TestClient
 from app.main import app
@@ -15,7 +16,7 @@ client = TestClient(app)
 
 
 def test_login_and_dashboard():
-    login = client.post("/api/auth/login", json={"email": "admin@accord360.app", "password": "Admin@123"})
+    login = client.post("/api/auth/login", json={"email": "linkages@accord360.app", "password": "Linkages@123"})
     assert login.status_code == 200
     token = login.json()["access_token"]
     response = client.get("/api/dashboard/stats", headers={"Authorization": f"Bearer {token}"})
@@ -33,19 +34,20 @@ def test_partner_and_agreement_creation():
         partner_id = next(item["id"] for item in client.get("/api/partners", headers=headers).json() if item["name"] == "Smoke Test Partner Unique")
     else:
         partner_id = partner.json()["id"]
-    champions = client.get("/api/users/champions", headers=headers)
-    assert champions.status_code == 200 and champions.json()
+
+    champion_login = client.post("/api/auth/login", json={"email": "champion@accord360.app", "password": "Champion@123"})
+    assert champion_login.status_code == 200
+    champion_headers = {"Authorization": f"Bearer {champion_login.json()['access_token']}"}
     agreement = client.post(
         "/api/agreements",
-        headers=headers,
+        headers=champion_headers,
         json={
             "title": "Smoke Test Agreement",
-            "agreement_type": "MoU",
-            "purpose": "Test end-to-end agreement creation.",
             "department": "ICT",
             "partner_id": partner_id,
-            "champion_user_id": champions.json()[0]["id"],
+            "start_date": "2026-01-01",
+            "end_date": "2027-01-01",
         },
     )
     assert agreement.status_code == 201
-    assert agreement.json()["reference_number"].startswith("JKUAT-MOU")
+    assert agreement.json()["status"] == "draft_generated"

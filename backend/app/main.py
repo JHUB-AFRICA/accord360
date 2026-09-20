@@ -16,7 +16,7 @@ from .logging_config import configure_logging
 from .modules.agreements.router import router as agreements_router
 from .modules.partners.router import router as partners_router
 from .modules.users.router import auth_router, router as users_router
-from .modules.workflows.router import dashboard_router, documents_router, notifications_router, reports_router
+from .modules.workflows.router import dashboard_router, notifications_router, reports_router
 from .modules.templates.router import router as templates_router
 from .modules.configuration.router import router as configuration_router
 from .seed import seed
@@ -77,7 +77,7 @@ async def request_logging_middleware(request, call_next):
         if response is not None:
             response.headers["X-Request-ID"] = request_id
 
-for router in [auth_router, users_router, partners_router, agreements_router, templates_router, configuration_router, documents_router, dashboard_router, notifications_router, reports_router]:
+for router in [auth_router, users_router, partners_router, agreements_router, templates_router, configuration_router, dashboard_router, notifications_router, reports_router]:
     app.include_router(router, prefix="/api")
 
 logger.info(

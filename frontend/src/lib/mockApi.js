@@ -2,31 +2,17 @@ const STORAGE_KEY = "accord360_contract_mock_v1";
 const TOKEN_PREFIX = "mock-token-";
 
 const credentials = {
-  "researcher@accord360.app": "Research@123",
-  "approver@accord360.app": "Approver@123",
+  "champion@accord360.app": "Research@123",
   "linkages@accord360.app": "Linkages@123",
-  "director.linkages@accord360.app": "Director@123",
   "legal@accord360.app": "Legal@123",
-  "dvc.rpe@accord360.app": "DvcRpe@123",
-  "vc.office@accord360.app": "VcOffice@123",
-  "me@accord360.app": "Measure@123",
-  "executive@accord360.app": "Executive@123",
-  "admin@accord360.app": "Admin@123",
-  "auditor@accord360.app": "Auditor@123"
+  "me@accord360.app": "Measure@123"
 };
 
 const roleUsers = [
-  [1, "Dr. Peter Mwangi", "researcher@accord360.app", "researcher", "Public Health"],
-  [2, "Prof. Daniel Kimani", "approver@accord360.app", "approver", "Agricultural Engineering"],
+  [1, "Dr. Peter Mwangi", "champion@accord360.app", "champion", "Public Health"],
   [3, "Jane Muthoni", "linkages@accord360.app", "linkages", "Directorate of Linkages (RPE)"],
-  [4, "Dr. Samuel Kariuki", "director.linkages@accord360.app", "director_linkages", "Directorate of Linkages (RPE)"],
   [5, "Counsel Angela Wanjiku", "legal@accord360.app", "legal", "University Legal Office"],
-  [6, "Prof. Grace Nyambura", "dvc.rpe@accord360.app", "dvc", "DVC RPE"],
-  [7, "Michael Otieno", "vc.office@accord360.app", "vc_office", "Vice Chancellor's Office"],
-  [8, "Prof. Alice Njeri", "me@accord360.app", "me", "Monitoring & Evaluation"],
-  [9, "Prof. John K. Chemutai", "executive@accord360.app", "executive", "University Executive"],
-  [10, "Esther Kamau", "admin@accord360.app", "admin", "ICT Directorate"],
-  [11, "Charles Kiprop", "auditor@accord360.app", "auditor", "Internal Audit"]
+  [8, "Prof. Alice Njeri", "me@accord360.app", "me", "Monitoring & Evaluation"]
 ];
 
 const now = () => new Date().toISOString();
@@ -85,13 +71,13 @@ function initialState() {
     makeAgreement(1, { reference_number: "JKUAT-CRA-2026-0001", title: "Digital Agriculture Research Collaboration", agreement_type: "CRA", stage: "legal_review", status: "in_legal_review", status_color: "green", next_action: "Legal Office review in progress", legal_review_days: 4, documents: [{ id: 1, agreement_id: 1, document_type: "supporting", version: "1.2", original_name: "Working_Draft_v1.2.docx", mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size_bytes: 32000, is_official: false, confidentiality: "internal", created_at: "2026-07-28T08:00:00Z" }], workflow_events: [
       { id: 10, from_stage: null, to_stage: "initiation", action: "create", comment: "Request created", created_at: "2026-01-10T08:00:00Z", actor: users[0] },
       { id: 11, from_stage: "initiation", to_stage: "department_approval", action: "submit", comment: "Submitted", created_at: "2026-01-12T08:00:00Z", actor: users[0] },
-      { id: 12, from_stage: "department_approval", to_stage: "linkages_review", action: "approve_department", comment: "Academic fit confirmed", created_at: "2026-01-15T08:00:00Z", actor: users[1] },
+      { id: 12, from_stage: "department_approval", to_stage: "linkages_review", action: "approve_department", comment: "Academic fit confirmed", created_at: "2026-01-15T08:00:00Z", actor: users[1] }, // TODO(spec): legacy "approver" role removed; this demo event's actor now falls back to `linkages`
       { id: 13, from_stage: "linkages_review", to_stage: "linkages_review", action: "approve_linkages", comment: "Strategic fit confirmed", created_at: "2026-01-18T08:00:00Z", actor: users[2] },
       { id: 14, from_stage: "linkages_review", to_stage: "legal_review", action: "send_legal", comment: "Sent to Legal", created_at: "2026-08-01T08:00:00Z", actor: users[2] }
     ] }),
     makeAgreement(2, { reference_number: "JKUAT-MOU-2026-0002", title: "County Innovation and Student Placement Partnership", partner: partners[1], stage: "department_approval", status: "pending_department", status_color: "yellow", next_action: "Department/faculty approval required", owner: users[0], department: "Agricultural Engineering" }),
-    makeAgreement(3, { reference_number: "JKUAT-CA-2026-0003", title: "Manufacturing Research Collaboration", agreement_type: "CA", partner: partners[1], stage: "dvc_approval", status: "legal_approved", status_color: "green", next_action: "DVC RPE endorsement required", workflow_events: [{ id: 30, from_stage: "legal_review", to_stage: "dvc_approval", action: "approve_legal", comment: "Legal draft approved", created_at: "2026-08-01T08:00:00Z", actor: users[4] }] }),
-    makeAgreement(4, { reference_number: "JKUAT-CRA-2026-0004", title: "Climate Data and Resilience Collaboration", agreement_type: "CRA", partner: partners[3], stage: "vc_submission", status: "dvc_approved", status_color: "green", next_action: "Linkages to submit the endorsed package to VC Office", workflow_events: [{ id: 40, from_stage: "dvc_approval", to_stage: "vc_submission", action: "approve_dvc", comment: "DVC RPE endorsed", created_at: "2026-08-02T08:00:00Z", actor: users[5] }] }),
+    makeAgreement(3, { reference_number: "JKUAT-CA-2026-0003", title: "Manufacturing Research Collaboration", agreement_type: "CA", partner: partners[1], stage: "dvc_approval", status: "legal_approved", status_color: "green", next_action: "DVC RPE endorsement required", workflow_events: [{ id: 30, from_stage: "legal_review", to_stage: "dvc_approval", action: "approve_legal", comment: "Legal draft approved", created_at: "2026-08-01T08:00:00Z", actor: users[2] }] }),
+    makeAgreement(4, { reference_number: "JKUAT-CRA-2026-0004", title: "Climate Data and Resilience Collaboration", agreement_type: "CRA", partner: partners[3], stage: "vc_submission", status: "dvc_approved", status_color: "green", next_action: "Linkages to submit the endorsed package to VC Office", workflow_events: [{ id: 40, from_stage: "dvc_approval", to_stage: "vc_submission", action: "approve_dvc", comment: "DVC RPE endorsed", created_at: "2026-08-02T08:00:00Z", actor: users[1] }] }),
     makeAgreement(5, { reference_number: "JKUAT-MOU-2026-0005", title: "International Exchange and Joint Training MoU", partner: partners[4], stage: "validation_signing", status: "awaiting_vc_signature", status_color: "yellow", next_action: "VC Office to record signature milestone", date_sent_vc: "2026-08-01", workflow_events: [{ id: 50, from_stage: "vc_submission", to_stage: "validation_signing", action: "submit_vc", comment: "Package submitted", created_at: "2026-08-01T08:00:00Z", actor: users[2] }] }),
     makeAgreement(6, { reference_number: "JKUAT-MOU-2025-0006", title: "Artificial Intelligence Exchange Programme", partner: partners[4], stage: "active", status: "active", status_color: "green", next_action: "Submit the next six-month M&E report", effective_date: "2026-01-15", expiry_date: "2029-01-14", signing_date: "2026-01-10", documents: [{ id: 6, agreement_id: 6, document_type: "signed", version: "1.0", original_name: "Final_Signed_Agreement.pdf", mime_type: "application/pdf", size_bytes: 64000, is_official: true, confidentiality: "internal", created_at: "2026-01-10T08:00:00Z" }], deliverables: [{ id: 1, agreement_id: 6, deliverable_type: "Train postgraduate researchers", target_value: 20, actual_value: 14, reporting_period: "2026 H1", notes: "Exchange activities underway", evidence_document_id: null, last_updated_at: "2026-06-30T08:00:00Z" }], values: [{ id: 1, agreement_id: 6, value_type: "Research support", amount: 2500000, currency: "KES", source: "Signed work plan", reporting_period: "2026 H1", approved: true }] }),
     makeAgreement(7, { reference_number: "JKUAT-MOU-2026-0007", title: "Climate Innovation and Capacity Building", partner: partners[3], stage: "initiation", status: "correction_required", status_color: "yellow", next_action: "Champion to correct and resubmit", workflow_events: [{ id: 70, from_stage: "linkages_review", to_stage: "initiation", action: "return_correction", comment: "Exact item: Project budget. Requested change: Upload the approved institutional contribution plan.", created_at: "2026-08-05T08:00:00Z", actor: users[2] }] })
@@ -170,12 +156,9 @@ function addAudit(state, actor, action, objectType, objectId, oldValue = null, n
   state.audit.unshift({ id: state.next.audit++, action, object_type: objectType, object_id: String(objectId), old_value: oldValue, new_value: newValue, source_ip: "127.0.0.1", created_at: now(), actor: actor || null });
 }
 function scoped(state, actor) {
-  if (["linkages", "director_linkages", "executive", "admin", "auditor"].includes(actor.role)) return state.agreements;
-  if (actor.role === "researcher") return state.agreements.filter((item) => item.owner.id === actor.id || item.initiator?.id === actor.id);
-  if (actor.role === "approver") return state.agreements.filter((item) => item.department === actor.department || item.stage === "department_approval");
+  if (["linkages"].includes(actor.role)) return state.agreements;
+  if (actor.role === "champion") return state.agreements.filter((item) => item.owner.id === actor.id || item.initiator?.id === actor.id);
   if (actor.role === "legal") return state.agreements.filter((item) => item.stage === "legal_review" || item.workflow_events.some((event) => event.action === "approve_legal"));
-  if (actor.role === "dvc") return state.agreements.filter((item) => ["dvc_approval", "vc_submission", "validation_signing", "active"].includes(item.stage));
-  if (actor.role === "vc_office") return state.agreements.filter((item) => ["validation_signing", "active"].includes(item.stage));
   if (actor.role === "me") return state.agreements.filter((item) => ["active", "renewal_closure"].includes(item.stage));
   return [];
 }
@@ -203,7 +186,7 @@ const transitionMap = {
   reject: ["renewal_closure", "rejected", "red", "No further action"]
 };
 const allowedRoles = {
-  submit: ["researcher", "linkages", "director_linkages"], approve_department: ["approver"], return_correction: ["approver", "linkages", "director_linkages", "legal"], approve_linkages: ["linkages", "director_linkages"], send_legal: ["linkages", "director_linkages"], approve_legal: ["legal"], approve_dvc: ["dvc"], return_dvc: ["dvc"], submit_vc: ["linkages", "director_linkages"], record_vc_signature: ["vc_office"], mark_signed: ["vc_office", "linkages", "director_linkages"], activate: ["linkages", "director_linkages"], renew: ["linkages", "director_linkages"], close: ["linkages", "director_linkages"], archive: ["linkages", "director_linkages"], reject: ["approver", "linkages", "director_linkages", "legal", "dvc"]
+  submit: ["champion", "linkages"], approve_department: ["linkages"], return_correction: ["linkages", "legal"], approve_linkages: ["linkages"], send_legal: ["linkages"], approve_legal: ["legal"], approve_dvc: ["legal"], return_dvc: ["legal"], submit_vc: ["linkages"], record_vc_signature: ["linkages"], mark_signed: ["linkages"], activate: ["linkages"], renew: ["linkages"], close: ["linkages"], archive: ["linkages"], reject: ["linkages", "legal"]
 };
 const allowedStages = {
   submit: ["initiation"], approve_department: ["department_approval"], return_correction: ["department_approval", "linkages_review", "legal_review"], approve_linkages: ["linkages_review"], send_legal: ["linkages_review"], approve_legal: ["legal_review"], approve_dvc: ["dvc_approval"], return_dvc: ["dvc_approval"], submit_vc: ["vc_submission"], record_vc_signature: ["validation_signing"], mark_signed: ["validation_signing"], activate: ["validation_signing"], renew: ["active"], close: ["active", "renewal_closure"], archive: ["renewal_closure"], reject: ["department_approval", "linkages_review", "legal_review", "dvc_approval", "vc_submission", "validation_signing"]
@@ -212,7 +195,7 @@ const allowedStages = {
 function dashboardWorkspace(state, actor) {
   const records = scoped(state, actor);
   const queue = records.filter((item) => {
-    const roleStage = { researcher: ["initiation", "active"], approver: ["department_approval"], linkages: ["linkages_review", "vc_submission", "validation_signing"], director_linkages: ["linkages_review", "vc_submission", "validation_signing", "renewal_closure"], legal: ["legal_review"], dvc: ["dvc_approval"], vc_office: ["validation_signing"], me: ["active"], executive: [], admin: [], auditor: [] };
+    const roleStage = { champion: ["initiation", "active"], linkages: ["linkages_review", "vc_submission", "validation_signing", "renewal_closure"], legal: ["legal_review", "dvc_approval"], me: ["active"] };
     return (roleStage[actor.role] || []).includes(item.stage);
   });
   return {
@@ -226,8 +209,8 @@ function dashboardWorkspace(state, actor) {
     guidance: ["Open records requiring your role.", "Use only actions allowed by the current stage."],
     queue_title: "Required actions",
     queue_description: "Records are scoped to the signed-in role.",
-    primary_action: ["researcher", "linkages", "director_linkages"].includes(actor.role) ? { label: "New collaboration request", path: "/agreements/new" } : null,
-    show_portfolio_analytics: ["linkages", "director_linkages", "dvc", "me", "executive"].includes(actor.role),
+    primary_action: ["champion", "linkages"].includes(actor.role) ? { label: "New collaboration request", path: "/agreements/new" } : null,
+    show_portfolio_analytics: ["linkages", "me"].includes(actor.role),
     metrics: [
       { label: "Authorized records", value: records.length, note: "Backend-scoped", icon: "agreements", tone: "green" },
       { label: "Required actions", value: queue.length, note: "Current queue", icon: "pending", tone: "blue" },
@@ -286,7 +269,7 @@ export async function mockRequest(path, options = {}) {
   }
   const scorecardRecalculateMatch = pathname.match(/^\/scorecards\/(\d+)\/recalculate$/);
   if (scorecardRecalculateMatch && method === "POST") {
-    if (!["me", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["me", "linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = scoped(state, actor).find((entry) => entry.id === Number(scorecardRecalculateMatch[1]));
     if (!item) return fail("Agreement not found", 404);
     const snapshot = mockScorecard(state, item, actor);
@@ -307,20 +290,20 @@ export async function mockRequest(path, options = {}) {
     return json(state.templates.filter((item) => (includeArchived || item.status === "active") && (!type || item.agreement_type === type)));
   }
   if (pathname === "/templates" && method === "POST") {
-    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const created = { id: state.next.template++, ...payload, status: "active", original_name: payload.file?.name || null, size_bytes: Number(payload.file?.size || 0), uploaded_by: actor, created_at: now(), updated_at: now() };
     state.templates.push(created); saveState(state); return json(created, 201);
   }
   const templateMatch = pathname.match(/^\/templates\/(\d+)$/);
   if (templateMatch && method === "PATCH") {
-    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = state.templates.find((entry) => entry.id === Number(templateMatch[1])); if (!item) return fail("Template not found", 404);
     Object.assign(item, payload, { updated_at: now() }); saveState(state); return json(item);
   }
-  if (pathname === "/configuration" && method === "GET") return actor.role === "admin" ? json(state.configuration) : fail("Not enough permissions", 403);
+  if (pathname === "/configuration" && method === "GET") return actor.role === "linkages" ? json(state.configuration) : fail("Not enough permissions", 403);
   const configurationMatch = pathname.match(/^\/configuration\/([^/]+)$/);
   if (configurationMatch && method === "PATCH") {
-    if (actor.role !== "admin") return fail("Not enough permissions", 403);
+    if (actor.role !== "linkages") return fail("Not enough permissions", 403);
     const item = state.configuration.find((entry) => entry.key === decodeURIComponent(configurationMatch[1])); if (!item) return fail("Configuration key not found", 404);
     Object.assign(item, payload, { updated_at: now(), updated_by: actor }); saveState(state); return json(item);
   }
@@ -341,7 +324,7 @@ export async function mockRequest(path, options = {}) {
   if (correctionRespondMatch && method === "POST") {
     const correction = state.corrections.find((entry) => entry.id === Number(correctionRespondMatch[1]));
     if (!correction) return fail("Correction not found", 404);
-    const allowed = correction.return_action === "return_correction" ? ["researcher", "linkages", "director_linkages"] : ["legal"];
+    const allowed = correction.return_action === "return_correction" ? ["champion", "linkages"] : ["legal"];
     if (!allowed.includes(actor.role)) return fail("Not enough permissions", 403);
     if (correction.status !== "pending") return fail("This correction is no longer awaiting a response", 409);
     const agreement = state.agreements.find((entry) => entry.id === correction.agreement_id);
@@ -354,49 +337,49 @@ export async function mockRequest(path, options = {}) {
     const correction = state.corrections.find((entry) => entry.id === Number(correctionResolveMatch[1]));
     if (!correction) return fail("Correction not found", 404);
     if (correction.status !== "responded") return fail("A correction can only be resolved after a response", 409);
-    if (actor.role !== "admin" && actor.role !== correction.requested_by.role && !( ["linkages", "director_linkages"].includes(actor.role) && ["linkages", "director_linkages"].includes(correction.requested_by.role))) return fail("Not enough permissions", 403);
+    if (actor.role !== "linkages" && actor.role !== correction.requested_by.role && !( ["linkages"].includes(actor.role) && ["linkages"].includes(correction.requested_by.role))) return fail("Not enough permissions", 403);
     Object.assign(correction, { status: "resolved", resolution_notes: payload.resolution_notes, resolved_by: actor, resolved_at: now(), updated_at: now() });
     saveState(state); return json(correction);
   }
 
-  if (pathname === "/users" && method === "GET") return actor.role === "admin" ? json(state.users) : fail("Not enough permissions", 403);
-  if (pathname === "/users/champions" && method === "GET") return ["admin", "linkages", "director_linkages"].includes(actor.role) ? json(state.users.filter((item) => item.role === "researcher" && item.is_active)) : fail("Not enough permissions", 403);
+  if (pathname === "/users" && method === "GET") return actor.role === "linkages" ? json(state.users) : fail("Not enough permissions", 403);
+  if (pathname === "/users/champions" && method === "GET") return ["linkages"].includes(actor.role) ? json(state.users.filter((item) => item.role === "champion" && item.is_active)) : fail("Not enough permissions", 403);
   if (pathname === "/users" && method === "POST") {
-    if (actor.role !== "admin") return fail("Not enough permissions", 403);
+    if (actor.role !== "linkages") return fail("Not enough permissions", 403);
     if (state.users.some((item) => item.email.toLowerCase() === String(payload.email).toLowerCase())) return fail("Email already exists", 409);
-    const created = { id: state.next.user++, full_name: payload.full_name, email: String(payload.email).toLowerCase(), role: payload.role || "researcher", department: payload.department || null, is_active: true, created_at: now() };
+    const created = { id: state.next.user++, full_name: payload.full_name, email: String(payload.email).toLowerCase(), role: payload.role || "champion", department: payload.department || null, is_active: true, created_at: now() };
     state.users.push(created); credentials[created.email] = payload.password; addAudit(state, actor, "create_user", "user", created.id, null, `role=${created.role}`); saveState(state); return json(created, 201);
   }
   const userMatch = pathname.match(/^\/users\/(\d+)$/);
   if (userMatch && method === "PATCH") {
-    if (actor.role !== "admin") return fail("Not enough permissions", 403);
+    if (actor.role !== "linkages") return fail("Not enough permissions", 403);
     const item = state.users.find((entry) => entry.id === Number(userMatch[1])); if (!item) return fail("User not found", 404);
     Object.assign(item, payload); addAudit(state, actor, "update_user", "user", item.id, null, JSON.stringify(payload)); saveState(state); return json(item);
   }
 
   if (pathname === "/partners" && method === "GET") return json(state.partners);
   if (pathname === "/partners" && method === "POST") {
-    if (!["researcher", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["champion", "linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     if (state.partners.some((item) => item.name === payload.name)) return fail("Partner already exists", 409);
     const created = { id: state.next.partner++, name: payload.name, sector: payload.sector, partner_type: payload.partner_type || "Institution", country: payload.country || "Kenya", contact_name: payload.contact_name || null, contact_email: payload.contact_email || null, legal_counterpart: payload.legal_counterpart || null, liaison: payload.liaison || null, status: payload.status || "active", created_at: now() };
     state.partners.push(created); addAudit(state, actor, "create_partner", "partner", created.id, null, created.name); saveState(state); return json(created, 201);
   }
   const partnerMatch = pathname.match(/^\/partners\/(\d+)$/);
   if (partnerMatch && method === "PUT") {
-    if (!["linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = state.partners.find((entry) => entry.id === Number(partnerMatch[1])); if (!item) return fail("Partner not found", 404);
     Object.assign(item, payload); addAudit(state, actor, "update_partner", "partner", item.id, null, item.name); saveState(state); return json(item);
   }
   const partnerReviewsMatch = pathname.match(/^\/partners\/(\d+)\/reviews$/);
   if (partnerReviewsMatch && method === "GET") {
-    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = state.partners.find((entry) => entry.id === Number(partnerReviewsMatch[1]));
     if (!item) return fail("Partner not found", 404);
     return json(state.partner_reviews.filter((entry) => entry.partner_id === item.id));
   }
   const partnerReviewMatch = pathname.match(/^\/partners\/(\d+)\/review$/);
   if (partnerReviewMatch && method === "POST") {
-    if (!["admin", "linkages", "director_linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
+    if (!["linkages"].includes(actor.role)) return fail("Not enough permissions", 403);
     const item = state.partners.find((entry) => entry.id === Number(partnerReviewMatch[1]));
     if (!item) return fail("Partner not found", 404);
     if (item.status === payload.status) return fail("The partner already has this status", 409);
@@ -417,10 +400,10 @@ export async function mockRequest(path, options = {}) {
     return json(records.map(listShape));
   }
   if (pathname === "/agreements" && method === "POST") {
-    if (!["researcher", "linkages", "director_linkages"].includes(actor.role)) return fail("Only Champions and Linkages officers can create collaboration requests", 403);
+    if (!["champion", "linkages"].includes(actor.role)) return fail("Only Champions and Linkages officers can create collaboration requests", 403);
     const partner = state.partners.find((item) => item.id === Number(payload.partner_id)); if (!partner) return fail("Partner not found", 404);
     let owner = actor;
-    if (["linkages", "director_linkages"].includes(actor.role)) { owner = state.users.find((item) => item.id === Number(payload.champion_user_id) && item.role === "researcher" && item.is_active); if (!owner) return fail("The assigned Champion must be an active JKUAT Champion account", 400); }
+    if (["linkages"].includes(actor.role)) { owner = state.users.find((item) => item.id === Number(payload.champion_user_id) && item.role === "champion" && item.is_active); if (!owner) return fail("The assigned Champion must be an active JKUAT Champion account", 400); }
     const id = state.next.agreement++;
     const created = { id, reference_number: `JKUAT-${String(payload.agreement_type).replace(/[^a-z0-9]/gi, "").toUpperCase()}-2026-${String(id).padStart(4, "0")}`, title: payload.title, agreement_type: payload.agreement_type, purpose: payload.purpose, expected_outcomes: payload.expected_outcomes || null, strategic_alignment: payload.strategic_alignment || null, department: payload.department, stage: "initiation", status: "draft", status_color: "green", next_action: "Complete the request and submit for departmental approval", partner, owner, initiator: actor, confidentiality: payload.confidentiality || "internal", internal_champion: payload.internal_champion || owner.full_name, partner_liaison: payload.partner_liaison || null, effective_date: payload.effective_date || null, expiry_date: payload.expiry_date || null, signing_date: null, date_sent_vc: null, date_sent_partner: null, legal_review_days: null, days_to_expiry: null, documents: [], workflow_events: [{ id: state.next.workflow++, from_stage: null, to_stage: "initiation", action: "create", comment: "Collaboration request created", created_at: now(), actor }], deliverables: [], values: [], created_at: now(), updated_at: now() };
     state.agreements.push(created); addAudit(state, actor, "create_agreement", "agreement", id, null, created.reference_number); saveState(state); return json(created, 201);
@@ -470,7 +453,7 @@ export async function mockRequest(path, options = {}) {
   const readMatch = pathname.match(/^\/notifications\/(\d+)\/read$/);
   if (readMatch && method === "POST") { const item = state.notifications.find((entry) => entry.id === Number(readMatch[1]) && entry.user_id === actor.id); if (!item) return fail("Notification not found", 404); item.is_read = true; saveState(state); return json(item); }
 
-  if (pathname === "/reports/audit" && method === "GET") return ["admin", "auditor", "executive", "director_linkages"].includes(actor.role) ? json(state.audit.slice(0, Number(url.searchParams.get("limit") || 100))) : fail("Not enough permissions", 403);
+  if (pathname === "/reports/audit" && method === "GET") return ["linkages"].includes(actor.role) ? json(state.audit.slice(0, Number(url.searchParams.get("limit") || 100))) : fail("Not enough permissions", 403);
   if (pathname === "/reports/portfolio" && method === "GET") {
     const records = scoped(state, actor);
     const active = records.filter((item) => item.stage === "active" && !["expired", "archived", "closed"].includes(item.status));

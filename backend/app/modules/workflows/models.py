@@ -8,6 +8,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.timeutils import utc_now
 
+# NOTE(rebuild-phase1): WorkflowEvent is reused (per REBUILD_BRIEF.md Section
+# 1, "Do NOT remove") as the generic audit trail for Agreement.status
+# transitions. `from_stage`/`to_stage` now hold *status* values (one of the
+# nine strings in Section 2.2), not the old 17-stage concept — the column
+# names are kept as-is to avoid an unnecessary migration/rename.
 class WorkflowEvent(Base):
     __tablename__ = "workflow_events"
 

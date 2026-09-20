@@ -29,11 +29,8 @@ import { ALL_ROLES, INTERNAL_ROLES } from "./lib/roles.js";
 
 
 const role = (roles, element) => <RoleRoute roles={roles}>{element}</RoleRoute>;
-const agreementCreators = ["researcher", "linkages"];
-// TODO(spec): correctionRoles/reportRoles still reference the "researcher" role name;
-// REBUILD_BRIEF.md Section 2.1 renames this to "champion" in Phase 1 — not renamed here
-// since Phase 0 is subtractive-only.
-const correctionRoles = ["researcher", "linkages", "legal"];
+const agreementCreators = ["champion", "linkages"];
+const correctionRoles = ["champion", "linkages", "legal"];
 const reportRoles = ["linkages", "me"];
 
 export default function App() {
@@ -54,31 +51,31 @@ export default function App() {
         <Route path="/workspace" element={<RoleHomeRedirect />} />
         <Route path="/access-denied" element={<AccountState type="access-denied" />} />
 
-        <Route path="/researcher" element={role(["researcher"], <Dashboard />)} />
+        <Route path="/champion" element={role(["champion"], <Dashboard />)} />
         <Route path="/linkages" element={role(["linkages"], <Dashboard />)} />
         <Route path="/linkages/queue" element={role(["linkages"], <WorkflowQueue mode="linkages" />)} />
         <Route path="/legal" element={role(["legal"], <Dashboard />)} />
         <Route path="/legal/queue" element={role(["legal"], <WorkflowQueue mode="legal" />)} />
         <Route path="/legal/:id" element={role(["legal"], <AgreementDetail defaultTab="corrections" />)} />
-        <Route path="/monitoring" element={role(["me", "researcher", "linkages"], <Monitoring />)} />
-        <Route path="/monitoring/reports" element={role(["me", "researcher", "linkages"], <Monitoring view="reports" />)} />
-        <Route path="/monitoring/reports/:id" element={role(["me", "researcher", "linkages"], <SixMonthReport />)} />
+        <Route path="/monitoring" element={role(["me", "champion", "linkages"], <Monitoring />)} />
+        <Route path="/monitoring/reports" element={role(["me", "champion", "linkages"], <Monitoring view="reports" />)} />
+        <Route path="/monitoring/reports/:id" element={role(["me", "champion", "linkages"], <SixMonthReport />)} />
 
         <Route path="/agreements" element={role(INTERNAL_ROLES, <Agreements />)} />
         <Route path="/agreements/new" element={role(agreementCreators, <AgreementForm />)} />
         <Route path="/agreements/:id" element={role(INTERNAL_ROLES, <AgreementDetail />)} />
-        <Route path="/partners" element={role(["researcher", "linkages"], <Partners />)} />
-        <Route path="/partners/:id" element={role(["researcher", "linkages"], <PartnerDetail />)} />
+        <Route path="/partners" element={role(["champion", "linkages"], <Partners />)} />
+        <Route path="/partners/:id" element={role(["champion", "linkages"], <PartnerDetail />)} />
         <Route path="/partners/:id/verify" element={role(["linkages"], <PartnerVerification />)} />
         <Route path="/corrections" element={role(correctionRoles, <Corrections />)} />
         <Route path="/corrections/:id" element={role(correctionRoles, <CorrectionDetail />)} />
         <Route path="/notifications" element={role(ALL_ROLES, <Notifications />)} />
         <Route path="/reports" element={role(reportRoles, <Reports />)} />
-        {/* TODO(spec): Configuration.jsx is still admin-gated; admin role removed per
-            REBUILD_BRIEF.md Section 1 — Phase 1 must re-home this under `linkages`
-            per Section 5.1's template admin screen. Left as-is here (Phase 0 is
-            subtractive-only for named items; re-gating is not a removal). */}
-        <Route path="/configuration" element={role(["admin"], <Configuration />)} />
+        {/* Re-homed from the removed `admin` role to `linkages` per
+            REBUILD_BRIEF.md Section 1 ("if a capability seems to need an admin
+            role, it belongs to linkages instead") and Section 5.1's
+            linkages-owned template admin screen. */}
+        <Route path="/configuration" element={role(["linkages"], <Configuration />)} />
         <Route path="/help" element={role(ALL_ROLES, <Help />)} />
       </Route>
 

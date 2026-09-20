@@ -1,45 +1,37 @@
 """Agreement domain service.
 
 Holds the business logic for the agreement lifecycle: listing/scoping,
-creation, detail retrieval, updates and workflow-stage transitions. Routers
-in this module should only parse the request, call one of these functions,
-and return/raise based on the result.
+creation, detail retrieval, updates and status transitions. Routers in this
+module should only parse the request, call one of these functions, and
+return/raise based on the result.
+
+Per REBUILD_BRIEF.md Section 2, Phase 1 only needs the Agreement status
+state machine itself (Section 2.4's transition graph) working end to end
+with role gating — comment CRUD, version-upload endpoints and the document
+generation engine are Phase 2/3 work and are intentionally not built here.
 """
 
 from __future__ import annotations
-
-import json
-import uuid
-from datetime import date
 
 from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from ...access import apply_agreement_scope, can_download_document, can_view_agreement, ensure_can_edit_agreement, ensure_can_view_agreement
+from ...access import (
+    apply_agreement_scope,
+    ensure_can_edit_agreement,
+    ensure_can_view_agreement,
+)
 from ...deps import audit
-from .models import Agreement
+from .models import Agreement, AgreementVersion
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
-from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, DocumentOut
-from app.modules.templates.models import Template
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate
 from app.modules.workflows.schemas import TransitionRequest
-# NOTE(rebuild-phase0): ALLOWED_BY_ROLE, ALLOWED_BY_STAGE, COMMENT_REQUIRED_ACTIONS,
-# REQUIRED_STATUS_BY_ACTION, TRANSITIONS and refresh_risk_status used to be imported
-# from ..workflows.service here. They were removed per REBUILD_BRIEF.md Section 1
-# (old 17-stage/11-role workflow engine). transition_agreement() below still
-# references them and will raise NameError until Phase 1 rebuilds the new
-# 4-role/9-status transition model — this is expected, see completion report.
-from ..workflows.service import (
-    create_reference,
-    notify_user,
-    notify_roles,
-)
-from ...timeutils import utc_now
+from ..workflows.service import notify_roles
 
 __all__ = [
-    "create_reference",
     "notify_roles",
     "LOAD_OPTIONS",
     "scoped_query",
@@ -48,53 +40,75 @@ __all__ = [
     "get_agreement_detail",
     "update_agreement",
     "transition_agreement",
+    "add_agreement_version",
+    "available_actions",
 ]
 
 LOAD_OPTIONS = (
     selectinload(Agreement.partner),
-    selectinload(Agreement.owner),
-    selectinload(Agreement.initiator),
-    selectinload(Agreement.reviewed_by),
-    selectinload(Agreement.documents),
+    selectinload(Agreement.champion),
+    selectinload(Agreement.versions).selectinload(AgreementVersion.uploaded_by),
+    selectinload(Agreement.progress_updates),
     selectinload(Agreement.workflow_events).selectinload(WorkflowEvent.actor),
 )
 
-RESEARCHER_EDIT_FIELDS = {
-    "title",
-    "purpose",
-    "expected_outcomes",
-    "strategic_alignment",
-    "department",
-    "confidentiality",
+CHAMPION_EDIT_FIELDS = {"title", "department", "start_date", "end_date"}
+
+# Status transition graph — REBUILD_BRIEF.md Section 2.4. Only the
+# user-triggered edges are exposed via TransitionRequest; the two
+# system/automatic edges (draft_generated -> pending_legal_review on draft
+# generation, and fully_executed -> expired on the daily expiry job) belong
+# to Phase 2/3 and are not reachable through this table.
+# (from_status, action) -> (to_status, allowed_roles)
+TRANSITIONS: dict[tuple[str, str], tuple[str, set[str]]] = {
+    ("pending_legal_review", "request_corrections"): ("returned_for_corrections", {"legal"}),
+    # inferred edge, confirm with Linkages Office (Section 2.4a)
+    ("pending_legal_review", "approve"): ("approved_for_signing", {"legal"}),
+    ("returned_for_corrections", "resubmit_for_verification"): ("pending_legal_verification", {"linkages"}),
+    ("pending_legal_verification", "approve"): ("approved_for_signing", {"legal"}),
+    ("pending_legal_verification", "request_corrections"): ("returned_for_corrections", {"legal"}),
+    ("approved_for_signing", "start_signing"): ("awaiting_signatures", {"linkages"}),
+    ("awaiting_signatures", "mark_fully_executed"): ("fully_executed", {"linkages"}),
+    # TODO(spec): confirm exact renewal semantics with Linkages Office
+    # (Section 2.5) — minimum implemented default: expired -> approved_for_signing.
+    ("expired", "renew"): ("approved_for_signing", {"me"}),
+    ("expired", "archive"): ("archived", {"me"}),
 }
-VC_EDIT_FIELDS = {"date_sent_vc", "date_sent_partner", "signing_date", "next_action"}
+
+
+def _transition_recipient_roles(to_status: str) -> set[str]:
+    """Notification recipients for a status change (kept minimal; the full
+    7-trigger notification table is Phase 3, Section 4.6).
+    """
+    mapping = {
+        "returned_for_corrections": {"linkages"},
+        "pending_legal_verification": {"legal"},
+        "approved_for_signing": {"linkages"},
+        "awaiting_signatures": {"linkages"},
+        "fully_executed": {"legal", "me"},
+        "expired": {"me"},
+        "archived": {"me"},
+    }
+    return mapping.get(to_status, set())
+
+
+def available_actions(user: User, agreement: Agreement) -> list[str]:
+    """Actions this user may currently perform, derived from TRANSITIONS —
+    single source of truth for Section 5.2's `available_actions` field.
+    """
+    return [
+        action
+        for (from_status, action), (_, roles) in TRANSITIONS.items()
+        if from_status == agreement.status and user.role in roles
+    ]
 
 
 def scoped_query(user: User):
     stmt = select(Agreement).options(
         selectinload(Agreement.partner),
-        selectinload(Agreement.owner),
-        selectinload(Agreement.initiator),
-        selectinload(Agreement.reviewed_by),
+        selectinload(Agreement.champion),
     )
     return apply_agreement_scope(stmt, user)
-
-
-def _transition_recipient_roles(action: str) -> set[str]:
-    mapping = {
-        "submit": {"approver", "linkages", "director_linkages"},
-        "approve_department": {"linkages", "director_linkages"},
-        "approve_linkages": {"linkages", "director_linkages"},
-        "send_legal": {"legal", "linkages", "director_linkages"},
-        "approve_legal": {"dvc", "linkages", "director_linkages"},
-        "approve_dvc": {"linkages", "director_linkages"},
-        "return_dvc": {"legal", "linkages", "director_linkages"},
-        "submit_vc": {"vc_office", "linkages", "director_linkages"},
-        "record_vc_signature": {"vc_office", "linkages", "director_linkages"},
-        "mark_signed": {"vc_office", "linkages", "director_linkages"},
-        "activate": {"me", "linkages", "director_linkages", "executive"},
-    }
-    return mapping.get(action, {"linkages", "director_linkages"})
 
 
 def list_agreements(
@@ -102,9 +116,7 @@ def list_agreements(
     user: User,
     *,
     search: str | None,
-    stage: str | None,
     status_filter: str | None,
-    agreement_type: str | None,
     department: str | None,
 ):
     stmt = scoped_query(user)
@@ -113,73 +125,40 @@ def list_agreements(
         stmt = stmt.where(
             or_(
                 Agreement.title.ilike(pattern),
-                Agreement.reference_number.ilike(pattern),
                 Agreement.partner.has(Partner.name.ilike(pattern)),
             )
         )
-    if stage:
-        stmt = stmt.where(Agreement.stage == stage)
     if status_filter:
         stmt = stmt.where(Agreement.status == status_filter)
-    if agreement_type:
-        stmt = stmt.where(Agreement.agreement_type == agreement_type)
     if department:
         stmt = stmt.where(Agreement.department == department)
-    agreements = db.scalars(stmt.order_by(Agreement.updated_at.desc())).all()
-    for item in agreements:
-        refresh_risk_status(item)
-    db.commit()
-    return agreements
+    return db.scalars(stmt.order_by(Agreement.updated_at.desc())).all()
 
 
 def create_agreement(db: Session, user: User, payload: AgreementCreate, request: Request) -> AgreementDetailOut:
-    if user.role not in {"researcher", "linkages", "director_linkages"}:
-        raise HTTPException(status_code=403, detail="Only Champions and Linkages officers can create collaboration requests")
+    # Champion self-initiates (REBUILD_BRIEF.md Section 2.1 / 5.3) — no
+    # code path lets another role create an agreement on a Champion's behalf.
+    if user.role != "champion":
+        raise HTTPException(status_code=403, detail="Only Champions can create collaboration requests")
     partner = db.get(Partner, payload.partner_id)
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
-    if payload.template_id is not None:
-        template = db.get(Template, payload.template_id)
-        if not template or template.status != "active":
-            raise HTTPException(status_code=400, detail="Selected template is not active or does not exist")
-        if template.agreement_type != payload.agreement_type:
-            raise HTTPException(status_code=400, detail="Selected template does not match the agreement type")
-    if payload.effective_date and payload.expiry_date and payload.expiry_date <= payload.effective_date:
-        raise HTTPException(status_code=400, detail="Expiry date must be after the effective date")
-
-    data = payload.model_dump(exclude={"champion_user_id"})
-    owner = user
-    if user.role in {"linkages", "director_linkages"}:
-        if payload.champion_user_id is None:
-            raise HTTPException(status_code=400, detail="Linkages must assign an internal JKUAT Champion")
-        owner = db.get(User, payload.champion_user_id)
-        if not owner or not owner.is_active or owner.role != "researcher":
-            raise HTTPException(status_code=400, detail="The assigned Champion must be an active JKUAT Champion account")
-    if not data.get("internal_champion"):
-        data["internal_champion"] = owner.full_name
+    if payload.end_date <= payload.start_date:
+        raise HTTPException(status_code=400, detail="End date must be after the start date")
 
     agreement = Agreement(
-        **data,
-        reference_number=f"PENDING-{uuid.uuid4().hex}",
-        owner_id=owner.id,
-        initiator_id=user.id,
-        next_action="Complete the request and submit for departmental approval",
+        title=payload.title,
+        department=payload.department,
+        partner_id=payload.partner_id,
+        champion_id=user.id,
+        status="draft_generated",
+        start_date=payload.start_date,
+        end_date=payload.end_date,
     )
     db.add(agreement)
     db.flush()
-    agreement.reference_number = create_reference(payload.agreement_type, agreement.id)
-    db.add(
-        WorkflowEvent(
-            agreement_id=agreement.id,
-            from_stage=None,
-            to_stage="initiation",
-            action="create",
-            comment="Collaboration request created",
-            actor_id=user.id,
-        )
-    )
-    audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.reference_number)
-    notify_roles(db, {"linkages", "director_linkages"}, "New collaboration request", f"{agreement.reference_number} was created by {user.full_name} and assigned to {owner.full_name}.", agreement.id)
+    audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.title)
+    notify_roles(db, {"linkages"}, "New collaboration request", f"{agreement.title} was created by {user.full_name}.", agreement.id)
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
 
@@ -191,12 +170,12 @@ def get_agreement_detail(db: Session, user: User, agreement_id: int) -> Agreemen
     # Conceal out-of-scope records on direct reads. Mutating endpoints retain
     # their explicit 403 responses so callers can distinguish read-only access
     # from an authorization failure when attempting a change.
+    from ...access import can_view_agreement
+
     if not can_view_agreement(user, agreement):
         raise HTTPException(status_code=404, detail="Agreement not found")
-    refresh_risk_status(agreement)
-    db.commit()
     result = AgreementDetailOut.model_validate(agreement)
-    result.documents = [DocumentOut.model_validate(doc) for doc in agreement.documents if can_download_document(user, agreement, doc)]
+    result.available_actions = available_actions(user, agreement)
     return result
 
 
@@ -207,150 +186,104 @@ def update_agreement(db: Session, user: User, agreement_id: int, payload: Agreem
     ensure_can_edit_agreement(user, agreement)
 
     changes = payload.model_dump(exclude_unset=True)
-    if user.role == "researcher":
-        disallowed = set(changes) - RESEARCHER_EDIT_FIELDS
+    if user.role == "champion":
+        disallowed = set(changes) - CHAMPION_EDIT_FIELDS
         if disallowed:
             raise HTTPException(status_code=403, detail=f"Champions cannot update: {', '.join(sorted(disallowed))}")
-    if user.role == "vc_office":
-        disallowed = set(changes) - VC_EDIT_FIELDS
-        if disallowed:
-            raise HTTPException(status_code=403, detail=f"VC Office cannot update: {', '.join(sorted(disallowed))}")
 
-    effective_date = changes.get("effective_date", agreement.effective_date)
-    expiry_date = changes.get("expiry_date", agreement.expiry_date)
-    if effective_date and expiry_date and expiry_date <= effective_date:
-        raise HTTPException(status_code=400, detail="Expiry date must be after the effective date")
+    start_date = changes.get("start_date", agreement.start_date)
+    end_date = changes.get("end_date", agreement.end_date)
+    if start_date and end_date and end_date <= start_date:
+        raise HTTPException(status_code=400, detail="End date must be after the start date")
 
-    old = json.dumps({"title": agreement.title, "stage": agreement.stage, "status": agreement.status})
+    old_title = agreement.title
     for key, value in changes.items():
         setattr(agreement, key, value)
-    audit(db, user, "update_agreement", "agreement", agreement.id, request, old_value=old, new_value=json.dumps(changes, default=str))
+    audit(db, user, "update_agreement", "agreement", agreement.id, request, old_value=old_title, new_value=agreement.title)
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
 
 
 def transition_agreement(db: Session, user: User, agreement_id: int, payload: TransitionRequest, request: Request) -> AgreementDetailOut:
-    agreement = db.scalar(
-        select(Agreement)
-        .where(Agreement.id == agreement_id)
-        .options(selectinload(Agreement.documents))
-    )
+    agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
     ensure_can_view_agreement(user, agreement)
 
-    allowed_roles = ALLOWED_BY_ROLE[payload.action]
+    key = (agreement.status, payload.action)
+    transition = TRANSITIONS.get(key)
+    if not transition:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Action '{payload.action}' is not valid while the agreement is '{agreement.status}'",
+        )
+    to_status, allowed_roles = transition
     if user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail=f"Role '{user.role}' cannot perform '{payload.action}'")
-    if agreement.stage not in ALLOWED_BY_STAGE[payload.action]:
-        raise HTTPException(status_code=400, detail=f"Action '{payload.action}' is not valid while the agreement is in '{agreement.stage}'")
 
-    required_statuses = REQUIRED_STATUS_BY_ACTION.get(payload.action)
-    if required_statuses and agreement.status not in required_statuses:
-        expected = ", ".join(sorted(required_statuses))
-        raise HTTPException(status_code=400, detail=f"Action '{payload.action}' requires status: {expected}")
-    if payload.action in COMMENT_REQUIRED_ACTIONS and not (payload.comment or "").strip():
-        raise HTTPException(status_code=400, detail="A reason/comment is required for this action")
+    from_status = agreement.status
+    agreement.status = to_status
+    if to_status == "archived":
+        agreement.archived = True
 
-    if payload.action == "activate":
-        missing = []
-        if not agreement.signing_date:
-            missing.append("signing date")
-        if not agreement.effective_date:
-            missing.append("effective date")
-        if not agreement.expiry_date:
-            missing.append("expiry date")
-        if not agreement.internal_champion:
-            missing.append("internal Champion")
-        if not agreement.partner_liaison:
-            missing.append("partner liaison")
-        if not agreement.deliverables:
-            missing.append("at least one M&E deliverable target")
-        has_signed_document = any(doc.document_type == "signed" and doc.is_official for doc in agreement.documents)
-        if not has_signed_document:
-            missing.append("official signed agreement document")
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Activation requires: {', '.join(missing)}")
-        if agreement.expiry_date <= agreement.effective_date:
-            raise HTTPException(status_code=400, detail="Expiry date must be after the effective date")
-
-    from_stage = agreement.stage
-    new_stage, new_status, color, next_action = TRANSITIONS[payload.action]
-    agreement.stage = new_stage
-    agreement.status = new_status
-    agreement.status_color = color
-    agreement.next_action = next_action
-    now = utc_now()
-    if payload.action == "submit":
-        agreement.submitted_at = now
-        if not agreement.assigned_approver_id:
-            approver = db.scalar(
-                select(User).where(
-                    User.role == "approver",
-                    User.is_active.is_(True),
-                    User.department == agreement.department,
-                ).order_by(User.id)
-            ) or db.scalar(select(User).where(User.role == "approver", User.is_active.is_(True)).order_by(User.id))
-            if approver:
-                agreement.assigned_approver_id = approver.id
-        if not agreement.assigned_linkages_id:
-            linkages_user = db.scalar(select(User).where(User.role == "linkages", User.is_active.is_(True)).order_by(User.id))
-            if linkages_user:
-                agreement.assigned_linkages_id = linkages_user.id
-    elif payload.action == "send_legal":
-        if not agreement.legal_review_started_at:
-            agreement.legal_review_started_at = now
-        if not agreement.legal_reviewer_id:
-            legal_user = db.scalar(select(User).where(User.role == "legal", User.is_active.is_(True)).order_by(User.id))
-            if legal_user:
-                agreement.legal_reviewer_id = legal_user.id
-    elif payload.action == "submit_vc" and not agreement.date_sent_vc:
-        agreement.date_sent_vc = date.today()
-    elif payload.action == "mark_signed" and not agreement.signing_date:
-        agreement.signing_date = date.today()
-    elif payload.action == "activate":
-        agreement.activated_at = now
-
-    workflow_event = WorkflowEvent(
+    db.add(
+        WorkflowEvent(
             agreement_id=agreement.id,
-            from_stage=from_stage,
-            to_stage=new_stage,
+            from_stage=from_status,
+            to_stage=to_status,
             action=payload.action,
             comment=(payload.comment or "").strip() or None,
             actor_id=user.id,
         )
-    db.add(workflow_event)
-    db.flush()
-    if payload.action in {"return_correction", "return_dvc"}:
-        from app.modules.workflows.service import create_correction
+    )
+    audit(db, user, f"transition_{payload.action}", "agreement", agreement.id, request, old_value=from_status, new_value=to_status)
 
-        create_correction(
-            db,
-            agreement,
-            workflow_event,
-            user,
-            exact_item=payload.exact_item,
-            requested_change=payload.requested_change,
-            details=payload.details,
-        )
-    audit(db, user, f"workflow_{payload.action}", "agreement", agreement.id, request, old_value=from_stage, new_value=new_stage)
-    owner = db.get(User, agreement.owner_id)
-    if owner:
-        notify_user(
-            db,
-            owner,
-            "Agreement status updated",
-            f"{agreement.reference_number} moved to {new_stage.replace('_', ' ')}.",
-            agreement.id,
-            color,
-        )
+    champion = db.get(User, agreement.champion_id)
+    if champion and champion.id != user.id:
+        from ..workflows.service import notify_user
+
+        notify_user(db, champion, "Agreement status updated", f"{agreement.title} moved to {to_status.replace('_', ' ')}.", agreement.id)
     notify_roles(
         db,
-        _transition_recipient_roles(payload.action),
+        _transition_recipient_roles(to_status),
         "Workflow update",
-        f"{agreement.reference_number}: {payload.action.replace('_', ' ')} by {user.full_name}.",
+        f"{agreement.title}: {payload.action.replace('_', ' ')} by {user.full_name}.",
         agreement.id,
-        color,
     )
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
+
+
+def add_agreement_version(
+    db: Session,
+    agreement: Agreement,
+    *,
+    file: str,
+    uploaded_by: User,
+    is_final: bool = False,
+) -> AgreementVersion:
+    """Create a new AgreementVersion, enforcing the two Section 2.6 invariants:
+
+    1. At most one AgreementVersion per Agreement has is_final=true.
+    2. Once an Agreement has a final version, no further AgreementVersion can
+       be created for it.
+
+    This is a data-layer building block for Phase 2/3's re-upload / signing
+    endpoints; it is not itself exposed over HTTP in Phase 1.
+    """
+    existing_final = db.scalar(
+        select(AgreementVersion).where(AgreementVersion.agreement_id == agreement.id, AgreementVersion.is_final.is_(True))
+    )
+    if existing_final is not None:
+        raise ValueError("This agreement already has a final version; no further versions can be created")
+
+    version = AgreementVersion(
+        agreement_id=agreement.id,
+        file=file,
+        uploaded_by_id=uploaded_by.id,
+        status_at_time=agreement.status,
+        is_final=is_final,
+    )
+    db.add(version)
+    db.flush()
+    return version

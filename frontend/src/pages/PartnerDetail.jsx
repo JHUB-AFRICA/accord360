@@ -20,7 +20,7 @@ export default function PartnerDetail() {
   const [agreements, setAgreements] = useState([]);
   const [error, setError] = useState("");
   const navigate = useNavigate();
-  const canVerify = ["linkages", "director_linkages"].includes(user.role);
+  const canVerify = ["linkages"].includes(user.role);
 
   const load = useCallback(() => {
     setError("");

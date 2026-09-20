@@ -35,7 +35,7 @@ def list_users(db: Session) -> list[User]:
 
 def list_champions(db: Session) -> list[User]:
     return db.scalars(
-        select(User).where(User.role == "researcher", User.is_active.is_(True)).order_by(User.full_name)
+        select(User).where(User.role == "champion", User.is_active.is_(True)).order_by(User.full_name)
     ).all()
 
 
