@@ -37,7 +37,7 @@ export default function CorrectionDetail() {
     if (!response.trim()) { setError("Add a response describing how the requested correction was addressed."); return; }
     setSubmitting(true); setError("");
     try {
-      if (replacement) await uploadAgreementDocument(record.agreement_id, { file: replacement, documentType: "supporting", version: "1.0", confidentiality: "internal", isOfficial: false });
+      if (replacement && user.role === "linkages") await uploadAgreementDocument(record.agreement_id, { file: replacement, documentType: "supporting", version: "1.0", confidentiality: "internal", isOfficial: false });
       setRecord(await respondCorrection(record.id, response.trim()));
       setReplacement(null); setResponse(""); setMessage("Correction response recorded and the agreement advanced through its workflow.");
     } catch (requestError) { setError(requestError.message); } finally { setSubmitting(false); }
@@ -72,7 +72,7 @@ export default function CorrectionDetail() {
         {record.response_text && <div className="inline-alert info"><ShieldCheck size={18} /><div><strong>Response recorded</strong><p>{record.response_text}</p></div></div>}
         {record.status === "pending" && <>
           <label className="form-field"><span>Response details *</span><textarea rows="7" value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Explain the exact field, clause or document changed and identify the replacement version." /></label>
-          <label className="upload-zone compact-upload-zone"><FileUp size={22} /><strong>{replacement ? replacement.name : "Attach replacement document"}</strong><span>Optional. The backend accepts supported document types up to 25 MB.</span><input type="file" onChange={(event) => setReplacement(event.target.files?.[0] || null)} /></label>
+          {user.role === "linkages" && <label className="upload-zone compact-upload-zone"><FileUp size={22} /><strong>{replacement ? replacement.name : "Attach replacement document"}</strong><span>Optional. Linkages may attach a corrected supporting document.</span><input type="file" onChange={(event) => setReplacement(event.target.files?.[0] || null)} /></label>}
         </>}
         {canRespond && <button className="primary-button full-width" disabled={submitting} onClick={submitResponse}><Send size={17} /> {submitting ? "Submitting…" : "Submit correction response"}</button>}
         {canResolve && <><label className="form-field"><span>Resolution notes *</span><textarea rows="5" value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Confirm the correction was reviewed and resolved." /></label><button className="primary-button full-width" disabled={submitting} onClick={submitResolution}><ShieldCheck size={17} /> {submitting ? "Resolving…" : "Resolve correction"}</button></>}

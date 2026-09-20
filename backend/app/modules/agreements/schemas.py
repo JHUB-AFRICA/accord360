@@ -60,6 +60,15 @@ class CommentOut(ORMModel):
     timestamp: datetime
 
 
+class CommentCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=10000)
+    section_reference: str | None = Field(default=None, max_length=300)
+
+
+class CommentUpdate(BaseModel):
+    status: Literal["open", "resolved"]
+
+
 class ProgressUpdateOut(ORMModel):
     id: int
     agreement_id: int
@@ -67,6 +76,11 @@ class ProgressUpdateOut(ORMModel):
     notes: str
     submitted_by: UserOut
     created_at: datetime
+
+
+class ProgressUpdateCreate(BaseModel):
+    quarter: str = Field(min_length=7, max_length=20)
+    notes: str = Field(min_length=1, max_length=20000)
 
 
 class AgreementListOut(ORMModel):

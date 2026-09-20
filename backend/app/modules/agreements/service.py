@@ -18,21 +18,23 @@ from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 from uuid import uuid4
+from dateutil.relativedelta import relativedelta
 
 from ...access import (
     apply_agreement_scope,
     ensure_can_edit_agreement,
     ensure_can_view_agreement,
+    can_create_comment,
 )
 from ...deps import audit
 from ...core.config import settings
-from .models import Agreement, AgreementVersion
+from .models import Agreement, AgreementVersion, Comment, ProgressUpdate
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
 from app.modules.templates import service as template_service
 from app.modules.templates.models import Template
-from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, CommentCreate, CommentUpdate, ProgressUpdateCreate
 from app.modules.workflows.schemas import TransitionRequest
 from ..workflows.service import notify_roles
 
@@ -48,6 +50,11 @@ __all__ = [
     "add_agreement_version",
     "upload_initial_draft",
     "available_actions",
+    "create_comment",
+    "list_comments",
+    "update_comment",
+    "create_progress_update",
+    "list_progress_updates",
 ]
 
 LOAD_OPTIONS = (
@@ -92,6 +99,8 @@ def _transition_recipient_roles(to_status: str) -> set[str]:
         "pending_legal_verification": {"legal"},
         "approved_for_signing": {"linkages"},
         "awaiting_signatures": {"linkages"},
+        # The agreement's own Researcher is notified explicitly at the final
+        # upload because notify_roles cannot scope a role to one agreement.
         "fully_executed": {"legal", "me"},
         "expired": {"me"},
         "archived": {"me"},
@@ -268,6 +277,10 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     to_status, allowed_roles = transition
     if user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail=f"Role '{user.role}' cannot perform '{payload.action}'")
+    if payload.action == "mark_fully_executed":
+        raise HTTPException(status_code=409, detail="Upload the final signed scan to complete execution")
+    if payload.action == "resubmit_for_verification":
+        raise HTTPException(status_code=409, detail="Upload the corrected agreement draft to resubmit for verification")
 
     from_status = agreement.status
     agreement.status = to_status
@@ -286,11 +299,6 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     )
     audit(db, user, f"transition_{payload.action}", "agreement", agreement.id, request, old_value=from_status, new_value=to_status)
 
-    researcher = db.get(User, agreement.researcher_id)
-    if researcher and researcher.id != user.id:
-        from ..workflows.service import notify_user
-
-        notify_user(db, researcher, "Agreement status updated", f"{agreement.title} moved to {to_status.replace('_', ' ')}.", agreement.id)
     notify_roles(
         db,
         _transition_recipient_roles(to_status),
@@ -356,8 +364,8 @@ def upload_initial_draft(
     ensure_can_view_agreement(user, agreement)
     if user.role != "linkages":
         raise HTTPException(status_code=403, detail="Only Linkages can upload the legal agreement draft")
-    if agreement.status != "draft_generated":
-        raise HTTPException(status_code=409, detail="The legal draft can only be uploaded from draft_generated")
+    if agreement.status not in {"draft_generated", "returned_for_corrections", "awaiting_signatures"}:
+        raise HTTPException(status_code=409, detail="This agreement is locked or is not ready for a Linkages upload")
     if not content:
         raise HTTPException(status_code=400, detail="The agreement draft file is required")
 
@@ -369,23 +377,146 @@ def upload_initial_draft(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
 
-    add_agreement_version(db, agreement, file=stored_name, uploaded_by=user)
     from_status = agreement.status
-    agreement.status = "pending_legal_review"
+    is_final = from_status == "awaiting_signatures"
+    add_agreement_version(db, agreement, file=stored_name, uploaded_by=user, is_final=is_final)
+    if from_status == "draft_generated":
+        agreement.status = "pending_legal_review"
+        notification_roles = {"legal"}
+        notification_title = "Draft ready for Legal review"
+        notification_message = f"{agreement.title} is ready for Legal review."
+    elif from_status == "returned_for_corrections":
+        agreement.status = "pending_legal_verification"
+        notification_roles = {"legal"}
+        notification_title = "Corrected draft ready for Legal verification"
+        notification_message = f"{agreement.title} has been resubmitted for Legal verification."
+    else:
+        agreement.status = "fully_executed"
+        # This is the only runtime write site for expiry_alert_date. Renewal
+        # semantics remain the explicit Phase 1 TODO and are not inferred here.
+        agreement.expiry_alert_date = agreement.end_date - relativedelta(months=6)
+        agreement.expiry_notified = False
+        notification_roles = {"legal", "me"}
+        notification_title = "Agreement fully executed"
+        notification_message = f"{agreement.title} has been fully executed."
     db.add(
         WorkflowEvent(
             agreement_id=agreement.id,
             from_stage=from_status,
             to_stage=agreement.status,
-            action="upload_legal_draft",
-            comment="Linkages uploaded the agreement draft for Legal review.",
+            action="upload_final_signed_scan" if is_final else "upload_legal_draft",
+            comment="Linkages uploaded the final signed scan." if is_final else "Linkages uploaded the agreement draft.",
             actor_id=user.id,
         )
     )
     audit(db, user, "upload_legal_draft", "agreement", agreement.id, request, old_value=from_status, new_value=agreement.status)
-    notify_roles(db, {"legal"}, "Draft ready for Legal review", f"{agreement.title} is ready for Legal review.", agreement.id)
+    notify_roles(db, notification_roles, notification_title, notification_message, agreement.id)
+    if is_final:
+        researcher = db.get(User, agreement.researcher_id)
+        if researcher:
+            from ..workflows.service import notify_user
+
+            notify_user(db, researcher, notification_title, notification_message, agreement.id)
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
+
+
+def _get_version_with_agreement(db: Session, version_id: int) -> AgreementVersion:
+    version = db.scalar(
+        select(AgreementVersion)
+        .where(AgreementVersion.id == version_id)
+        .options(selectinload(AgreementVersion.agreement))
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Agreement version not found")
+    return version
+
+
+def list_comments(db: Session, user: User, version_id: int) -> list[Comment]:
+    version = _get_version_with_agreement(db, version_id)
+    ensure_can_view_agreement(user, version.agreement)
+    if user.role not in {"linkages", "legal"}:
+        raise HTTPException(status_code=403, detail="Comments are internal to Linkages and Legal")
+    return db.scalars(
+        select(Comment)
+        .where(Comment.version_id == version_id)
+        .options(selectinload(Comment.author))
+        .order_by(Comment.timestamp)
+    ).all()
+
+
+def create_comment(db: Session, user: User, version_id: int, payload: CommentCreate, request: Request) -> Comment:
+    version = _get_version_with_agreement(db, version_id)
+    ensure_can_view_agreement(user, version.agreement)
+    if user.role != "legal":
+        raise HTTPException(status_code=403, detail="Only Legal can create comments")
+    if version.is_final or version.agreement.status == "fully_executed":
+        raise HTTPException(status_code=409, detail="Fully executed agreements are locked")
+    if not can_create_comment(user, version.agreement):
+        raise HTTPException(status_code=409, detail="Comments are not allowed at this workflow status")
+    comment = Comment(
+        version_id=version_id,
+        author_id=user.id,
+        text=payload.text.strip(),
+        section_reference=payload.section_reference,
+        status="open",
+    )
+    db.add(comment)
+    db.flush()
+    audit(db, user, "create_comment", "comment", comment.id, request, new_value=comment.text)
+    db.commit()
+    db.refresh(comment)
+    return comment
+
+
+def update_comment(db: Session, user: User, comment_id: int, payload: CommentUpdate, request: Request) -> Comment:
+    comment = db.scalar(select(Comment).where(Comment.id == comment_id).options(selectinload(Comment.version).selectinload(AgreementVersion.agreement)))
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    ensure_can_view_agreement(user, comment.version.agreement)
+    if user.role != "legal":
+        raise HTTPException(status_code=403, detail="Only Legal can update comments")
+    if comment.version.is_final or comment.version.agreement.status == "fully_executed":
+        raise HTTPException(status_code=409, detail="Fully executed agreements are locked")
+    if comment.version.agreement.status not in {"pending_legal_review", "pending_legal_verification"}:
+        raise HTTPException(status_code=409, detail="Comments are read-only at this workflow status")
+    old_status = comment.status
+    comment.status = payload.status
+    audit(db, user, "update_comment", "comment", comment.id, request, old_value=old_status, new_value=comment.status)
+    db.commit()
+    db.refresh(comment)
+    return comment
+
+
+def create_progress_update(db: Session, user: User, agreement_id: int, payload: ProgressUpdateCreate, request: Request) -> ProgressUpdate:
+    agreement = db.get(Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    if user.role != "researcher" or agreement.researcher_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the agreement's Researcher can submit progress updates")
+    if agreement.status not in {"fully_executed", "expired"}:
+        raise HTTPException(status_code=400, detail="Progress updates are allowed only for fully executed or expired agreements")
+    update = ProgressUpdate(
+        agreement_id=agreement_id,
+        quarter=payload.quarter,
+        notes=payload.notes.strip(),
+        submitted_by_id=user.id,
+    )
+    db.add(update)
+    db.flush()
+    audit(db, user, "create_progress_update", "progress_update", update.id, request, new_value=update.quarter)
+    db.commit()
+    db.refresh(update)
+    return update
+
+
+def list_progress_updates(db: Session, user: User, agreement_id: int | None = None) -> list[ProgressUpdate]:
+    if user.role != "me":
+        raise HTTPException(status_code=403, detail="Only M&E can list all progress updates")
+    statement = select(ProgressUpdate).options(selectinload(ProgressUpdate.submitted_by)).order_by(ProgressUpdate.created_at.desc())
+    if agreement_id is not None:
+        statement = statement.where(ProgressUpdate.agreement_id == agreement_id)
+    return db.scalars(statement).all()
 
 
 def get_agreement_for_version(db: Session, user: User, agreement_id: int, version_id: int) -> AgreementVersion:

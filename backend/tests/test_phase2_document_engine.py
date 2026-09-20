@@ -21,6 +21,7 @@ from docx import Document
 from fastapi import HTTPException
 
 from app.core.security import hash_password
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.main import app  # noqa: F401
 from app.models import Agreement, FieldDefinition, Partner, Template, User
@@ -138,7 +139,7 @@ def test_researcher_submission_generates_intake_and_linkages_upload_routes_to_le
         assert agreement.status == "draft_generated"
         assert len(agreement.versions) == 1
         assert agreement.versions[0].file.startswith("generated-intake/")
-        generated_path = Path(os.environ["UPLOAD_DIR"]) / agreement.versions[0].file
+        generated_path = settings.upload_path / agreement.versions[0].file
         assert generated_path.is_file()
         assert "Research collaboration" in "\n".join(paragraph.text for paragraph in Document(generated_path).paragraphs)
         linkages_id, legal_id = linkages.id, legal.id

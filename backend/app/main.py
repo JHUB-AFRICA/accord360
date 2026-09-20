@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,13 +14,14 @@ from .core.config import settings
 from .db.base import Base
 from .db.session import engine
 from .logging_config import configure_logging
-from .modules.agreements.router import router as agreements_router
+from .modules.agreements.router import comments_router, progress_router, router as agreements_router
 from .modules.partners.router import router as partners_router
 from .modules.users.router import auth_router, router as users_router
 from .modules.workflows.router import dashboard_router, notifications_router, reports_router
 from .modules.templates.router import router as templates_router
 from .modules.configuration.router import router as configuration_router
 from .seed import seed
+from .modules.agreements.expiry import run_daily_expiry_check
 
 configure_logging()
 logger = logging.getLogger("accord360.api")
@@ -30,10 +32,26 @@ if settings.environment == "test":
 if settings.seed_demo_data:
     seed(reset=False, demo=True)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.add_job(run_daily_expiry_check, "interval", days=1, id="daily-expiry-check", replace_existing=True)
+    scheduler.start()
+    logger.info("daily_expiry_scheduler_started job_id=daily-expiry-check")
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+        logger.info("daily_expiry_scheduler_stopped")
+
 app = FastAPI(
     title="Accord 360 API",
     description="MoU / CRA / CA lifecycle, workflow, M&E and partnership performance platform.",
     version="1.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -77,7 +95,7 @@ async def request_logging_middleware(request, call_next):
         if response is not None:
             response.headers["X-Request-ID"] = request_id
 
-for router in [auth_router, users_router, partners_router, agreements_router, templates_router, configuration_router, dashboard_router, notifications_router, reports_router]:
+for router in [auth_router, users_router, partners_router, agreements_router, comments_router, progress_router, templates_router, configuration_router, dashboard_router, notifications_router, reports_router]:
     app.include_router(router, prefix="/api")
 
 logger.info(

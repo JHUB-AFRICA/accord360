@@ -10,7 +10,8 @@ from ...timeutils import utc_now
 
 # NOTE(rebuild-phase0/1): The old 17-stage/11-role workflow engine
 # (STAGE_ORDER, TRANSITIONS, ALLOWED_BY_STAGE, ALLOWED_BY_ROLE,
-# REQUIRED_STATUS_BY_ACTION, COMMENT_REQUIRED_ACTIONS, refresh_risk_status,
+# REQUIRED_STATUS_BY_ACTION, COMMENT_REQUIRED_ACTIONS, and read-time risk
+# mutation helpers,
 # create_reference, and the Correction CRUD helpers that used to live here)
 # has been removed per REBUILD_BRIEF.md Section 1. The new 4-role/9-status
 # transition graph lives in app.modules.agreements.service.TRANSITIONS

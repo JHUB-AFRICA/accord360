@@ -456,7 +456,7 @@ more, no fewer — verify each one fires by writing a test that asserts a
 
 | Trigger | Recipients |
 |---|---|
-| Draft generated (draft_generated → pending_legal_review) | `legal` |
+| Linkages legal draft uploaded (`draft_generated` → `pending_legal_review`) | `legal` |
 | Legal requests changes (→ returned_for_corrections) | `linkages` |
 | Corrected draft resubmitted (→ pending_legal_verification) | `legal` |
 | Legal approves (→ approved_for_signing) | `linkages` |
