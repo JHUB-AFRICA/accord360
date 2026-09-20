@@ -8,24 +8,21 @@ from pathlib import Path
 from sqlalchemy import delete, select
 
 from .db.session import SessionLocal
-from .models import Agreement, AuditLog, Deliverable, Document, Notification, Partner, Template, User, ValueRecord, WorkflowEvent
+from .models import Agreement, AuditLog, Document, Notification, Partner, Template, User, WorkflowEvent
 from .core.config import settings
 from .core.security import hash_password
 from .timeutils import utc_now
 
 
+# NOTE(rebuild-phase0): admin, approver, director_linkages, dvc, vc_office,
+# executive and auditor accounts were removed per REBUILD_BRIEF.md Section 1 —
+# only the four surviving roles (champion/researcher, linkages, legal, me) are
+# seeded now. Renaming "researcher" -> "champion" is Phase 1 work.
 DEFAULT_USERS = [
-    ("System Administrator", "admin@accord360.app", "Admin@123", "admin", "JHUB Africa"),
     ("JKUAT Champion", "researcher@accord360.app", "Research@123", "researcher", "Computing"),
-    ("Faculty Approver", "approver@accord360.app", "Approver@123", "approver", "Computing"),
     ("Linkages Officer", "linkages@accord360.app", "Linkages@123", "linkages", "Directorate of Linkages"),
-    ("Director of Linkages", "director.linkages@accord360.app", "Director@123", "director_linkages", "Directorate of Linkages"),
     ("Legal Reviewer", "legal@accord360.app", "Legal@123", "legal", "Legal Office"),
-    ("DVC RPE", "dvc.rpe@accord360.app", "DvcRpe@123", "dvc", "DVC RPE Office"),
-    ("VC Office Signing Desk", "vc.office@accord360.app", "VcOffice@123", "vc_office", "Vice Chancellor Office"),
-    ("Executive Viewer", "executive@accord360.app", "Executive@123", "executive", "RPE"),
     ("M&E Officer", "me@accord360.app", "Measure@123", "me", "M&E"),
-    ("Audit Reviewer", "auditor@accord360.app", "Auditor@123", "auditor", "Internal Audit"),
 ]
 
 SEEDED_TEMPLATES = [
@@ -99,7 +96,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
     db = SessionLocal()
     try:
         if reset:
-            for model in [Notification, AuditLog, Deliverable, ValueRecord, Document, WorkflowEvent, Agreement, Partner, Template, User]:
+            for model in [Notification, AuditLog, Document, WorkflowEvent, Agreement, Partner, Template, User]:
                 db.execute(delete(model))
             db.commit()
 
@@ -118,21 +115,12 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 db.flush()
             users[role] = user
 
-        seed_templates(db, users["admin"])
+        seed_templates(db, users["linkages"])
 
-        # Lightweight compatibility update for databases created before the DVC/VC role gates.
-        legacy_ready = db.scalars(select(Agreement).where(Agreement.status == "ready_for_signing")).all()
-        for agreement in legacy_ready:
-            agreement.stage = "dvc_approval"
-            agreement.status = "legal_approved"
-            agreement.status_color = "green"
-            agreement.next_action = "DVC RPE endorsement required"
-        legacy_signing = db.scalars(select(Agreement).where(Agreement.status == "awaiting_signature")).all()
-        for agreement in legacy_signing:
-            agreement.stage = "validation_signing"
-            agreement.status = "awaiting_vc_signature"
-            agreement.status_color = "yellow"
-            agreement.next_action = "VC Office to record signature milestone"
+        # NOTE(rebuild-phase0): the legacy compatibility block that migrated
+        # old "ready_for_signing"/"awaiting_signature" rows into the rejected
+        # 17-stage DVC/VC workflow was removed along with that workflow. The
+        # new 9-status model's migration path is Phase 1 work.
 
         if demo and not db.scalar(select(Agreement.id).limit(1)):
             partner_a = Partner(
@@ -171,7 +159,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="Update quarterly M&E outputs",
                 owner_id=users["researcher"].id,
                 partner_id=partner_a.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 internal_champion="Dr. Research Champion",
@@ -195,7 +182,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="Legal reviewer to complete vetting",
                 owner_id=users["researcher"].id,
                 partner_id=partner_b.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 legal_review_started_at=utc_now() - timedelta(days=8),
@@ -215,7 +201,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="Department/faculty approver to review academic fit",
                 owner_id=users["researcher"].id,
                 partner_id=partner_b.id,
-                assigned_approver_id=users["approver"].id,
                 submitted_at=utc_now() - timedelta(days=4),
             )
             dvc_queue = Agreement(
@@ -232,7 +217,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="DVC RPE endorsement required",
                 owner_id=users["researcher"].id,
                 partner_id=partner_a.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 submitted_at=utc_now() - timedelta(days=20),
@@ -252,7 +236,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="Linkages to submit the endorsed package to VC Office",
                 owner_id=users["researcher"].id,
                 partner_id=partner_b.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 submitted_at=utc_now() - timedelta(days=25),
@@ -271,7 +254,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="VC Office to record signature milestone",
                 owner_id=users["researcher"].id,
                 partner_id=partner_a.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 date_sent_vc=date.today() - timedelta(days=3),
@@ -290,7 +272,6 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 next_action="Submit the next six-month M&E report",
                 owner_id=users["researcher"].id,
                 partner_id=partner_b.id,
-                assigned_approver_id=users["approver"].id,
                 assigned_linkages_id=users["linkages"].id,
                 legal_reviewer_id=users["legal"].id,
                 internal_champion="JKUAT Champion",
@@ -303,16 +284,15 @@ def seed(reset: bool = False, demo: bool = True) -> None:
             db.add_all([active, pipeline, department_queue, dvc_queue, vc_queue, signing_queue, dormant])
             db.flush()
 
+            # NOTE(rebuild-phase0): demo Deliverable/ValueRecord rows were
+            # removed along with those models (REBUILD_BRIEF.md Section 1).
             db.add_all(
                 [
-                    Deliverable(agreement_id=active.id, deliverable_type="Internships", target_value=10, actual_value=6, reporting_period="2026"),
-                    Deliverable(agreement_id=active.id, deliverable_type="Publications", target_value=4, actual_value=2, reporting_period="2026"),
-                    ValueRecord(agreement_id=active.id, value_type="Research grant", amount=2_500_000, currency="KES", source="Joint project", reporting_period="2026"),
                     WorkflowEvent(agreement_id=active.id, from_stage="validation_signing", to_stage="active", action="activate", comment="Agreement activated after full signature.", actor_id=users["linkages"].id),
                     WorkflowEvent(agreement_id=pipeline.id, from_stage="linkages_review", to_stage="legal_review", action="send_legal", comment="Request passed completeness and strategic-fit review.", actor_id=users["linkages"].id),
                     WorkflowEvent(agreement_id=department_queue.id, from_stage="initiation", to_stage="department_approval", action="submit", comment="Champion submitted the request.", actor_id=users["researcher"].id),
                     WorkflowEvent(agreement_id=dvc_queue.id, from_stage="legal_review", to_stage="dvc_approval", action="approve_legal", comment="Legal version approved and locked.", actor_id=users["legal"].id),
-                    WorkflowEvent(agreement_id=vc_queue.id, from_stage="dvc_approval", to_stage="vc_submission", action="approve_dvc", comment="DVC RPE endorsed the package.", actor_id=users["dvc"].id),
+                    WorkflowEvent(agreement_id=vc_queue.id, from_stage="dvc_approval", to_stage="vc_submission", action="approve_dvc", comment="DVC RPE endorsed the package.", actor_id=users["linkages"].id),
                     WorkflowEvent(agreement_id=signing_queue.id, from_stage="vc_submission", to_stage="validation_signing", action="submit_vc", comment="Endorsed package submitted to VC Office.", actor_id=users["linkages"].id),
                 ]
             )

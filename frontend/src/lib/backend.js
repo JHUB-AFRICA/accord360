@@ -22,10 +22,8 @@ export const BACKEND_CAPABILITIES = Object.freeze({
   notifications: true,
   csvReports: true,
   audit: true,
-  partnerApplications: true,
   corrections: true,
   partnerReviewHistory: true,
-  partnerAccounts: true,
   passwordReset: false,
   templates: true,
   configuration: true,
@@ -50,16 +48,6 @@ function cleanParams(params = {}) {
 export async function loginRequest(email, password) {
   const response = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
   return { ...response, user: normalizeUser(response.user) };
-}
-
-export async function registerPartnerApplication(payload) {
-  const formData = new FormData();
-  Object.entries(payload).forEach(([key, value]) => {
-    if (key === "documents") return;
-    if (value !== undefined && value !== null) formData.append(key, String(value));
-  });
-  (payload.documents || []).forEach((file) => formData.append("files", file));
-  return api("/auth/register-partner", { method: "POST", body: formData });
 }
 
 export async function getCurrentUser() {
@@ -154,30 +142,6 @@ export async function createReferenceData(payload) {
 
 export async function updateReferenceData(id, payload) {
   return api(`/reference-data/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-
-export async function acceptPartnerInvitation(token, password) {
-  return api(`/auth/partner-invitations/${encodeURIComponent(token)}/accept`, { method: "POST", body: JSON.stringify({ password }) });
-}
-
-export async function invitePartnerUser(partnerId, payload) {
-  return api(`/partners/${Number(partnerId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
-}
-
-export async function getPartnerWorkspace() {
-  return api("/partner/me");
-}
-
-export async function listPartnerAgreements() {
-  return api("/partner/agreements");
-}
-
-export async function getPartnerAgreement(id) {
-  return api(`/partner/agreements/${Number(id)}`);
-}
-
-export async function downloadPartnerDocument(agreementId, documentId, fallbackName = "partner-document") {
-  return downloadFile(`/partner/agreements/${Number(agreementId)}/documents/${Number(documentId)}/download`, fallbackName);
 }
 
 export async function listAgreements(filters = {}) {

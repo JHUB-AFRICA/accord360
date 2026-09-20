@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 AgreementType = Literal["MoU", "CRA", "CA", "Other"]
 from app.modules.users.schemas import ORMModel, UserOut
 from app.modules.partners.schemas import PartnerOut
-from app.modules.workflows.schemas import DeliverableOut, ValueRecordOut, WorkflowEventOut
+from app.modules.workflows.schemas import WorkflowEventOut
 
 class AgreementCreate(BaseModel):
     title: str = Field(min_length=3, max_length=300)
@@ -45,30 +45,6 @@ class AgreementUpdate(BaseModel):
     assigned_linkages_id: int | None = None
     legal_reviewer_id: int | None = None
     next_action: str | None = None
-
-class HistoricalReviewUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=3, max_length=300)
-    agreement_type: AgreementType | None = None
-    purpose: str | None = Field(default=None, min_length=10)
-    expected_outcomes: str | None = None
-    strategic_alignment: str | None = None
-    department: str | None = Field(default=None, min_length=2, max_length=180)
-    effective_date: date | None = None
-    expiry_date: date | None = None
-    owner_id: int | None = None
-    initiator_id: int | None = None
-    partner_liaison: str | None = None
-    assigned_linkages_id: int | None = None
-    assigned_approver_id: int | None = None
-    legal_reviewer_id: int | None = None
-    status: str | None = None
-    stage: str | None = None
-    status_color: str | None = None
-    next_action: str | None = None
-    data_quality_note: str | None = None
-
-class HistoricalReviewVerify(BaseModel):
-    review_notes: str | None = Field(default=None, max_length=4000)
 
 class AgreementListOut(ORMModel):
     id: int
@@ -122,5 +98,3 @@ class AgreementDetailOut(AgreementListOut):
     date_sent_partner: date | None
     documents: list[DocumentOut]
     workflow_events: list[WorkflowEventOut]
-    deliverables: list[DeliverableOut]
-    values: list[ValueRecordOut]

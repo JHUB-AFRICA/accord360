@@ -24,6 +24,10 @@ import {
 } from "../lib/backend.js";
 import { formatCurrency, formatDate, formatDateTime, humanize } from "../lib/format.js";
 import { calculateAgreementScore } from "../lib/normalize.js";
+// TODO(spec): getAvailableActions/stageLabel were deleted per REBUILD_BRIEF.md
+// Section 1 (rejected 17-stage/ACTIONS model). This page is broken until it is
+// rebuilt against the 9-status model + server-derived available_actions
+// (REBUILD_BRIEF.md Section 2.2-2.4, Section 5.2).
 import { getAvailableActions, stageLabel } from "../lib/workflow.js";
 
 const tabs = [

@@ -34,7 +34,7 @@ async def create_template(
     description: str | None = Form(None, max_length=4000),
     file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin", "linkages", "director_linkages")),
+    actor: User = Depends(require_roles("linkages")),
 ):
     try:
         content = await file.read() if file else None
@@ -50,7 +50,7 @@ def update_template(
     payload: TemplateUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin", "linkages", "director_linkages")),
+    actor: User = Depends(require_roles("linkages")),
 ):
     try:
         return service.update_template(db, template_id, payload, actor, request)

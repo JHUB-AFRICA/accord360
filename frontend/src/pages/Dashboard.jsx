@@ -5,6 +5,9 @@ import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Gauge } from "
 import { useAuth } from "../context/AuthContext.jsx";
 import { getDashboard } from "../lib/backend.js";
 import { roleConfig } from "../lib/roles.js";
+// TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
+// 17-stage model). This "Stage" column is broken until rebuilt against the
+// 9-status model in REBUILD_BRIEF.md Section 2.2.
 import { stageLabel } from "../lib/workflow.js";
 import DataTable from "../components/DataTable.jsx";
 import ErrorState from "../components/ErrorState.jsx";

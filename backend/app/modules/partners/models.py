@@ -26,7 +26,6 @@ class Partner(Base, TimestampMixin):
     review_events: Mapped[list["PartnerReviewEvent"]] = relationship(
         back_populates="partner", cascade="all, delete-orphan", order_by="PartnerReviewEvent.created_at.desc()"
     )
-    memberships: Mapped[list["PartnerMembership"]] = relationship(back_populates="partner", cascade="all, delete-orphan")
 
 
 class PartnerReviewEvent(Base):
@@ -42,80 +41,3 @@ class PartnerReviewEvent(Base):
 
     partner: Mapped[Partner] = relationship(back_populates="review_events")
     reviewer: Mapped["User"] = relationship()
-
-
-class PartnerMembership(Base, TimestampMixin):
-    __tablename__ = "partner_memberships"
-    __table_args__ = (UniqueConstraint("partner_id", "user_id", name="uq_partner_memberships_partner_user"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    membership_role: Mapped[str] = mapped_column(String(40), default="member", nullable=False)
-    status: Mapped[str] = mapped_column(String(30), default="active", nullable=False, index=True)
-    joined_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-    partner: Mapped[Partner] = relationship(back_populates="memberships")
-    user: Mapped["User"] = relationship()
-
-
-class PartnerInvitation(Base):
-    __tablename__ = "partner_invitations"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
-    email: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
-    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-    partner: Mapped[Partner] = relationship()
-    invited_by: Mapped["User"] = relationship()
-
-
-class PartnerApplication(Base, TimestampMixin):
-    __tablename__ = "partner_applications"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    reference_number: Mapped[str] = mapped_column(String(60), unique=True, index=True, nullable=False)
-    institution_name: Mapped[str] = mapped_column(String(240), nullable=False)
-    institution_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    country: Mapped[str] = mapped_column(String(100), nullable=False)
-    region: Mapped[str | None] = mapped_column(String(120))
-    website: Mapped[str] = mapped_column(String(300), nullable=False)
-    registration_number: Mapped[str | None] = mapped_column(String(160))
-    contact_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    job_title: Mapped[str] = mapped_column(String(160), nullable=False)
-    official_email: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
-    phone: Mapped[str] = mapped_column(String(60), nullable=False)
-    collaboration_area: Mapped[str] = mapped_column(Text, nullable=False)
-    strategic_alignment: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="pending_email_verification", index=True, nullable=False)
-    consent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
-    verification_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
-    verification_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
-    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
-    review_notes: Mapped[str | None] = mapped_column(Text)
-
-    documents: Mapped[list["PartnerApplicationDocument"]] = relationship(
-        back_populates="application", cascade="all, delete-orphan"
-    )
-
-
-class PartnerApplicationDocument(Base):
-    __tablename__ = "partner_application_documents"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    application_id: Mapped[int] = mapped_column(ForeignKey("partner_applications.id"), nullable=False, index=True)
-    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    stored_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    mime_type: Mapped[str | None] = mapped_column(String(120))
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-    application: Mapped[PartnerApplication] = relationship(back_populates="documents")

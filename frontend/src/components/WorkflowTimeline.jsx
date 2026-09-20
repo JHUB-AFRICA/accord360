@@ -1,4 +1,7 @@
 import { Check, RotateCcw } from "lucide-react";
+// TODO(spec): WORKFLOW_STAGES/stageIndex were deleted per REBUILD_BRIEF.md
+// Section 1 (rejected 17-stage model). This component is broken until it is
+// rebuilt against the 9-status model in REBUILD_BRIEF.md Section 2.2.
 import { WORKFLOW_STAGES, stageIndex } from "../lib/workflow";
 import { formatDate } from "../lib/format";
 

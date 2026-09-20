@@ -11,6 +11,9 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { exportAgreementsCsv, listAgreements } from "../lib/backend.js";
 import { canCreateAgreement } from "../lib/roles.js";
 import { formatDate, humanize } from "../lib/format.js";
+// TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
+// 17-stage model). This "Current stage" column is broken until rebuilt
+// against the 9-status model in REBUILD_BRIEF.md Section 2.2.
 import { stageLabel } from "../lib/workflow.js";
 
 const backendStages = [

@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Gauge, Search } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import DataTable from "../components/DataTable.jsx";
@@ -56,7 +56,10 @@ export default function Monitoring({ view = "workspace" }) {
   const activeCount = records.filter((item) => item.backend_stage === "active").length;
 
   return <>
-    <PageHeader eyebrow="Monitoring & evaluation" title={view === "reports" ? "Six-month reporting workspace" : "Partnership performance workspace"} description="The implemented backend stores M&E information as agreement deliverables, evidence documents and value records. Persisted scorecards summarize the authorized active agreements." actions={<Link className="secondary-button" to="/scorecards"><Gauge size={17} /> Open scorecards</Link>} />
+    {/* TODO(spec): the "Open scorecards" action/link was removed here because
+        Scorecards.jsx and its /scorecards route were deleted per
+        REBUILD_BRIEF.md Section 1 (scorecards are scope-creep, not in spec). */}
+    <PageHeader eyebrow="Monitoring & evaluation" title={view === "reports" ? "Six-month reporting workspace" : "Partnership performance workspace"} description="The implemented backend stores M&E information as agreement deliverables, evidence documents and value records." />
     <section className="kpi-grid"><KpiCard label="Active agreements" value={activeCount} tone="green" icon={Activity} /><KpiCard label="Requiring attention" value={atRisk} tone="orange" icon={AlertTriangle} /><KpiCard label="Expiring within 183 days" value={expiring} tone="red" icon={CalendarClock} /><KpiCard label="Backend-scoped records" value={records.length} tone="blue" icon={CheckCircle2} /></section>
     <section className="panel filter-panel"><div className="search-field"><Search size={18} /><input aria-label="Search monitoring records" placeholder="Search reference, partner or department…" value={search} onChange={(event) => setSearch(event.target.value)} /></div></section>
     <section className="panel data-panel"><DataTable columns={columns} rows={filtered} onRowClick={(item) => navigate(`/monitoring/reports/${item.id}`)} emptyTitle="No agreements available for monitoring" emptyText="Active or renewal-stage agreements within your backend-authorized scope will appear here." /></section>

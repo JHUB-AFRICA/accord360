@@ -63,8 +63,6 @@ class Agreement(Base, TimestampMixin):
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_id])
     documents: Mapped[list["Document"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
     workflow_events: Mapped[list["WorkflowEvent"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
-    deliverables: Mapped[list["Deliverable"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
-    values: Mapped[list["ValueRecord"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
 
     @property
     def legal_review_days(self) -> int | None:

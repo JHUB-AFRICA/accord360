@@ -329,6 +329,6 @@ def export_agreements(
 def audit_report(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin", "auditor", "executive", "director_linkages")),
+    _: User = Depends(require_roles("linkages")),
 ):
     return db.scalars(select(AuditLog).options(selectinload(AuditLog.actor)).order_by(AuditLog.created_at.desc()).limit(limit)).all()

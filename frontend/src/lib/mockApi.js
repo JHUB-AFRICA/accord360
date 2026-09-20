@@ -274,14 +274,6 @@ export async function mockRequest(path, options = {}) {
     return json({ access_token: `${TOKEN_PREFIX}${actor.id}`, token_type: "bearer", user: actor });
   }
 
-  if (pathname === "/auth/register-partner" && method === "POST") {
-    return json({
-      reference_number: `MOCK-PAR-${String(Date.now()).slice(-8)}`,
-      status: "pending_email_verification",
-      message: "Application received. Check the official email address to verify the application."
-    }, 202);
-  }
-
   const actor = currentUser(state, options);
   if (!actor) return fail("Not authenticated", 401);
 
@@ -290,7 +282,6 @@ export async function mockRequest(path, options = {}) {
   if (pathname === "/dashboard/stats" && method === "GET") return json(dashboardStats(state, actor));
 
   if (pathname === "/scorecards" && method === "GET") {
-    if (actor.role === "partner") return fail("Partner users must use the partner workspace", 403);
     return json(scoped(state, actor).filter((item) => item.stage === "active").map((item) => ({ agreement_id: item.id, reference_number: item.reference_number, title: item.title, partner_name: item.partner.name, agreement_type: item.agreement_type, snapshot: mockScorecard(state, item, actor) })));
   }
   const scorecardRecalculateMatch = pathname.match(/^\/scorecards\/(\d+)\/recalculate$/);

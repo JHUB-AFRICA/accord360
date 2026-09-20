@@ -38,6 +38,11 @@ const iconMap = {
   review: ClipboardCheck
 };
 
+// TODO(spec): navigation entries below were trimmed per REBUILD_BRIEF.md
+// Section 1 to drop links to removed pages/routes (data-review, scorecards,
+// users, admin, audit) and removed roles (approver, director_linkages, dvc,
+// vc_office, executive, admin, auditor). This still keys off "researcher"
+// rather than the spec's "champion" — see the TODO in lib/roles.js.
 const navigation = {
   researcher: [
     ["home", "Dashboard", "/researcher"],
@@ -48,34 +53,16 @@ const navigation = {
     ["notifications", "Notifications", "/notifications"],
     ["help", "Help", "/help"]
   ],
-  approver: [
-    ["home", "Dashboard", "/approvals"],
-    ["approvals", "Approval queue", "/approvals/queue"],
-    ["agreements", "Faculty agreements", "/agreements"],
-    ["corrections", "Returned requests", "/corrections"],
-    ["notifications", "Notifications", "/notifications"]
-  ],
   linkages: [
     ["home", "Dashboard", "/linkages"],
     ["verification", "Partner verification", "/partners?status=under_review"],
     ["partners", "Partner registry", "/partners"],
     ["approvals", "Linkages review queue", "/linkages/queue"],
-    ["review", "Historical data review", "/data-review"],
     ["agreements", "Agreement lifecycle", "/agreements"],
     ["corrections", "Corrections", "/corrections"],
     ["monitoring", "M&E reports", "/monitoring"],
     ["notifications", "Notifications", "/notifications"],
     ["reports", "Reports", "/reports"]
-  ],
-  director_linkages: [
-    ["home", "Directorate dashboard", "/director"],
-    ["agreements", "Portfolio", "/agreements"],
-    ["review", "Historical data review", "/data-review"],
-    ["partners", "Partners", "/partners"],
-    ["corrections", "Escalations", "/corrections"],
-    ["monitoring", "M&E & scorecards", "/monitoring"],
-    ["reports", "Reports", "/reports"],
-    ["audit", "Audit trail", "/audit"]
   ],
   legal: [
     ["home", "Legal dashboard", "/legal"],
@@ -84,51 +71,12 @@ const navigation = {
     ["agreements", "Legal-approved packages", "/agreements?stage=dvc_approval"],
     ["notifications", "Notifications", "/notifications"]
   ],
-  dvc: [
-    ["home", "DVC dashboard", "/dvc"],
-    ["dvc", "Endorsement queue", "/dvc/queue"],
-    ["agreements", "Endorsed packages", "/agreements?stage=vc_submission"],
-    ["notifications", "Notifications", "/notifications"]
-  ],
-  vc_office: [
-    ["home", "VC dashboard", "/signing"],
-    ["signing", "Submission packages", "/signing/queue"],
-    ["agreements", "Executed agreements", "/agreements?stage=active"],
-    ["notifications", "Notifications", "/notifications"]
-  ],
   me: [
     ["home", "M&E dashboard", "/monitoring"],
     ["monitoring", "Six-month reports", "/monitoring/reports"],
-    ["scorecards", "Scorecards", "/scorecards"],
     ["agreements", "Active agreements", "/agreements?stage=active"],
     ["notifications", "Notifications", "/notifications"],
     ["reports", "Performance reports", "/reports"]
-  ],
-  executive: [
-    ["home", "Executive dashboard", "/executive"],
-    ["agreements", "Partnership portfolio", "/agreements"],
-    ["scorecards", "Scorecards", "/scorecards"],
-    ["reports", "Executive reports", "/reports"],
-    ["audit", "Audit summary", "/audit"]
-  ],
-  admin: [
-    ["home", "Administration", "/admin"],
-    ["users", "Users & roles", "/users"],
-    ["settings", "Configuration", "/configuration"],
-    ["templates", "Templates", "/configuration?tab=templates"],
-    ["audit", "Audit log", "/audit"],
-    ["help", "Help", "/help"]
-  ],
-  auditor: [
-    ["home", "Compliance dashboard", "/audit-workspace"],
-    ["agreements", "Authorized records", "/agreements"],
-    ["reports", "Compliance reports", "/reports"],
-    ["audit", "Audit trail", "/audit"]
-  ],
-  partner: [
-    ["home", "Partner workspace", "/partner-portal"],
-    ["agreements", "Shared agreements", "/partner-portal"],
-    ["help", "Help", "/help"]
   ]
 };
 

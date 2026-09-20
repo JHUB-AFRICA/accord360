@@ -25,8 +25,6 @@ MAX_FILE_SIZE = 25 * 1024 * 1024
 
 @router.get("", response_model=list[DocumentOut])
 def list_documents(agreement_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role == "partner":
-        raise HTTPException(status_code=403, detail="Use the partner workspace for external document access")
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
@@ -47,8 +45,6 @@ def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role == "partner":
-        raise HTTPException(status_code=403, detail="Partner users cannot upload through the internal document route")
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
@@ -133,8 +129,6 @@ def download_document(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role == "partner":
-        raise HTTPException(status_code=403, detail="Use the partner workspace for external document access")
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")

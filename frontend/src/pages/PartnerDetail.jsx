@@ -8,6 +8,9 @@ import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getPartner, listAgreements } from "../lib/backend.js";
+// TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
+// 17-stage model). This "Stage" column is broken until rebuilt against the
+// 9-status model in REBUILD_BRIEF.md Section 2.2.
 import { stageLabel } from "../lib/workflow.js";
 
 export default function PartnerDetail() {
