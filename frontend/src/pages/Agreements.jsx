@@ -11,15 +11,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { exportAgreementsCsv, listAgreements } from "../lib/backend.js";
 import { canCreateAgreement } from "../lib/roles.js";
 import { formatDate, humanize } from "../lib/format.js";
-// TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
-// 17-stage model). This "Current stage" column is broken until rebuilt
-// against the 9-status model in REBUILD_BRIEF.md Section 2.2.
-import { stageLabel } from "../lib/workflow.js";
-
-const backendStages = [
-  "initiation", "department_approval", "linkages_review", "legal_review", "dvc_approval",
-  "vc_submission", "validation_signing", "active", "renewal_closure", "archived"
-];
+const agreementStatuses = ["draft_generated", "pending_legal_review", "returned_for_corrections", "pending_legal_verification", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"];
 const agreementTypes = ["MoU", "CRA", "CA", "Other"];
 
 function useQueryFilters() {
@@ -28,7 +20,6 @@ function useQueryFilters() {
     const params = new URLSearchParams(location.search);
     return {
       search: params.get("search") || "",
-      stage: params.get("stage") || "",
       status: params.get("status") || "",
       agreement_type: params.get("agreement_type") || params.get("type") || "",
       department: params.get("department") || "",
@@ -72,7 +63,7 @@ export default function Agreements() {
   }
 
   function clearFilters() {
-    setFilters({ search: "", stage: "", status: "", agreement_type: "", department: "", risk: "" });
+    setFilters({ search: "", status: "", agreement_type: "", department: "", risk: "" });
     navigate(location.pathname, { replace: true });
   }
 
@@ -80,7 +71,6 @@ export default function Agreements() {
     setError("");
     try {
       await exportAgreementsCsv({
-        stage: filters.stage,
         status: filters.status,
         agreement_type: filters.agreement_type,
         department: filters.department
@@ -95,7 +85,6 @@ export default function Agreements() {
     { key: "reference", label: "Reference", render: (item) => <div className="stacked-cell"><strong>{item.reference}</strong><span>{item.title}</span></div> },
     { key: "partner_name", label: "Partner", render: (item) => <div className="stacked-cell"><strong>{item.partner_name}</strong><span>{item.department}</span></div> },
     { key: "agreement_type", label: "Type", render: (item) => <StatusBadge tone="blue">{item.agreement_type}</StatusBadge> },
-    { key: "stage", label: "Current stage", render: (item) => <div className="stacked-cell"><strong>{stageLabel(item.stage)}</strong><span>{humanize(item.backend_stage)}</span></div> },
     { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> },
     { key: "risk", label: "Risk", render: (item) => <StatusBadge status={item.risk} risk /> },
     { key: "updated_at", label: "Updated", render: (item) => formatDate(item.updated_at) }
@@ -117,8 +106,7 @@ export default function Agreements() {
         <button className="secondary-button filter-toggle" onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters}><Filter size={17} /> Filters</button>
         <div className={`filter-controls ${showFilters ? "filter-controls-open" : ""}`}>
           <select aria-label="Filter by agreement type" value={filters.agreement_type} onChange={(event) => updateFilter("agreement_type", event.target.value)}><option value="">All agreement types</option>{agreementTypes.map((type) => <option key={type}>{type}</option>)}</select>
-          <select aria-label="Filter by stage" value={filters.stage} onChange={(event) => updateFilter("stage", event.target.value)}><option value="">All backend stages</option>{backendStages.map((stage) => <option value={stage} key={stage}>{humanize(stage)}</option>)}</select>
-          <select aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="">All statuses</option><option value="draft">Draft</option><option value="correction_required">Correction required</option><option value="pending_department">Pending department</option><option value="pending_linkages">Pending Linkages</option><option value="in_legal_review">In Legal review</option><option value="legal_approved">Legal approved</option><option value="dvc_approved">DVC approved</option><option value="awaiting_vc_signature">Awaiting VC signature</option><option value="awaiting_partner_signature">Awaiting partner signature</option><option value="fully_signed">Fully signed</option><option value="active">Active</option><option value="dormant">Dormant</option><option value="closed">Closed</option><option value="archived">Archived</option></select>
+          <select aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="">All statuses</option>{agreementStatuses.map((status) => <option value={status} key={status}>{humanize(status)}</option>)}</select>
           <input aria-label="Filter by department" placeholder="Department" value={filters.department} onChange={(event) => updateFilter("department", event.target.value)} />
           <select aria-label="Filter by risk" value={filters.risk} onChange={(event) => updateFilter("risk", event.target.value)}><option value="">All risk levels</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select>
           <button className="text-button" onClick={clearFilters}><SlidersHorizontal size={15} /> Clear filters</button>

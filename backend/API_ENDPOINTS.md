@@ -88,20 +88,13 @@ temporary chat session and returns `204 No Content`.
 
 ## 3. Roles
 
-The backend recognizes these role values:
+The backend recognizes exactly these role values:
 
 ```text
-admin
 researcher
-approver
 linkages
-director_linkages
 legal
-dvc
-vc_office
-executive
 me
-auditor
 ```
 
 Frontend route guards are not security controls. The backend applies
@@ -269,19 +262,23 @@ Requires `linkages` or `director_linkages`. Uses the same request body as
 
 ### `GET /templates`
 
-Requires authentication. Returns active versioned templates. Filter with
-`agreement_type`; `include_archived=true` includes archived records.
+Requires authentication. Returns template rows with `document_type`, active
+state, placeholder validation (`present`, `missing_required`,
+`unknown_tokens`) and uploader metadata. Only Linkages can manage templates.
+`GET /templates/fields` returns the configured `FieldDefinition` rows used by
+both the Researcher form and template validation.
 
 ### `POST /templates`
 
-Requires `admin`, `linkages`, or `director_linkages`. Uses multipart form data
-for `name`, `agreement_type`, `version`, optional `description`, and an optional
-DOC, DOCX, ODT or PDF file up to 25 MB.
+Requires `linkages`. Uses multipart form data with `document_type` and a
+required `.docx` file up to 25 MB. Upload validation is returned in the
+response; a template must contain all required FieldDefinition placeholders
+before activation.
 
-### `PATCH /templates/{template_id}`
+### `POST /templates/{template_id}/activate` and `/deactivate`
 
-Requires `admin`, `linkages`, or `director_linkages`. Updates template metadata
-or status (`active`/`archived`).
+Requires `linkages`. Activation atomically deactivates any other active
+template for the same document type. Templates are never hard-deleted.
 
 ### `GET /templates/{template_id}/download`
 
@@ -289,8 +286,8 @@ Requires authentication and returns the authorized template file.
 
 ### `GET/POST /configuration` and `PATCH /configuration/{key}`
 
-Configuration reads and writes require `admin`. Values are audited and only
-editable values can be changed.
+Configuration reads and writes are Linkages-scoped in the rebuilt four-role
+workflow. Values are audited and only editable values can be changed.
 
 ### `GET /reference-data`
 
@@ -489,6 +486,28 @@ download response. The frontend should send the bearer token when requesting
 this URL.
 
 ## 9. Monitoring and evaluation
+
+### `POST /agreements/{agreement_id}/progress-updates`
+
+Requires the authenticated user to be the agreement's Researcher. The
+agreement must be `fully_executed` or `expired`.
+
+Request:
+
+```json
+{
+  "quarter": "2026-Q1",
+  "notes": "Progress update notes"
+}
+```
+
+Returns `ProgressUpdateOut` with status `201`. Other roles and agreements in
+earlier workflow statuses receive `400` or `403`.
+
+### `GET /progress-updates`
+
+Requires the `me` role and returns all progress updates, optionally filtered by
+`agreement_id`. Researchers do not use this portfolio read endpoint.
 
 ### `POST /agreements/{agreement_id}/deliverables`
 

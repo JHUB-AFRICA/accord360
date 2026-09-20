@@ -88,7 +88,6 @@ const requiredFiles = [
   "src/lib/normalize.js",
   "src/lib/workflow.js",
   "src/context/AuthContext.jsx",
-  "src/pages/SixMonthReport.jsx",
   "API_ENDPOINTS.md",
   "BACKEND_API_CONTRACT.md",
   "DEVELOPER_HANDOFF.md",

@@ -6,16 +6,13 @@ import LoadingState from "../components/LoadingState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import Toast from "../components/Toast.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { createAgreement, listFieldDefinitions, listPartners, listTemplates } from "../lib/backend.js";
-
-const DOCUMENT_TYPE = "Standard MoU";
+import { createAgreement, listFieldDefinitions, listPartners } from "../lib/backend.js";
 
 export default function AgreementForm() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [fields, setFields] = useState(null);
   const [partners, setPartners] = useState(null);
-  const [templates, setTemplates] = useState([]);
   const [values, setValues] = useState({});
   const [partnerId, setPartnerId] = useState("");
   const [error, setError] = useState("");
@@ -24,12 +21,11 @@ export default function AgreementForm() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([listFieldDefinitions(), listPartners(), listTemplates({ documentType: DOCUMENT_TYPE })])
-      .then(([definitions, partnerList, templateList]) => {
+    Promise.all([listFieldDefinitions(), listPartners()])
+      .then(([definitions, partnerList]) => {
         if (!active) return;
         setFields(definitions);
         setPartners(partnerList);
-        setTemplates(templateList.filter((template) => template.is_active));
         setValues(Object.fromEntries(definitions.map((field) => [field.field_name, field.field_name === "researcher_name" ? user.full_name : ""])));
       })
       .catch((requestError) => setError(requestError.message));
@@ -49,8 +45,6 @@ export default function AgreementForm() {
       .map((field) => field.label);
     if (!selectedPartner) return setError("Select a partner institution.");
     if (missing.length) return setError(`Complete required fields: ${missing.join(", ")}`);
-    if (!templates.length) return setError(`Linkages has not activated a ${DOCUMENT_TYPE} template yet.`);
-
     setSubmitting(true);
     try {
       const created = await createAgreement({
@@ -59,7 +53,6 @@ export default function AgreementForm() {
         partner_id: Number(partnerId),
         start_date: values.start_date,
         end_date: values.end_date,
-        document_type: DOCUMENT_TYPE,
         field_values: { ...values, partner_name: selectedPartner.name }
       });
       setMessage("Your intake was submitted to Linkages.");

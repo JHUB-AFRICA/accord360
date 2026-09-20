@@ -1,41 +1,37 @@
-import { Download, FileCheck2, FileLock2, FileText, UploadCloud } from "lucide-react";
+import { Download, FileCheck2, FileText, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { downloadAgreementDocument, downloadAgreementVersion, getAgreement, uploadAgreementDocument } from "../lib/backend.js";
+import { downloadAgreementVersion, uploadAgreementDraft } from "../lib/backend.js";
 import { formatDateTime } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
-import Modal from "./Modal.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 
-const allowedExtensions = ["pdf", "doc", "docx", "xls", "xlsx", "csv", "png", "jpg", "jpeg", "txt"];
+// Version history and the single upload path (REBUILD_BRIEF.md Section 3.2,
+// 4.2, 4.3): Linkages uploads a new AgreementVersion at exactly three points
+// in the lifecycle (draft_generated, returned_for_corrections,
+// awaiting_signatures) through the same POST /agreements/{id}/versions
+// endpoint; no one else ever uploads a version.
+const UPLOAD_COPY = {
+  draft_generated: { title: "Upload legal agreement draft", helper: "Review the Researcher intake, prepare the agreement, then upload the .docx for Legal." },
+  returned_for_corrections: { title: "Upload corrected agreement draft", helper: "Upload the corrected .docx so Legal can verify the requested changes were made." },
+  awaiting_signatures: { title: "Upload final signed scan", helper: "Once fully signed, upload the executed .docx. This locks the agreement." }
+};
 
 export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ file: null, documentType: "supporting", version: "1.0", confidentiality: "internal", isOfficial: false });
-  const canUpload = (user.role === "linkages" && record.status === "returned_for_corrections") || (user.role === "me" && record.status === "expired");
+  const uploadCopy = UPLOAD_COPY[record.status];
+  const canUpload = user.role === "linkages" && Boolean(uploadCopy);
+  const versions = [...(record.versions || [])].reverse();
 
   async function upload() {
-    if (!form.file) {
-      onError("Choose a document to upload.");
-      return;
-    }
-    const extension = form.file.name.split(".").pop()?.toLowerCase();
-    if (!allowedExtensions.includes(extension)) {
-      onError(`.${extension || "unknown"} is not an allowed file type.`);
-      return;
-    }
-    if (form.file.size > 25 * 1024 * 1024) {
-      onError("The selected file exceeds the backend 25 MB limit.");
-      return;
-    }
+    if (!file) return onError("Choose the .docx file to upload.");
+    if (!file.name.toLowerCase().endsWith(".docx")) return onError("Only .docx files are accepted for agreement versions.");
     setSubmitting(true);
     try {
-      await uploadAgreementDocument(record.id, form);
-      const refreshed = await getAgreement(record.id);
-      onRecordChange(refreshed);
-      setForm({ file: null, documentType: "supporting", version: "1.0", confidentiality: "internal", isOfficial: false });
-      setUploadOpen(false);
-      onMessage("Document uploaded through the implemented multipart endpoint.");
+      const updated = await uploadAgreementDraft(record.id, file);
+      onRecordChange(updated);
+      setFile(null);
+      onMessage(record.status === "awaiting_signatures" ? "Final signed scan uploaded. This agreement is now fully executed and locked." : "Draft uploaded.");
     } catch (error) {
       onError(error.message);
     } finally {
@@ -44,40 +40,31 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
   }
 
   return (
-    <>
-      <section className="panel data-panel">
-        <div className="panel-head">
-          <div><h2>Document repository</h2><p>Files are loaded from the agreement detail response and downloaded with bearer-token authorization.</p></div>
-          {canUpload && <button className="secondary-button compact-button" onClick={() => setUploadOpen(true)}><UploadCloud size={16} /> Upload document</button>}
-        </div>
-        <div className="document-list">
-          {(record.documents || []).map((document) => (
-            <article className="document-row" key={document.id}>
-              <span className="document-icon">{document.status === "final_signed" ? <FileCheck2 /> : document.is_official ? <FileLock2 /> : <FileText />}</span>
-              <div><strong>{document.name}</strong><span>{document.type} · Version {document.version} · {document.confidentiality}</span><small>Uploaded {formatDateTime(document.uploaded_at)} · {Math.ceil(Number(document.size || 0) / 1024)} KB</small></div>
-              <StatusBadge status={document.status} />
-              <button className="icon-button" onClick={() => (document.source === "agreement_version" ? downloadAgreementVersion(record.id, document.version_id, document.name) : downloadAgreementDocument(record.id, document.id, document.name)).catch((error) => onError(error.message))} aria-label={`Download ${document.name}`}><Download size={18} /></button>
-            </article>
-          ))}
-          {!record.documents?.length && <EmptyState title="No documents uploaded" text="Upload the first required or supporting document." />}
-        </div>
-      </section>
+    <section className="panel data-panel">
+      <div className="panel-head">
+        <div><h2>Version history</h2><p>Every upload creates a new version. Older versions stay visible, read-only, as superseded.</p></div>
+      </div>
+      <div className="document-list">
+        {versions.map((version, index) => (
+          <article className="document-row" key={version.id}>
+            <span className="document-icon">{version.is_final ? <FileCheck2 /> : <FileText />}</span>
+            <div>
+              <strong>{index === 0 ? "Current version" : "Superseded version"}</strong>
+              <span>Uploaded by {version.uploaded_by?.full_name || "Accord360"} · status at the time: {version.status_at_time}</span>
+              <small>{formatDateTime(version.timestamp)}</small>
+            </div>
+            {version.is_final && <StatusBadge tone="green">Final, locked</StatusBadge>}
+            <button className="icon-button" onClick={() => downloadAgreementVersion(record.id, version.id, `agreement-${record.id}-v${versions.length - index}.docx`).catch((error) => onError(error.message))} aria-label="Download this version"><Download size={18} /></button>
+          </article>
+        ))}
+        {!versions.length && <EmptyState title="No versions yet" text="A version is created automatically once the Researcher's intake is submitted." />}
+      </div>
 
-      <Modal
-        open={uploadOpen}
-        onClose={() => setUploadOpen(false)}
-        title="Upload agreement document"
-        description="This form uses POST /agreements/{agreement_id}/documents with multipart/form-data."
-        footer={<><button className="secondary-button" onClick={() => setUploadOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={upload}>{submitting ? "Uploading…" : "Upload document"}</button></>}
-      >
-        <div className="form-grid single-column">
-          <label className="upload-zone compact-upload"><UploadCloud /><strong>{form.file?.name || "Choose document"}</strong><span>Allowed types from API contract · maximum 25 MB</span><input type="file" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /></label>
-          <label className="form-field"><span>Document type</span><select value={form.documentType} onChange={(event) => setForm({ ...form, documentType: event.target.value })}><option value="supporting">Supporting</option><option value="working_draft">Working draft</option><option value="partner_amendment">Partner amendment</option><option value="legal_approved">Legal-approved draft</option><option value="signed">Signed agreement</option><option value="evidence">M&E evidence</option></select></label>
-          <label className="form-field"><span>Version</span><input value={form.version} onChange={(event) => setForm({ ...form, version: event.target.value })} /></label>
-          <label className="form-field"><span>Confidentiality</span><select value={form.confidentiality} onChange={(event) => setForm({ ...form, confidentiality: event.target.value })}><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option></select></label>
-          <label className="consent-box"><input type="checkbox" checked={form.isOfficial} onChange={(event) => setForm({ ...form, isOfficial: event.target.checked })} /><span>Mark as official. Use this only for approved or fully signed institutional documents.</span></label>
-        </div>
-      </Modal>
-    </>
+      {canUpload && <div className="panel inset-panel">
+        <div className="panel-head"><div><h2>{uploadCopy.title}</h2><p>{uploadCopy.helper}</p></div></div>
+        <label className="upload-zone compact-upload"><UploadCloud /><strong>{file?.name || "Choose a .docx file"}</strong><span>Only Linkages can upload at this stage.</span><input type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
+        <button className="primary-button" disabled={submitting || !file} onClick={upload}>{submitting ? "Uploading…" : "Upload"}</button>
+      </div>}
+    </section>
   );
 }

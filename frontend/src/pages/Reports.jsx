@@ -1,4 +1,4 @@
-import { BarChart3, Download, FileSpreadsheet, FileText, Filter } from "lucide-react";
+import { BarChart3, Download, Filter } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ErrorState from "../components/ErrorState.jsx";
 import KpiCard from "../components/KpiCard.jsx";
@@ -6,7 +6,7 @@ import LoadingState from "../components/LoadingState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
-import { BACKEND_CAPABILITIES, exportAgreementsCsv, exportPortfolioExcel, exportPortfolioPdf, getPortfolioReport } from "../lib/backend.js";
+import { exportAgreementsCsv, getPortfolioReport } from "../lib/backend.js";
 
 const initialFilters = { stage: "", status: "", agreement_type: "", department: "", partner_sector: "", expiry_from: "", expiry_to: "" };
 
@@ -37,20 +37,12 @@ export default function Reports() {
     finally { setExporting(false); }
   }
 
-  async function exportFile(exporter, message) {
-    setExporting(true);
-    setError("");
-    try { await exporter(filters); setMessage(message); }
-    catch (requestError) { setError(requestError.message); }
-    finally { setExporting(false); }
-  }
-
   if (error && !data) return <><PageHeader eyebrow="Analytics and reporting" title="Reports centre" /><ErrorState message={error} onRetry={load} /></>;
   if (!data) return <LoadingState label="Loading backend portfolio statistics" />;
 
   return <div className="reports-page">
     <Toast message={message} onClose={() => setMessage("")} /><Toast message={error} type="error" onClose={() => setError("")} />
-    <PageHeader eyebrow="Analytics and reporting" title="Reports centre" actions={<><button className="secondary-button" disabled={exporting || !BACKEND_CAPABILITIES.excelReports} onClick={() => exportFile(exportPortfolioExcel, "Excel portfolio report downloaded.")}><FileSpreadsheet size={17} /> Excel</button><button className="secondary-button" disabled={exporting || !BACKEND_CAPABILITIES.pdfReports} onClick={() => exportFile(exportPortfolioPdf, "PDF portfolio report downloaded.")}><FileText size={17} /> PDF</button></>} />
+    <PageHeader eyebrow="Analytics and reporting" title="Reports centre" />
 
     <section className="kpi-grid"><KpiCard label="Total agreements" value={data.totals.total_partnerships} tone="blue" icon={BarChart3} /><KpiCard label="Active partnerships" value={data.totals.active_agreements} tone="green" icon={BarChart3} /><KpiCard label="Pipeline volume" value={data.totals.pipeline} tone="orange" icon={BarChart3} /><KpiCard label="At risk" value={data.totals.at_risk} tone="red" icon={BarChart3} /></section>
 

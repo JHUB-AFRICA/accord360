@@ -5,10 +5,6 @@ import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Gauge } from "
 import { useAuth } from "../context/AuthContext.jsx";
 import { getDashboard } from "../lib/backend.js";
 import { roleConfig } from "../lib/roles.js";
-// TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
-// 17-stage model). This "Stage" column is broken until rebuilt against the
-// 9-status model in REBUILD_BRIEF.md Section 2.2.
-import { stageLabel } from "../lib/workflow.js";
 import DataTable from "../components/DataTable.jsx";
 import ErrorState from "../components/ErrorState.jsx";
 import KpiCard from "../components/KpiCard.jsx";
@@ -37,7 +33,6 @@ export default function Dashboard() {
   const queueColumns = useMemo(() => [
     { key: "reference", label: "Reference", render: (item) => <div className="stacked-cell"><strong>{item.reference}</strong><span>{item.title}</span></div> },
     { key: "partner_name", label: "Partner" },
-    { key: "stage", label: "Stage", render: (item) => <div className="stacked-cell"><strong>{stageLabel(item.stage)}</strong><span>{item.backend_stage_label}</span></div> },
     { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> },
     { key: "current_action", label: "Next action" }
   ], []);

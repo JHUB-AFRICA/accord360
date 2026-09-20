@@ -11,7 +11,6 @@ import { getPartner, listAgreements } from "../lib/backend.js";
 // TODO(spec): stageLabel was deleted per REBUILD_BRIEF.md Section 1 (rejected
 // 17-stage model). This "Stage" column is broken until rebuilt against the
 // 9-status model in REBUILD_BRIEF.md Section 2.2.
-import { stageLabel } from "../lib/workflow.js";
 
 export default function PartnerDetail() {
   const { id } = useParams();
@@ -39,7 +38,6 @@ export default function PartnerDetail() {
     { key: "reference", label: "Reference", render: (item) => <Link className="text-link" to={`/agreements/${item.id}`}>{item.reference}</Link> },
     { key: "title", label: "Agreement" },
     { key: "agreement_type", label: "Type", render: (item) => <StatusBadge tone="blue">{item.agreement_type}</StatusBadge> },
-    { key: "stage", label: "Stage", render: (item) => stageLabel(item.stage) },
     { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> }
   ], []);
 

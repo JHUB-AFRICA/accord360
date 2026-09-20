@@ -31,10 +31,10 @@ export const BACKEND_CAPABILITIES = Object.freeze({
   dedicatedCorrections: true,
   scorecards: true,
   aiReports: false,
-  pdfReports: true,
-  excelReports: true,
+  pdfReports: false,
+  excelReports: false,
   portfolioReports: true,
-  historicalDataReview: true
+  historicalDataReview: false
 });
 
 function cleanParams(params = {}) {
@@ -123,6 +123,23 @@ export async function downloadTemplate(id, fallbackName = "template") {
   return downloadFile(`/templates/${Number(id)}/download`, fallbackName);
 }
 
+export async function activateTemplate(id) {
+  return api(`/templates/${Number(id)}/activate`, { method: "POST" });
+}
+
+export async function deactivateTemplate(id) {
+  return api(`/templates/${Number(id)}/deactivate`, { method: "POST" });
+}
+
+export async function createProgressUpdate(agreementId, payload) {
+  return api(`/agreements/${Number(agreementId)}/progress-updates`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function listProgressUpdates(agreementId = null) {
+  const query = cleanParams({ agreement_id: agreementId ? Number(agreementId) : undefined });
+  return api(`/progress-updates${query ? `?${query}` : ""}`);
+}
+
 export async function listConfiguration() {
   return api("/configuration");
 }
@@ -160,14 +177,6 @@ export async function createAgreement(payload) {
 
 export async function getAgreement(id) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}`));
-}
-
-export async function listScorecards() {
-  return api("/scorecards");
-}
-
-export async function recalculateScorecard(agreementId) {
-  return api(`/scorecards/${Number(agreementId)}/recalculate`, { method: "POST" });
 }
 
 export async function listScorecardHistory(agreementId) {
@@ -213,32 +222,6 @@ export async function transitionAgreement(id, action, comment = null, extra = {}
   }));
 }
 
-export async function listCorrections() {
-  return api("/corrections");
-}
-
-export async function getCorrection(id) {
-  return api(`/corrections/${Number(id)}`);
-}
-
-export async function respondCorrection(id, responseText) {
-  return api(`/corrections/${Number(id)}/respond`, { method: "POST", body: JSON.stringify({ response_text: responseText }) });
-}
-
-export async function resolveCorrection(id, resolutionNotes) {
-  return api(`/corrections/${Number(id)}/resolve`, { method: "POST", body: JSON.stringify({ resolution_notes: resolutionNotes }) });
-}
-
-export async function uploadAgreementDocument(id, { file, documentType = "supporting", version = "1.0", confidentiality = "internal", isOfficial = false }) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("document_type", documentType);
-  formData.append("version", version);
-  formData.append("confidentiality", confidentiality);
-  formData.append("is_official", String(Boolean(isOfficial)));
-  return api(`/agreements/${Number(id)}/documents`, { method: "POST", body: formData });
-}
-
 export async function uploadAgreementDraft(id, file) {
   const formData = new FormData();
   formData.append("file", file);
@@ -249,20 +232,16 @@ export async function downloadAgreementVersion(agreementId, versionId, fallbackN
   return downloadFile(`/agreements/${Number(agreementId)}/versions/${Number(versionId)}/download`, fallbackName);
 }
 
-export async function downloadAgreementDocument(agreementId, documentId, fallbackName) {
-  return downloadFile(`/agreements/${Number(agreementId)}/documents/${Number(documentId)}/download`, fallbackName);
+export async function listVersionComments(versionId) {
+  return api(`/versions/${Number(versionId)}/comments`);
 }
 
-export async function createDeliverable(agreementId, payload) {
-  return api(`/agreements/${Number(agreementId)}/deliverables`, { method: "POST", body: JSON.stringify(payload) });
+export async function createVersionComment(versionId, payload) {
+  return api(`/versions/${Number(versionId)}/comments`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export async function updateDeliverable(agreementId, deliverableId, payload) {
-  return api(`/agreements/${Number(agreementId)}/deliverables/${Number(deliverableId)}`, { method: "PUT", body: JSON.stringify(payload) });
-}
-
-export async function createValueRecord(agreementId, payload) {
-  return api(`/agreements/${Number(agreementId)}/values`, { method: "POST", body: JSON.stringify(payload) });
+export async function updateVersionComment(commentId, status) {
+  return api(`/comments/${Number(commentId)}`, { method: "PATCH", body: JSON.stringify({ status }) });
 }
 
 export async function listNotifications() {
@@ -281,20 +260,6 @@ export async function exportAgreementsCsv(filters = {}) {
 export async function getPortfolioReport(filters = {}) {
   const query = cleanParams(filters);
   return api(`/reports/portfolio${query ? `?${query}` : ""}`);
-}
-
-export async function exportPortfolioPdf(filters = {}) {
-  const query = cleanParams(filters);
-  return downloadFile(`/reports/export.pdf${query ? `?${query}` : ""}`, "accord360-portfolio.pdf");
-}
-
-export async function exportPortfolioExcel(filters = {}) {
-  const query = cleanParams(filters);
-  return downloadFile(`/reports/export.xlsx${query ? `?${query}` : ""}`, "accord360-portfolio.xlsx");
-}
-
-export async function generatePortfolioSummary(filters = {}) {
-  return api("/reports/ai-summary", { method: "POST", body: JSON.stringify(filters) });
 }
 
 export async function listAudit(limit = 100) {

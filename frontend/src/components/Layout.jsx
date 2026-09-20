@@ -47,33 +47,28 @@ const navigation = {
     ["home", "Dashboard", "/researcher"],
     ["new", "Create request", "/agreements/new"],
     ["agreements", "My requests", "/agreements"],
-    ["corrections", "Corrections", "/corrections"],
-    ["monitoring", "Six-month reports", "/monitoring"],
     ["notifications", "Notifications", "/notifications"],
     ["help", "Help", "/help"]
   ],
   linkages: [
     ["home", "Dashboard", "/linkages"],
-    ["verification", "Partner verification", "/partners?status=under_review"],
     ["partners", "Partner registry", "/partners"],
     ["approvals", "Linkages review queue", "/linkages/queue"],
     ["agreements", "Agreement lifecycle", "/agreements"],
-    ["corrections", "Corrections", "/corrections"],
-    ["monitoring", "M&E reports", "/monitoring"],
+    ["monitoring", "Monitoring & evaluation", "/monitoring"],
+    ["templates", "Templates", "/configuration?tab=templates"],
     ["notifications", "Notifications", "/notifications"],
     ["reports", "Reports", "/reports"]
   ],
   legal: [
     ["home", "Legal dashboard", "/legal"],
     ["legal", "Review queue", "/legal/queue"],
-    ["corrections", "Returned drafts", "/corrections"],
-    ["agreements", "Legal-approved packages", "/agreements?stage=dvc_approval"],
+    ["agreements", "All agreements", "/agreements"],
     ["notifications", "Notifications", "/notifications"]
   ],
   me: [
     ["home", "M&E dashboard", "/monitoring"],
-    ["monitoring", "Six-month reports", "/monitoring/reports"],
-    ["agreements", "Active agreements", "/agreements?stage=active"],
+    ["agreements", "All agreements", "/agreements"],
     ["notifications", "Notifications", "/notifications"],
     ["reports", "Performance reports", "/reports"]
   ]

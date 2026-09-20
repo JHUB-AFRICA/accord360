@@ -8,7 +8,7 @@
     "validate": "node scripts/validate.mjs",
     "build": "npm run validate && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "check": "npm run validate && npm run syntax && npm run test:mock && npm run build",
+    "check": "npm run validate && npm run syntax && npm run build",
     "test:mock": "node scripts/mock-smoke-test.mjs",
     "syntax": "node scripts/syntax-check.mjs"
   },

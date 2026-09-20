@@ -25,7 +25,21 @@
 // strings alongside the 9 new ones — Phase 1 should reconcile this against
 // REBUILD_BRIEF.md Section 2.2's exact 9-status list.
 
+export const WORKFLOW_STATUSES = [
+  "draft_generated", "pending_legal_review", "returned_for_corrections",
+  "pending_legal_verification", "approved_for_signing", "awaiting_signatures",
+  "fully_executed", "expired", "archived"
+];
+
 export const STATUS_LABELS = {
+  draft_generated: "Draft generated",
+  pending_legal_review: "Pending Legal review",
+  returned_for_corrections: "Returned for corrections",
+  pending_legal_verification: "Pending Legal verification",
+  approved_for_signing: "Approved for signing",
+  awaiting_signatures: "Awaiting signatures",
+  fully_executed: "Fully executed",
+  expired: "Expired",
   draft: "Draft",
   pending_department: "Pending department approval",
   pending_linkages: "Pending Linkages review",
@@ -56,6 +70,14 @@ export const STATUS_LABELS = {
 };
 
 export const STATUS_TONES = {
+  draft_generated: "slate",
+  pending_legal_review: "yellow",
+  returned_for_corrections: "orange",
+  pending_legal_verification: "yellow",
+  approved_for_signing: "blue",
+  awaiting_signatures: "blue",
+  fully_executed: "green",
+  expired: "orange",
   active: "green",
   approved: "green",
   legal_approved: "green",

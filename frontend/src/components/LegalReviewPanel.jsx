@@ -1,37 +1,83 @@
-import { AlertTriangle, CheckCircle2, MessageSquarePlus, Scale } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { transitionAgreement } from "../lib/backend.js";
-import { formatDateTime, humanize } from "../lib/format.js";
+import { AlertTriangle, CheckCircle2, MessageSquarePlus } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { createVersionComment, listVersionComments, transitionAgreement, updateVersionComment } from "../lib/backend.js";
+import { formatDateTime } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
 import Modal from "./Modal.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 
+// Legal comments (REBUILD_BRIEF.md Section 4.1) are scoped to the current
+// AgreementVersion. Only Legal can create them, only while the agreement is
+// pending_legal_review/pending_legal_verification (Section 2.3). Requesting
+// corrections and approving reuse the server-derived available_actions list
+// (Section 5.2) rather than a second, hardcoded permission matrix.
 export default function LegalReviewPanel({ record, user, onRecordChange, onError, onMessage }) {
-  const [commentOpen, setCommentOpen] = useState(false);
+  const currentVersion = record.versions?.length ? record.versions[record.versions.length - 1] : null;
+  const [comments, setComments] = useState([]);
+  const [text, setText] = useState("");
+  const [sectionReference, setSectionReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ exactItem: "", requestedChange: "", details: "" });
-  const reviewEvents = (record.workflow_events || []).filter((event) => event.comment || ["send_legal", "approve_legal", "return_correction", "return_dvc"].includes(event.action));
-  const canReturn = user.role === "legal" && record.backend_stage === "legal_review";
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionNote, setCorrectionNote] = useState("");
 
-  async function requestAmendment() {
-    if (!form.exactItem.trim() || !form.requestedChange.trim()) {
-      onError("Identify the exact clause, field or document and the requested change.");
-      return;
-    }
+  const canComment = user.role === "legal" && ["pending_legal_review", "pending_legal_verification"].includes(record.status);
+  const canRequestCorrections = (record.available_actions || []).includes("request_corrections");
+  const canApprove = (record.available_actions || []).includes("approve");
+
+  const loadComments = useCallback(() => {
+    if (!currentVersion) { setComments([]); return; }
+    listVersionComments(currentVersion.id).then(setComments).catch((error) => onError(error.message));
+  }, [currentVersion?.id, onError]);
+
+  useEffect(() => { loadComments(); }, [loadComments]);
+
+  async function submitComment(event) {
+    event.preventDefault();
+    if (!text.trim()) return onError("Enter comment text before submitting.");
     setSubmitting(true);
     try {
-      const comment = [
-        `LEGAL CORRECTION`,
-        `Exact item: ${form.exactItem.trim()}`,
-        `Requested change: ${form.requestedChange.trim()}`,
-        form.details.trim() ? `Additional context: ${form.details.trim()}` : null
-      ].filter(Boolean).join("\n");
-      const updated = await transitionAgreement(record.id, "return_correction", comment, { exact_item: form.exactItem.trim(), requested_change: form.requestedChange.trim(), details: form.details.trim() || null });
+      await createVersionComment(currentVersion.id, { text: text.trim(), section_reference: sectionReference.trim() || null });
+      setText("");
+      setSectionReference("");
+      onMessage("Comment added.");
+      loadComments();
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function toggleResolve(comment) {
+    try {
+      await updateVersionComment(comment.id, comment.status === "open" ? "resolved" : "open");
+      loadComments();
+    } catch (error) {
+      onError(error.message);
+    }
+  }
+
+  async function requestCorrections() {
+    setSubmitting(true);
+    try {
+      const updated = await transitionAgreement(record.id, "request_corrections", correctionNote.trim() || null);
       onRecordChange(updated);
-      onMessage("The agreement was returned for correction using the supported workflow transition endpoint.");
-      setForm({ exactItem: "", requestedChange: "", details: "" });
-      setCommentOpen(false);
+      onMessage("Agreement returned to Linkages for corrections.");
+      setCorrectionOpen(false);
+      setCorrectionNote("");
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function approveDraft() {
+    setSubmitting(true);
+    try {
+      const updated = await transitionAgreement(record.id, "approve");
+      onRecordChange(updated);
+      onMessage("Draft approved for signing.");
     } catch (error) {
       onError(error.message);
     } finally {
@@ -43,51 +89,43 @@ export default function LegalReviewPanel({ record, user, onRecordChange, onError
     <>
       <section className="panel legal-comparison-panel">
         <div className="panel-head">
-          <div><h2>Legal review record</h2><p>Legal feedback is stored as a structured correction linked to the workflow return event.</p></div>
-          {canReturn && <button className="secondary-button compact-button" onClick={() => setCommentOpen(true)}><MessageSquarePlus size={16} /> Request amendment</button>}
+          <div><h2>Legal review</h2><p>Comments are scoped to the current agreement version. Only Legal can add or resolve them.</p></div>
+          <div className="inline-actions">
+            {canRequestCorrections && <button className="secondary-button compact-button" onClick={() => setCorrectionOpen(true)}><MessageSquarePlus size={16} /> Request corrections</button>}
+            {canApprove && <button className="primary-button compact-button" disabled={submitting} onClick={approveDraft}><CheckCircle2 size={16} /> Approve draft</button>}
+          </div>
         </div>
-        <div className="comparison-table" role="table" aria-label="Legal review evidence">
-          <div className="comparison-header" role="row"><strong role="columnheader">Evidence</strong><strong role="columnheader">Current backend value</strong><strong role="columnheader">Review status</strong></div>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Agreement draft</strong></div><p role="cell">{record.documents.find((item) => item.type === "working_draft")?.name || "No working draft document classified"}</p><p role="cell"><StatusBadge status={record.status} /></p></article>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Legal-approved document</strong></div><p role="cell">{record.documents.find((item) => item.type === "legal_approved" && item.is_official)?.name || "Not yet uploaded as an official Legal-approved document"}</p><p role="cell"><StatusBadge tone={record.status === "legal_approved" ? "green" : "yellow"}>{record.status === "legal_approved" ? "Approved" : "Pending"}</StatusBadge></p></article>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Confidentiality</strong></div><p role="cell">{humanize(record.confidentiality)}</p><p role="cell"><StatusBadge tone="blue">Backend controlled</StatusBadge></p></article>
-        </div>
+        {currentVersion
+          ? <div className="comment-list">
+              {comments.map((comment) => (
+                <article key={comment.id} className={comment.status === "open" ? "blocking" : ""}>
+                  <div className="comment-head">
+                    <div><strong>{comment.author?.full_name || "Legal"}</strong><span>{comment.section_reference ? `${comment.section_reference} · ` : ""}{formatDateTime(comment.timestamp)}</span></div>
+                    <StatusBadge tone={comment.status === "open" ? "orange" : "green"}>{comment.status === "open" ? "Open" : "Resolved"}</StatusBadge>
+                  </div>
+                  <p>{comment.text}</p>
+                  {user.role === "legal" && <div className="comment-footer"><button className="text-button" onClick={() => toggleResolve(comment)}>{comment.status === "open" ? "Mark resolved" : "Reopen"}</button></div>}
+                </article>
+              ))}
+              {!comments.length && <EmptyState title="No comments yet" text="Legal's comments on this version will appear here." />}
+            </div>
+          : <EmptyState title="No version to review" text="A version must exist before comments can be added." />}
+        {canComment && currentVersion && <form className="form-grid" onSubmit={submitComment}>
+          <label className="form-field"><span>Section reference</span><input value={sectionReference} onChange={(event) => setSectionReference(event.target.value)} placeholder="Clause 7.2" /></label>
+          <label className="form-field span-2"><span>Comment *</span><textarea rows="3" value={text} onChange={(event) => setText(event.target.value)} /></label>
+          <button className="primary-button" disabled={submitting} type="submit">{submitting ? "Adding…" : "Add comment"}</button>
+        </form>}
+        {!canComment && record.status === "returned_for_corrections" && <p className="helper-note"><AlertTriangle size={14} /> Comments are read-only while Linkages prepares the corrected draft.</p>}
       </section>
 
-      <div className="detail-grid">
-        <section className="panel detail-main-card">
-          <div className="panel-head"><div><h2>Review comments and events</h2><p>Workflow history remains visible alongside structured correction records.</p></div></div>
-          <div className="comment-list">
-            {reviewEvents.map((event) => (
-              <article key={event.id} className={["return_correction", "return_dvc"].includes(event.action) ? "blocking" : ""}>
-                <div className="comment-head"><div><strong>{humanize(event.action)}</strong><span>{event.actor?.full_name || "Accord360 user"} · {formatDateTime(event.created_at)}</span></div><StatusBadge tone={["return_correction", "return_dvc"].includes(event.action) ? "orange" : "blue"}>{humanize(event.to_stage)}</StatusBadge></div>
-                <p>{event.comment || "No comment was recorded for this workflow event."}</p>
-                {["return_correction", "return_dvc"].includes(event.action) && <div className="comment-footer"><span className="blocking-label"><AlertTriangle size={14} /> Requires correction and resubmission</span></div>}
-              </article>
-            ))}
-            {!reviewEvents.length && <EmptyState title="No review comments recorded" text="Workflow comments will appear here after a review action is completed." />}
-          </div>
-        </section>
-
-        <aside className="panel detail-side-card">
-          <div className="panel-head"><div><h2>Correction response</h2><p>Structured corrections are linked to the agreement workflow and available in the correction register.</p></div></div>
-          {record.status === "correction_required" || record.status === "dvc_returned" ? <Link className="quick-link-card" to="/corrections"><span className="list-icon orange"><AlertTriangle /></span><div><strong>Open correction workspace</strong><span>Review the structured return record and submit a response.</span></div></Link> : <div className="inline-empty"><CheckCircle2 /> No active correction is recorded.</div>}
-          <div className="helper-note"><Scale size={16} /> Correction requests now retain the exact item, requested change, response and resolution state in the backend.</div>
-        </aside>
-      </div>
-
       <Modal
-        open={commentOpen}
-        onClose={() => setCommentOpen(false)}
-        title="Return agreement for Legal correction"
-        description="This performs the return_correction transition and creates a structured correction record for the responsible user."
-        footer={<><button className="secondary-button" onClick={() => setCommentOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={requestAmendment}>{submitting ? "Returning…" : "Return for correction"}</button></>}
+        open={correctionOpen}
+        onClose={() => setCorrectionOpen(false)}
+        title="Return agreement for corrections"
+        description="Moves the agreement to Returned for Corrections and notifies Linkages to upload a corrected draft."
+        footer={<><button className="secondary-button" onClick={() => setCorrectionOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={requestCorrections}>{submitting ? "Returning…" : "Return for corrections"}</button></>}
       >
-        <div className="form-grid single-column">
-          <label className="form-field"><span>Exact clause, field or document *</span><input value={form.exactItem} onChange={(event) => setForm({ ...form, exactItem: event.target.value })} placeholder="Clause 7.2 — Intellectual Property" /></label>
-          <label className="form-field"><span>Requested change *</span><textarea rows="4" value={form.requestedChange} onChange={(event) => setForm({ ...form, requestedChange: event.target.value })} /></label>
-          <label className="form-field"><span>Additional context</span><textarea rows="3" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /></label>
-        </div>
+        <label className="form-field"><span>Summary for Linkages</span><textarea rows="4" value={correctionNote} onChange={(event) => setCorrectionNote(event.target.value)} placeholder="Optional summary of what needs to change." /></label>
       </Modal>
     </>
   );

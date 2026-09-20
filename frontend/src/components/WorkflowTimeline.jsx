@@ -1,24 +1,19 @@
 import { Check, RotateCcw } from "lucide-react";
-// TODO(spec): WORKFLOW_STAGES/stageIndex were deleted per REBUILD_BRIEF.md
-// Section 1 (rejected 17-stage model). This component is broken until it is
-// rebuilt against the 9-status model in REBUILD_BRIEF.md Section 2.2.
-import { WORKFLOW_STAGES, stageIndex } from "../lib/workflow";
+import { WORKFLOW_STATUSES, statusLabel } from "../lib/workflow";
 import { formatDate } from "../lib/format";
 
 export default function WorkflowTimeline({ agreement, compact = false }) {
-  const currentIndex = stageIndex(agreement.stage, agreement.backend_stage, agreement.status);
-  const history = agreement.lifecycle_history || [];
+  const currentIndex = Math.max(0, WORKFLOW_STATUSES.indexOf(agreement.status));
   return (
     <div className={`workflow-timeline ${compact ? "workflow-compact" : ""}`}>
-      {WORKFLOW_STAGES.map((stage, index) => {
-        const historyItem = [...history].reverse().find((item) => item.stage === stage.key);
-        const state = historyItem?.status === "completed" || index < currentIndex ? "completed" : index === currentIndex ? "active" : "pending";
+      {WORKFLOW_STATUSES.map((status, index) => {
+        const state = index < currentIndex ? "completed" : index === currentIndex ? "active" : "pending";
         return (
-          <div className={`workflow-stage workflow-${state}`} key={stage.key}>
-            <div className="workflow-marker">{state === "completed" ? <Check size={14} /> : state === "active" ? <RotateCcw size={13} /> : stage.number}</div>
+          <div className={`workflow-stage workflow-${state}`} key={status}>
+            <div className="workflow-marker">{state === "completed" ? <Check size={14} /> : state === "active" ? <RotateCcw size={13} /> : index + 1}</div>
             <div className="workflow-stage-copy">
-              <div><strong>{stage.number}. {stage.label}</strong>{stage.optional && <span className="optional-label">where required</span>}</div>
-              {!compact && <><span>{historyItem?.responsible || stage.responsible}</span><small>{historyItem?.completed_at ? `Completed ${formatDate(historyItem.completed_at)}` : historyItem?.started_at ? `Started ${formatDate(historyItem.started_at)}` : state === "active" ? `${agreement.days_in_stage || 0} days in stage` : "Pending"}</small></>}
+              <div><strong>{index + 1}. {statusLabel(status)}</strong></div>
+              {!compact && <><span>{state === "active" ? agreement.next_office || "Current owner" : "Workflow status"}</span><small>{state === "active" ? "Current status" : state === "completed" ? "Completed" : "Pending"}</small></>}
             </div>
           </div>
         );

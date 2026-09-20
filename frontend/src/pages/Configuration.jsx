@@ -3,14 +3,15 @@ import { useCallback, useEffect, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import Toast from "../components/Toast";
-import { createTemplate, listTemplates, updateTemplate, listConfiguration, updateConfiguration, listReferenceData } from "../lib/backend.js";
+import { activateTemplate, createTemplate, deactivateTemplate, listFieldDefinitions, listTemplates, listConfiguration, updateConfiguration, listReferenceData } from "../lib/backend.js";
 
 const tabs = [
   ["agreement_types", "Agreement types", Database],
   ["documents", "Documents", FileCheck2],
   ["sla", "Workflow & SLA", Settings2],
   ["notifications", "Notifications", BellRing],
-  ["templates", "Templates", BookOpen]
+  ["templates", "Templates", BookOpen],
+  ["authoring_guide", "Authoring guide", BookOpen]
 ];
 
 const documentRules = [
@@ -23,17 +24,19 @@ const documentRules = [
 export default function Configuration() {
   const [tab, setTab] = useState(new URLSearchParams(window.location.search).get("tab") || "agreement_types");
   const [templates, setTemplates] = useState([]);
+  const [fields, setFields] = useState([]);
   const [referenceData, setReferenceData] = useState([]);
   const [configuration, setConfiguration] = useState([]);
-  const [templateForm, setTemplateForm] = useState({ name: "", agreement_type: "MoU", version: "1.0", description: "", file: null });
+  const [templateForm, setTemplateForm] = useState({ document_type: "Standard MoU", file: null });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [templateList, references] = await Promise.all([listTemplates({ includeArchived: true }), listReferenceData()]);
+      const [templateList, definitions, references] = await Promise.all([listTemplates({ includeArchived: true }), listFieldDefinitions(), listReferenceData()]);
       setTemplates(templateList);
+      setFields(definitions);
       setReferenceData(references);
     } catch (requestError) {
       setError(requestError.message);
@@ -49,21 +52,21 @@ export default function Configuration() {
 
   async function publishTemplate(event) {
     event.preventDefault();
-    if (!templateForm.name.trim()) return setError("Template name is required.");
+    if (!templateForm.file) return setError("Choose a .docx template.");
     setSubmitting(true);
     try {
-      const created = await createTemplate({ ...templateForm, name: templateForm.name.trim() });
+      const created = await createTemplate(templateForm);
       setTemplates((current) => [...current, created]);
-      setTemplateForm({ name: "", agreement_type: "MoU", version: "1.0", description: "", file: null });
-      setMessage("Template published to the backend library.");
+      setTemplateForm({ document_type: "Standard MoU", file: null });
+      setMessage(created.validated ? "Template uploaded and validated." : "Template uploaded; review the validation summary.");
     } catch (requestError) { setError(requestError.message); } finally { setSubmitting(false); }
   }
 
   async function archiveTemplate(template) {
     try {
-      const updated = await updateTemplate(template.id, { status: template.status === "archived" ? "active" : "archived" });
+      const updated = template.is_active ? await deactivateTemplate(template.id) : await activateTemplate(template.id);
       setTemplates((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setMessage(`Template ${updated.status === "archived" ? "archived" : "restored"}.`);
+      setMessage(`Template ${updated.is_active ? "activated" : "deactivated"}.`);
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -85,6 +88,7 @@ export default function Configuration() {
     {tab === "agreement_types" && <section className="panel data-panel"><div className="panel-head"><div><h2>Configured agreement types</h2><p>Reference data is authenticated and can be managed by an administrator.</p></div><StatusBadge tone="green">Backend controlled</StatusBadge></div>{referenceData.filter((item) => item.category === "agreement_type").length ? <div className="table-wrap"><table><thead><tr><th>Label</th><th>Code</th><th>Value</th><th>Status</th></tr></thead><tbody>{referenceData.filter((item) => item.category === "agreement_type").map((item) => <tr key={item.id}><td>{item.label}</td><td><code>{item.code}</code></td><td>{item.value || "—"}</td><td><StatusBadge tone="green">Active</StatusBadge></td></tr>)}</tbody></table></div> : <p className="empty-state">No agreement-type reference data has been configured yet. The API contract still accepts MoU, CRA, CA and Other.</p>}</section>}
     {tab === "documents" && <section className="panel"><div className="panel-head"><div><h2>Implemented document contract</h2><p>These rules are enforced by POST /agreements/:id/documents.</p></div><StatusBadge tone="green">Implemented</StatusBadge></div><ul className="guidance-list">{documentRules.map((item) => <li key={item}>{item}</li>)}</ul></section>}
     {(tab === "sla" || tab === "notifications") && <section className="panel"><div className="panel-head"><div><h2>{tab === "sla" ? "Workflow and SLA values" : "Notification configuration"}</h2><p>Editable values are stored as audited configuration keys.</p></div><StatusBadge tone="green">Backend managed</StatusBadge></div>{configuration.filter((item) => item.category === tab || item.category === "general").map((item) => <div className="configuration-row" key={item.key}><div><strong>{item.key}</strong><p>{item.description || "No description"}</p></div><div className="configuration-editor"><input defaultValue={item.value} disabled={!item.is_editable} id={`config-${item.key}`} /><button className="secondary-button" disabled={!item.is_editable} onClick={() => saveConfiguration(item, document.getElementById(`config-${item.key}`).value)}><Save size={15} /> Save</button></div></div>)}{!configuration.length && <p className="empty-state">No configuration values are available, or this account is not an administrator.</p>}</section>}
-    {tab === "templates" && <section className="panel"><div className="panel-head"><div><h2>Template library</h2><p>Publish versioned templates for use in the agreement request wizard.</p></div><StatusBadge tone="green">Implemented</StatusBadge></div><form className="form-grid inset-panel" onSubmit={publishTemplate}><label className="form-field"><span>Name *</span><input value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} /></label><label className="form-field"><span>Agreement type *</span><select value={templateForm.agreement_type} onChange={(event) => setTemplateForm({ ...templateForm, agreement_type: event.target.value })}><option>MoU</option><option>CRA</option><option>CA</option><option>Other</option></select></label><label className="form-field"><span>Version *</span><input value={templateForm.version} onChange={(event) => setTemplateForm({ ...templateForm, version: event.target.value })} /></label><label className="form-field"><span>File</span><input type="file" accept=".doc,.docx,.odt,.pdf" onChange={(event) => setTemplateForm({ ...templateForm, file: event.target.files?.[0] || null })} /></label><label className="form-field span-2"><span>Description</span><textarea rows="2" value={templateForm.description} onChange={(event) => setTemplateForm({ ...templateForm, description: event.target.value })} /></label><button className="primary-button" disabled={submitting} type="submit">{submitting ? "Publishing…" : "Publish template"}</button></form><div className="version-list">{templates.map((template) => <article key={template.id}><div><strong>{template.name}</strong><small>{template.agreement_type} · Version {template.version} · {template.status}</small></div><button className="secondary-button" onClick={() => archiveTemplate(template)}>{template.status === "archived" ? "Restore" : "Archive"}</button></article>)}{!templates.length && <p className="empty-state">No templates have been published yet.</p>}</div></section>}
+    {tab === "templates" && <section className="panel"><div className="panel-head"><div><h2>Template library</h2><p>Upload .docx templates, inspect placeholder validation, and activate one template per document type.</p></div><StatusBadge tone="green">Linkages managed</StatusBadge></div><form className="form-grid inset-panel" onSubmit={publishTemplate}><label className="form-field"><span>Document type *</span><input value={templateForm.document_type} onChange={(event) => setTemplateForm({ ...templateForm, document_type: event.target.value })} /></label><label className="form-field"><span>Template file *</span><input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setTemplateForm({ ...templateForm, file: event.target.files?.[0] || null })} /></label><button className="primary-button" disabled={submitting} type="submit">{submitting ? "Validating…" : "Upload and validate"}</button></form><div className="version-list">{templates.map((template) => <article key={template.id}><div><strong>{template.document_type}</strong><small>{template.is_active ? "Active" : "Inactive"} · {template.file}</small><small>Present: {template.present?.join(", ") || "None"}</small><small>Missing required: {template.missing_required?.join(", ") || "None"} · Unknown: {template.unknown_tokens?.join(", ") || "None"}</small></div><button className="secondary-button" onClick={() => archiveTemplate(template)}>{template.is_active ? "Deactivate" : "Activate"}</button></article>)}{!templates.length && <p className="empty-state">No templates have been uploaded yet.</p>}</div></section>}
+    {tab === "authoring_guide" && <section className="panel"><div className="panel-head"><div><h2>Template authoring guide</h2><p>Use each placeholder exactly as shown in the active document template.</p></div></div><div className="table-wrap"><table><thead><tr><th>Field</th><th>Placeholder</th><th>Label</th><th>Required</th></tr></thead><tbody>{fields.map((field) => <tr key={field.id}><td>{field.field_name}</td><td><code>{`{{${field.field_name}}}`}</code></td><td>{field.label}</td><td>{field.required ? "Yes" : "No"}</td></tr>)}</tbody></table></div>{!fields.length && <p className="empty-state">No FieldDefinition rows are configured.</p>}</section>}
   </>;
 }
