@@ -44,7 +44,7 @@ Mock mode mirrors the same implemented endpoint names and response shapes; it is
 - `POST /auth/login`
 - `GET /auth/me`
 - `GET/POST/PATCH /users`
-- `GET /users/champions`
+- `GET /users/researchers`
 - `GET/POST /partners`
 - `PUT /partners/{id}`
 - `GET/POST/PATCH /agreements`

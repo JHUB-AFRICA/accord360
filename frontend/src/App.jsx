@@ -29,8 +29,8 @@ import { ALL_ROLES, INTERNAL_ROLES } from "./lib/roles.js";
 
 
 const role = (roles, element) => <RoleRoute roles={roles}>{element}</RoleRoute>;
-const agreementCreators = ["champion", "linkages"];
-const correctionRoles = ["champion", "linkages", "legal"];
+const agreementCreators = ["researcher", "linkages"];
+const correctionRoles = ["researcher", "linkages", "legal"];
 const reportRoles = ["linkages", "me"];
 
 export default function App() {
@@ -51,21 +51,21 @@ export default function App() {
         <Route path="/workspace" element={<RoleHomeRedirect />} />
         <Route path="/access-denied" element={<AccountState type="access-denied" />} />
 
-        <Route path="/champion" element={role(["champion"], <Dashboard />)} />
+        <Route path="/researcher" element={role(["researcher"], <Dashboard />)} />
         <Route path="/linkages" element={role(["linkages"], <Dashboard />)} />
         <Route path="/linkages/queue" element={role(["linkages"], <WorkflowQueue mode="linkages" />)} />
         <Route path="/legal" element={role(["legal"], <Dashboard />)} />
         <Route path="/legal/queue" element={role(["legal"], <WorkflowQueue mode="legal" />)} />
         <Route path="/legal/:id" element={role(["legal"], <AgreementDetail defaultTab="corrections" />)} />
-        <Route path="/monitoring" element={role(["me", "champion", "linkages"], <Monitoring />)} />
-        <Route path="/monitoring/reports" element={role(["me", "champion", "linkages"], <Monitoring view="reports" />)} />
-        <Route path="/monitoring/reports/:id" element={role(["me", "champion", "linkages"], <SixMonthReport />)} />
+        <Route path="/monitoring" element={role(["me", "researcher", "linkages"], <Monitoring />)} />
+        <Route path="/monitoring/reports" element={role(["me", "researcher", "linkages"], <Monitoring view="reports" />)} />
+        <Route path="/monitoring/reports/:id" element={role(["me", "researcher", "linkages"], <SixMonthReport />)} />
 
         <Route path="/agreements" element={role(INTERNAL_ROLES, <Agreements />)} />
         <Route path="/agreements/new" element={role(agreementCreators, <AgreementForm />)} />
         <Route path="/agreements/:id" element={role(INTERNAL_ROLES, <AgreementDetail />)} />
-        <Route path="/partners" element={role(["champion", "linkages"], <Partners />)} />
-        <Route path="/partners/:id" element={role(["champion", "linkages"], <PartnerDetail />)} />
+        <Route path="/partners" element={role(["researcher", "linkages"], <Partners />)} />
+        <Route path="/partners/:id" element={role(["researcher", "linkages"], <PartnerDetail />)} />
         <Route path="/partners/:id/verify" element={role(["linkages"], <PartnerVerification />)} />
         <Route path="/corrections" element={role(correctionRoles, <Corrections />)} />
         <Route path="/corrections/:id" element={role(correctionRoles, <CorrectionDetail />)} />

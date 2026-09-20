@@ -35,12 +35,12 @@ def test_partner_and_agreement_creation():
     else:
         partner_id = partner.json()["id"]
 
-    champion_login = client.post("/api/auth/login", json={"email": "champion@accord360.app", "password": "Champion@123"})
-    assert champion_login.status_code == 200
-    champion_headers = {"Authorization": f"Bearer {champion_login.json()['access_token']}"}
+    researcher_login = client.post("/api/auth/login", json={"email": "researcher@accord360.app", "password": "Researcher@123"})
+    assert researcher_login.status_code == 200
+    researcher_headers = {"Authorization": f"Bearer {researcher_login.json()['access_token']}"}
     agreement = client.post(
         "/api/agreements",
-        headers=champion_headers,
+        headers=researcher_headers,
         json={
             "title": "Smoke Test Agreement",
             "department": "ICT",

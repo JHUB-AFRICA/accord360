@@ -12,7 +12,7 @@ import {
 export const BACKEND_CAPABILITIES = Object.freeze({
   authentication: true,
   users: true,
-  champions: true,
+  researchers: true,
   partners: true,
   agreements: true,
   workflowTransitions: true,
@@ -63,8 +63,8 @@ export async function listUsers() {
   return (await api("/users")).map(normalizeUser);
 }
 
-export async function listChampions() {
-  return (await api("/users/champions")).map(normalizeUser);
+export async function listResearchers() {
+  return (await api("/users/researchers")).map(normalizeUser);
 }
 
 export async function createUser(payload) {
@@ -100,9 +100,13 @@ export async function reviewPartner(id, status, reason) {
   return api(`/partners/${Number(id)}/review`, { method: "POST", body: JSON.stringify({ status, reason }) });
 }
 
-export async function listTemplates({ agreementType = "", includeArchived = false } = {}) {
-  const query = cleanParams({ agreement_type: agreementType, include_archived: includeArchived ? "true" : undefined });
+export async function listTemplates({ documentType = "", agreementType = "", includeArchived = false } = {}) {
+  const query = cleanParams({ document_type: documentType || agreementType, include_archived: includeArchived ? "true" : undefined });
   return api(`/templates${query ? `?${query}` : ""}`);
+}
+
+export async function listFieldDefinitions() {
+  return api("/templates/fields");
 }
 
 export async function createTemplate(payload) {
@@ -233,6 +237,16 @@ export async function uploadAgreementDocument(id, { file, documentType = "suppor
   formData.append("confidentiality", confidentiality);
   formData.append("is_official", String(Boolean(isOfficial)));
   return api(`/agreements/${Number(id)}/documents`, { method: "POST", body: formData });
+}
+
+export async function uploadAgreementDraft(id, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return normalizeAgreementDetail(await api(`/agreements/${Number(id)}/versions`, { method: "POST", body: formData }));
+}
+
+export async function downloadAgreementVersion(agreementId, versionId, fallbackName = "agreement-version.docx") {
+  return downloadFile(`/agreements/${Number(agreementId)}/versions/${Number(versionId)}/download`, fallbackName);
 }
 
 export async function downloadAgreementDocument(agreementId, documentId, fallbackName) {

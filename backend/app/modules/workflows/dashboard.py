@@ -17,12 +17,12 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 # Exactly the four roles per REBUILD_BRIEF.md Section 2.1 — no entries for
 # any removed role.
 ROLE_WORKSPACES = {
-    "champion": {
-        "role_label": "JKUAT Champion",
-        "eyebrow": "Champion workspace",
+    "researcher": {
+        "role_label": "JKUAT Researcher",
+        "eyebrow": "Researcher workspace",
         "title": "My collaboration agreements",
         "description": "Propose agreements, track their status and submit quarterly progress updates once executed.",
-        "permission_summary": "You can see only agreements where you are the Champion.",
+        "permission_summary": "You can see only agreements where you are the Researcher.",
         "capabilities": ["Propose agreements", "Track own agreements", "Submit progress updates"],
         "guidance": [
             "Fill the structured form to propose a new agreement.",
@@ -30,7 +30,7 @@ ROLE_WORKSPACES = {
             "Submit quarterly progress updates once the agreement is fully executed.",
         ],
         "queue_title": "My agreements needing attention",
-        "queue_description": "Only agreements where you are the Champion are shown.",
+        "queue_description": "Only agreements where you are the Researcher are shown.",
         "primary_action": {"label": "New agreement request", "path": "/agreements/new"},
     },
     "linkages": {
@@ -87,15 +87,15 @@ ROLE_WORKSPACES = {
 def _load_scoped_agreements(db: Session, user: User) -> list[Agreement]:
     stmt = select(Agreement).options(
         selectinload(Agreement.partner),
-        selectinload(Agreement.champion),
+        selectinload(Agreement.researcher),
     )
     return list(db.scalars(apply_agreement_scope(stmt, user)).all())
 
 
 def _is_queue_item(agreement: Agreement, user: User) -> bool:
     role = user.role
-    if role == "champion":
-        return agreement.champion_id == user.id and agreement.status in {
+    if role == "researcher":
+        return agreement.researcher_id == user.id and agreement.status in {
             "returned_for_corrections",
             "expired",
         }
@@ -113,9 +113,9 @@ def _metrics_for_role(db: Session, user: User, agreements: list[Agreement], queu
     fully_executed = sum(1 for a in agreements if a.status == "fully_executed")
     expired = sum(1 for a in agreements if a.status == "expired")
 
-    if role == "champion":
+    if role == "researcher":
         return [
-            {"label": "My agreements", "value": len(agreements), "note": "Records where you are the Champion", "icon": "agreements", "tone": "green"},
+            {"label": "My agreements", "value": len(agreements), "note": "Records where you are the Researcher", "icon": "agreements", "tone": "green"},
             {"label": "Needing my attention", "value": len(queue), "note": "Corrections or renewal-related items", "icon": "pending", "tone": "blue"},
             {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green"},
             {"label": "Expired", "value": expired, "note": "Awaiting M&E action", "icon": "risk", "tone": "orange"},

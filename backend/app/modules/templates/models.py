@@ -32,7 +32,7 @@ class Template(Base):
 
 
 class FieldDefinition(Base):
-    """Single source of truth for the Champion's structured form fields and
+    """Single source of truth for the Researcher's structured form fields and
     the {{tag}} placeholders checked during template validation (Phase 2).
     """
 

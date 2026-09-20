@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from .models import Agreement, User
 
 # Visibility rules — REBUILD_BRIEF.md Section 2.7:
-#   champion -> only Agreements where Agreement.champion == current_user
+#   researcher -> only Agreements where Agreement.researcher == current_user
 #   linkages -> ALL agreements, all versions, all comments
 #   legal    -> ALL agreements, all versions, all comments (same as linkages)
 #   me       -> ALL agreements' status/progress data
@@ -16,16 +16,16 @@ def apply_agreement_scope(stmt, user: User):
     """Apply role-based visibility to Agreement queries (Section 2.7)."""
     if user.role in FULL_READ_ROLES:
         return stmt
-    if user.role == "champion":
-        return stmt.where(Agreement.champion_id == user.id)
+    if user.role == "researcher":
+        return stmt.where(Agreement.researcher_id == user.id)
     return stmt.where(Agreement.id == -1)
 
 
 def can_view_agreement(user: User, agreement: Agreement) -> bool:
     if user.role in FULL_READ_ROLES:
         return True
-    if user.role == "champion":
-        return agreement.champion_id == user.id
+    if user.role == "researcher":
+        return agreement.researcher_id == user.id
     return False
 
 
@@ -43,8 +43,8 @@ def can_edit_agreement(user: User, agreement: Agreement) -> bool:
         return False
     if user.role == "linkages":
         return True
-    if user.role == "champion":
-        return agreement.champion_id == user.id and agreement.status == "draft_generated"
+    if user.role == "researcher":
+        return agreement.researcher_id == user.id and agreement.status == "draft_generated"
     return False
 
 
@@ -58,7 +58,9 @@ def ensure_can_edit_agreement(user: User, agreement: Agreement) -> None:
 # source of truth; the frontend must derive visible actions from the API
 # (e.g. AgreementDetailOut.available_actions), never hardcode a duplicate.
 UPLOAD_ALLOWED_ROLES_BY_STATUS: dict[str, set[str]] = {
-    "draft_generated": set(),
+    # The Researcher submission creates the intake record. Linkages uploads
+    # the first legal agreement draft after reviewing that intake.
+    "draft_generated": {"linkages"},
     "pending_legal_review": set(),
     "returned_for_corrections": {"linkages"},
     "pending_legal_verification": set(),

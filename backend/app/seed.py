@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 from datetime import date, timedelta
 
 from sqlalchemy import delete, select
@@ -19,17 +20,19 @@ from .models import (
     User,
     WorkflowEvent,
 )
+from .modules.templates import service as template_service
+from .modules.templates.schemas import TemplateCreate
 from .core.security import hash_password
 
 # Exactly four roles per REBUILD_BRIEF.md Section 2.1.
 DEFAULT_USERS = [
-    ("JKUAT Champion", "champion@accord360.app", "Champion@123", "champion", "Computing"),
+    ("JKUAT Researcher", "researcher@accord360.app", "Researcher@123", "researcher", "Computing"),
     ("Linkages Officer", "linkages@accord360.app", "Linkages@123", "linkages", "Directorate of Linkages"),
     ("Legal Reviewer", "legal@accord360.app", "Legal@123", "legal", "Legal Office"),
     ("M&E Officer", "me@accord360.app", "Measure@123", "me", "M&E"),
 ]
 
-# Single source of truth for the Champion's structured form fields and the
+# Single source of truth for the Researcher's structured form fields and the
 # {{tag}} placeholders scanned during template validation (Phase 2).
 DEFAULT_FIELD_DEFINITIONS = [
     ("partner_name", "Partner Organization Name", True),
@@ -37,7 +40,7 @@ DEFAULT_FIELD_DEFINITIONS = [
     ("department", "Department", True),
     ("start_date", "Start Date", True),
     ("end_date", "End Date", True),
-    ("champion_name", "Champion Name", True),
+    ("researcher_name", "Researcher Name", True),
 ]
 
 
@@ -46,6 +49,47 @@ def seed_field_definitions(db) -> None:
         if not db.scalar(select(FieldDefinition).where(FieldDefinition.field_name == field_name)):
             db.add(FieldDefinition(field_name=field_name, label=label, required=required))
     db.flush()
+
+
+STANDARD_MOU_DOCUMENT_TYPE = "Standard MoU"
+
+
+def _standard_mou_docx_bytes() -> bytes:
+    """Build a minimal, valid .docx containing every FieldDefinition's
+    {{tag}}, so a fresh environment always has one workable active template
+    (REBUILD_BRIEF.md Section 3 depends on one existing before any Researcher
+    can submit an intake)."""
+    from docx import Document
+
+    document = Document()
+    document.add_heading("Memorandum of Understanding", level=1)
+    document.add_paragraph(
+        "This Memorandum of Understanding is entered into between JKUAT and "
+        "{{partner_name}} regarding {{agreement_title}}."
+    )
+    document.add_paragraph("Department: {{department}}")
+    document.add_paragraph("Start date: {{start_date}}")
+    document.add_paragraph("End date: {{end_date}}")
+    document.add_paragraph("Researcher: {{researcher_name}}")
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def seed_standard_mou_template(db, linkages_user: User) -> None:
+    if db.scalar(
+        select(Template).where(Template.document_type == STANDARD_MOU_DOCUMENT_TYPE, Template.is_active.is_(True))
+    ):
+        return
+    template = template_service.create_template(
+        db,
+        TemplateCreate(document_type=STANDARD_MOU_DOCUMENT_TYPE),
+        linkages_user,
+        request=None,
+        content=_standard_mou_docx_bytes(),
+        original_name="standard-mou.docx",
+    )
+    template_service.activate_template(db, template.id, linkages_user, request=None)
 
 
 def seed(reset: bool = False, demo: bool = True) -> None:
@@ -84,6 +128,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
             users[role] = user
 
         seed_field_definitions(db)
+        seed_standard_mou_template(db, users["linkages"])
 
         if demo and not db.scalar(select(Agreement.id).limit(1)):
             partner_a = Partner(
@@ -112,7 +157,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 title="AI Research and Innovation Collaboration",
                 department="School of Computing and Information Technology",
                 partner_id=partner_a.id,
-                champion_id=users["champion"].id,
+                researcher_id=users["researcher"].id,
                 status="draft_generated",
                 start_date=date.today(),
                 end_date=date.today() + timedelta(days=730),
@@ -121,7 +166,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 title="Agricultural Data Collaboration Agreement",
                 department="Department of Computing",
                 partner_id=partner_b.id,
-                champion_id=users["champion"].id,
+                researcher_id=users["researcher"].id,
                 status="pending_legal_review",
                 start_date=date.today() - timedelta(days=10),
                 end_date=date.today() + timedelta(days=700),
@@ -130,7 +175,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 title="Digital Skills Implementation Partnership",
                 department="Computing",
                 partner_id=partner_b.id,
-                champion_id=users["champion"].id,
+                researcher_id=users["researcher"].id,
                 status="fully_executed",
                 start_date=date.today() - timedelta(days=400),
                 end_date=date.today() + timedelta(days=300),
@@ -140,7 +185,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 title="Manufacturing Research Collaboration",
                 department="Computing",
                 partner_id=partner_a.id,
-                champion_id=users["champion"].id,
+                researcher_id=users["researcher"].id,
                 status="expired",
                 start_date=date.today() - timedelta(days=800),
                 end_date=date.today() - timedelta(days=10),

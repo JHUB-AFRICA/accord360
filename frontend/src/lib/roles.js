@@ -1,10 +1,10 @@
-// REBUILD_BRIEF.md Section 2.1 names this role "champion" (exact string
+// REBUILD_BRIEF.md Section 2.1 names this role "researcher" (exact string
 // value). Renamed from the legacy "researcher" key in Phase 1.
 export const ROLE_CONFIG = {
-  champion: {
-    label: "Champion",
-    workspace: "Champion Workspace",
-    home: "/champion",
+  researcher: {
+    label: "Researcher",
+    workspace: "Researcher Workspace",
+    home: "/researcher",
     shortDescription: "Initiate collaborations, respond to corrections and track assigned partnerships.",
     scope: "own"
   },
@@ -51,7 +51,7 @@ export function roleHome(role) {
 }
 
 export function canCreateAgreement(role) {
-  return ["champion", "linkages"].includes(role);
+  return ["researcher", "linkages"].includes(role);
 }
 
 export function canViewAllAgreements(role) {

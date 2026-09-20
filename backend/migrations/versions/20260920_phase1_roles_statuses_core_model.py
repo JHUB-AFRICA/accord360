@@ -78,7 +78,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=300), nullable=False),
         sa.Column("partner_id", sa.Integer(), nullable=False),
         sa.Column("department", sa.String(length=180), nullable=False),
-        sa.Column("champion_id", sa.Integer(), nullable=False),
+        sa.Column("researcher_id", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=40), nullable=False, server_default="draft_generated"),
         sa.Column("start_date", sa.Date(), nullable=False),
         sa.Column("end_date", sa.Date(), nullable=False),
@@ -88,10 +88,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["partner_id"], ["partners.id"]),
-        sa.ForeignKeyConstraint(["champion_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["researcher_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_agreements_champion_id", "agreements", ["champion_id"])
+    op.create_index("ix_agreements_researcher_id", "agreements", ["researcher_id"])
     op.create_index("ix_agreements_status", "agreements", ["status"])
 
     op.create_table(
@@ -164,15 +164,13 @@ def upgrade() -> None:
         sa.UniqueConstraint("field_name"),
     )
 
-    # --- Role rename: researcher -> champion (Section 2.1) ------------------
-    op.execute("UPDATE users SET role = 'champion' WHERE role = 'researcher'")
+    # Researcher is the initiating internal role in the current specification.
+    op.execute("UPDATE users SET role = 'researcher' WHERE role = 'champion'")
 
 
 def downgrade() -> None:
     # Best-effort structural downgrade; data created under the Phase 1 model
     # is not preserved (pre-production rebuild, per REBUILD_BRIEF.md).
-    op.execute("UPDATE users SET role = 'researcher' WHERE role = 'champion'")
-
     op.drop_table("field_definitions")
     op.drop_index("ix_progress_updates_agreement_id", table_name="progress_updates")
     op.drop_table("progress_updates")
@@ -183,7 +181,7 @@ def downgrade() -> None:
     op.drop_index("ix_workflow_events_agreement_id", table_name="workflow_events")
     op.drop_table("workflow_events")
     op.drop_index("ix_agreements_status", table_name="agreements")
-    op.drop_index("ix_agreements_champion_id", table_name="agreements")
+    op.drop_index("ix_agreements_researcher_id", table_name="agreements")
     op.drop_table("agreements")
     op.drop_index("ix_templates_document_type", table_name="templates")
     op.drop_table("templates")

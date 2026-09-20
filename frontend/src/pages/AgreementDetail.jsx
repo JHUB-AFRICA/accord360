@@ -20,15 +20,11 @@ import {
   getAgreement,
   transitionAgreement,
   updateAgreement,
-  uploadAgreementDocument
+  uploadAgreementDocument,
+  uploadAgreementDraft
 } from "../lib/backend.js";
 import { formatCurrency, formatDate, formatDateTime, humanize } from "../lib/format.js";
 import { calculateAgreementScore } from "../lib/normalize.js";
-// TODO(spec): getAvailableActions/stageLabel were deleted per REBUILD_BRIEF.md
-// Section 1 (rejected 17-stage/ACTIONS model). This page is broken until it is
-// rebuilt against the 9-status model + server-derived available_actions
-// (REBUILD_BRIEF.md Section 2.2-2.4, Section 5.2).
-import { getAvailableActions, stageLabel } from "../lib/workflow.js";
 
 const tabs = [
   ["overview", "Overview"], ["workflow", "Workflow"], ["documents", "Documents"],
@@ -55,6 +51,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
   const emptyActionForm = { reason: "", exact_item: "", requested_change: "", effective_date: "", expiry_date: "", partner_liaison: "", initial_deliverable: "", document: null };
   const [actionForm, setActionForm] = useState(emptyActionForm);
   const [submitting, setSubmitting] = useState(false);
+  const [draftFile, setDraftFile] = useState(null);
   const navigate = useNavigate();
   const tab = searchParams.get("tab") || defaultTab;
 
@@ -65,7 +62,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const availableActions = useMemo(() => getAvailableActions(record, user.role), [record, user.role]);
+  const availableActions = useMemo(() => (record.available_actions || []).map((key) => ({ key, label: humanize(key), variant: key === "archive" ? "danger" : "primary" })), [record]);
   const score = useMemo(() => calculateAgreementScore(record), [record]);
 
   function buildComment() {
@@ -139,6 +136,21 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
     }
   }
 
+  async function uploadLegalDraft() {
+    if (!draftFile) return setError("Choose the .docx agreement draft prepared by Linkages.");
+    setSubmitting(true);
+    try {
+      const updated = await uploadAgreementDraft(record.id, draftFile);
+      setRecord(updated);
+      setDraftFile(null);
+      setMessage("Legal draft uploaded and sent to Legal review.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (error && !record) return <><PageHeader eyebrow="Agreement workspace" title="Unable to open agreement" /><ErrorState message={error} onRetry={load} /></>;
   if (!record) return <LoadingState label="Loading agreement workspace" />;
 
@@ -153,7 +165,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
     ["Official signed PDF uploaded", Boolean(officialSignedDocument)],
     ["Effective date entered", Boolean(record.effective_date)],
     ["Expiry date entered", Boolean(record.expiry_date)],
-    ["Champion assigned", Boolean(record.champion_name)],
+    ["Researcher assigned", Boolean(record.researcher_name)],
     ["Partner liaison assigned", Boolean(record.partner_liaison_name)],
     ["M&E deliverable created", Boolean(record.deliverables.length)]
   ];
@@ -171,10 +183,10 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
       />
 
       <section className="agreement-sticky-summary panel">
-        <InfoItem label="Current stage">{stageLabel(record.stage)}</InfoItem>
+        <InfoItem label="Current status">{humanize(record.status)}</InfoItem>
         <InfoItem label="Backend stage">{humanize(record.backend_stage)}</InfoItem>
         <InfoItem label="Responsible office">{record.next_office}</InfoItem>
-        <InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem>
+        <InfoItem label="Researcher">{record.researcher_name || "Not assigned"}</InfoItem>
         <InfoItem label="Effective date">{formatDate(record.effective_date)}</InfoItem>
         <InfoItem label="Expiry date">{formatDate(record.expiry_date)}</InfoItem>
         <div className="next-action-box"><span>Required next action</span><strong>{record.current_action}</strong></div>
@@ -187,7 +199,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
       {tab === "overview" && <div className="detail-grid">
         <section className="panel detail-main-card">
           <div className="panel-head"><div><h2>Agreement overview</h2><p>Fields returned by AgreementDetailOut</p></div></div>
-          <div className="info-grid"><InfoItem label="Partner institution">{record.partner_name}</InfoItem><InfoItem label="Agreement type">{record.agreement_type}</InfoItem><InfoItem label="Department">{record.department}</InfoItem><InfoItem label="Owner">{record.initiator_name}</InfoItem><InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem><InfoItem label="Confidentiality">{humanize(record.confidentiality)}</InfoItem><InfoItem label="Date sent to VC">{formatDate(record.date_sent_vc)}</InfoItem><InfoItem label="Date sent to partner">{formatDate(record.date_sent_partner)}</InfoItem></div>
+          <div className="info-grid"><InfoItem label="Partner institution">{record.partner_name}</InfoItem><InfoItem label="Agreement type">{record.agreement_type}</InfoItem><InfoItem label="Department">{record.department}</InfoItem><InfoItem label="Owner">{record.initiator_name}</InfoItem><InfoItem label="Researcher">{record.researcher_name || "Not assigned"}</InfoItem><InfoItem label="Confidentiality">{humanize(record.confidentiality)}</InfoItem><InfoItem label="Date sent to VC">{formatDate(record.date_sent_vc)}</InfoItem><InfoItem label="Date sent to partner">{formatDate(record.date_sent_partner)}</InfoItem></div>
           <hr /><h3>Purpose</h3><p className="long-copy">{record.purpose}</p><h3>Strategic alignment</h3><p className="long-copy">{record.strategic_alignment}</p>
         </section>
         <aside className="panel detail-side-card"><div className="panel-head"><div><h2>Expected outcomes</h2><p>Recorded agreement outcomes</p></div></div>{record.expected_outcomes.length ? <ul className="outcome-list">{record.expected_outcomes.map((item) => <li key={item}><CheckCircle2 size={17} />{item}</li>)}</ul> : <EmptyState title="No expected outcomes recorded" text="The backend response did not include expected outcomes for this record." />}</aside>
@@ -198,6 +210,7 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
       {tab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
       {tab === "template" && <div className="detail-grid">
+        {user.role === "linkages" && record.status === "draft_generated" && <section className="panel detail-main-card"><div className="panel-head"><div><h2>Upload legal agreement draft</h2><p>Review the Researcher intake, prepare the agreement, then upload the .docx for Legal.</p></div></div><label className="upload-zone compact-upload"><UploadCloud /><strong>{draftFile?.name || "Choose the Linkages-prepared .docx"}</strong><span>Only Linkages can upload the legal draft at this stage.</span><input type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={(event) => setDraftFile(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={submitting || !draftFile} onClick={uploadLegalDraft}>Upload draft for Legal review</button></section>}
         <section className="panel detail-main-card"><div className="panel-head"><div><h2>Draft and template evidence</h2><p>The current backend does not expose template-library endpoints.</p></div><StatusBadge tone="yellow">Backend persistence pending</StatusBadge></div><div className="version-list">{record.documents.filter((item) => ["working_draft", "legal_approved", "partner_amendment", "supporting"].includes(item.type)).map((document) => <article key={document.id}><span>{humanize(document.type)}</span><strong>{document.name}</strong><small>Version {document.version} · {document.is_official ? "Official" : "Working"}</small></article>)}</div>{!record.documents.length && <EmptyState title="No draft documents" text="Upload a working draft or supporting document from the Documents tab." />}</section>
         <aside className="panel detail-side-card"><h2>Version controls</h2><ul className="plain-check-list"><li><ShieldCheck /> File versions are stored by the backend.</li><li><FileLock2 /> Official status distinguishes approved documents.</li><li><History /> Workflow events provide the audit history.</li><li><Paperclip /> Downloads require agreement and document permission.</li></ul></aside>
       </div>}

@@ -280,7 +280,7 @@ python -m scripts.import_collaborations \
 ```
 
 The importer is dry-run by default. To persist the records, add `--commit`.
-Imported agreements are assigned to the supplied temporary Champion account,
+Imported agreements are assigned to the supplied temporary Researcher account,
 marked `pending_review`, and must be corrected and verified by Linkages in the
 Historical Data Review workspace.
 

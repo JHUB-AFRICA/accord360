@@ -14,14 +14,14 @@ const BACKEND_STAGE_TO_CANONICAL = {
 };
 
 const STAGE_OFFICES = {
-  initiation: "Researcher / Champion",
+  initiation: "Researcher",
   department_approval: "Faculty / Department Approver",
   linkages_review: "Directorate of Linkages (RPE)",
   legal_review: "University Legal Office",
   dvc_approval: "DVC RPE",
   vc_submission: "Directorate of Linkages (RPE)",
   validation_signing: "VC Office / Partner Signatory",
-  active: "Champion / M&E",
+  active: "Researcher / M&E",
   renewal_closure: "Director, Linkages",
   archived: "Institutional Archive"
 };
@@ -82,7 +82,7 @@ export function normalizePartner(partner) {
     verification_status: partner.status,
     region: partner.country,
     website: "",
-    champion_name: null,
+    researcher_name: null,
     active_agreements: null
   };
 }
@@ -127,8 +127,8 @@ export function normalizeAgreementList(item) {
     partner_name: item.partner?.name || "Unknown partner",
     initiator_id: item.initiator?.id ? Number(item.initiator.id) : null,
     initiator_name: item.initiator?.full_name || item.owner?.full_name || "Unknown initiator",
-    champion_id: item.owner?.id ? Number(item.owner.id) : null,
-    champion_name: item.owner?.full_name || null,
+    researcher_id: item.researcher?.id ? Number(item.researcher.id) : null,
+    researcher_name: item.researcher?.full_name || null,
     stage,
     backend_stage: item.stage,
     backend_stage_label: backendStageLabel(item.stage),
@@ -152,7 +152,22 @@ export function normalizeAgreementDetail(item) {
     started_at: [...(item.workflow_events || [])].reverse().find((event) => event.to_stage === item.stage)?.created_at || item.updated_at
   };
   const lifecycleHistory = [...workflowEvents, currentStageEntry];
-  const documents = (item.documents || []).map(normalizeDocument).filter(Boolean);
+  const agreementVersions = (item.versions || []).map((version) => ({
+    id: Number(version.id),
+    version_id: Number(version.id),
+    name: version.file?.split("/").pop() || `Agreement version ${version.id}`,
+    file: version.file,
+    type: version.is_final ? "final_signed" : "agreement_draft",
+    version: version.status_at_time,
+    status: version.is_final ? "final_signed" : "uploaded",
+    is_final: version.is_final,
+    uploaded_at: version.timestamp,
+    uploaded_by: version.uploaded_by?.full_name || "Accord360",
+    source: "agreement_version"
+  }));
+  const documents = agreementVersions.length
+    ? agreementVersions
+    : (item.documents || []).map(normalizeDocument).filter(Boolean);
   const legalComments = (item.workflow_events || [])
     .filter((event) => event.comment && ["return_correction", "return_dvc", "reject", "approve_legal", "send_legal"].includes(event.action))
     .map((event) => ({
@@ -183,10 +198,11 @@ export function normalizeAgreementDetail(item) {
       ? Math.max(1, Math.round((new Date(item.expiry_date) - new Date(item.effective_date)) / 2629800000))
       : null,
     confidentiality: item.confidentiality,
-    champion_name: item.internal_champion || item.owner?.full_name || null,
-    champion_id: item.owner?.id ? Number(item.owner.id) : null,
+    researcher_name: item.researcher?.full_name || null,
+    researcher_id: item.researcher?.id ? Number(item.researcher.id) : null,
     partner_liaison_name: item.partner_liaison,
     documents,
+    versions: agreementVersions,
     workflow_events: item.workflow_events || [],
     lifecycle_history: lifecycleHistory,
     deliverables: item.deliverables || [],

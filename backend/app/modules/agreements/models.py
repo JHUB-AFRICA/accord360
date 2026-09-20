@@ -36,7 +36,7 @@ class Agreement(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"), nullable=False)
     department: Mapped[str] = mapped_column(String(180), nullable=False)
-    champion_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    researcher_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(40), default="draft_generated", index=True, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -48,7 +48,7 @@ class Agreement(Base, TimestampMixin):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     partner: Mapped["Partner"] = relationship(back_populates="agreements")
-    champion: Mapped["User"] = relationship(back_populates="owned_agreements", foreign_keys=[champion_id])
+    researcher: Mapped["User"] = relationship(back_populates="owned_agreements", foreign_keys=[researcher_id])
     versions: Mapped[list["AgreementVersion"]] = relationship(
         back_populates="agreement", cascade="all, delete-orphan", order_by="AgreementVersion.timestamp"
     )

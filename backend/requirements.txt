@@ -12,3 +12,5 @@ pytest==9.0.2
 httpx==0.28.1
 python-dotenv==1.2.2
 boto3==1.43.62
+docxtpl==0.20.1
+python-docx==1.2.0

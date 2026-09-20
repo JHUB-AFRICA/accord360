@@ -30,7 +30,7 @@ class ReportFilters(BaseModel):
 
 
 def _scoped_rows(db: Session, user: User, filters: ReportFilters) -> list[Agreement]:
-    stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.champion))
+    stmt = select(Agreement).options(selectinload(Agreement.partner), selectinload(Agreement.researcher))
     stmt = apply_agreement_scope(stmt, user)
     if filters.status:
         stmt = stmt.where(Agreement.status == filters.status)
@@ -63,7 +63,7 @@ def _portfolio(rows: list[Agreement]) -> dict:
                 "partner": item.partner.name,
                 "sector": item.partner.sector,
                 "department": item.department,
-                "champion": item.champion.full_name,
+                "researcher": item.researcher.full_name,
                 "status": item.status,
                 "start_date": item.start_date.isoformat() if item.start_date else None,
                 "end_date": item.end_date.isoformat() if item.end_date else None,
@@ -127,14 +127,14 @@ def export_agreements(
     writer.writerow(["Accord360 Agreement Export"])
     writer.writerow(["Generated at (UTC)", generated_at.isoformat(timespec="seconds")])
     writer.writerow([])
-    writer.writerow(["Title", "Partner", "Sector", "Department", "Champion", "Status", "Start Date", "End Date", "Days to Expiry"])
+    writer.writerow(["Title", "Partner", "Sector", "Department", "Researcher", "Status", "Start Date", "End Date", "Days to Expiry"])
     for item in rows:
         writer.writerow([
             item.title,
             item.partner.name,
             item.partner.sector,
             item.department,
-            item.champion.full_name,
+            item.researcher.full_name,
             item.status,
             item.start_date or "",
             item.end_date or "",

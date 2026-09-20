@@ -36,12 +36,12 @@ def list_users(
 
 
 
-@router.get("/champions", response_model=list[UserOut])
-def list_champions(
+@router.get("/researchers", response_model=list[UserOut])
+def list_researchers(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles("linkages")),
 ):
-    return service.list_champions(db)
+    return service.list_researchers(db)
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)

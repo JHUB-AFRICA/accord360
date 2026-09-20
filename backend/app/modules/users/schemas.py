@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 # Exactly four roles per REBUILD_BRIEF.md Section 2.1.
-Role = Literal["champion", "linkages", "legal", "me"]
+Role = Literal["researcher", "linkages", "legal", "me"]
 
 
 class ORMModel(BaseModel):
@@ -21,7 +21,7 @@ class UserCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=160)
     email: EmailStr
     password: str = Field(min_length=8)
-    role: Role = "champion"
+    role: Role = "researcher"
     department: str | None = None
 
 class UserUpdate(BaseModel):

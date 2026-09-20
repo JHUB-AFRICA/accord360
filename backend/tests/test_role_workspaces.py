@@ -5,7 +5,7 @@ from app.main import app
 client = TestClient(app)
 
 ACCOUNTS = {
-    "researcher": ("researcher@accord360.app", "Research@123", "JKUAT Champion"),
+    "researcher": ("researcher@accord360.app", "Research@123", "JKUAT Researcher"),
     "approver": ("approver@accord360.app", "Approver@123", "Department / Faculty Approver"),
     "linkages": ("linkages@accord360.app", "Linkages@123", "Linkages Officer"),
     "director_linkages": ("director.linkages@accord360.app", "Director@123", "Director, Linkages"),

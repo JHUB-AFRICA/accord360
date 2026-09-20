@@ -61,8 +61,8 @@ assert(badLogin.response.status === 401, "Invalid login must return 401");
 
 const adminUsers = await request("/users", { token: sessions.admin });
 assert(adminUsers.response.status === 200 && adminUsers.payload.length === 11, "GET /users failed");
-const champions = await request("/users/champions", { token: sessions.linkages });
-assert(champions.response.status === 200 && champions.payload.every((item) => item.role === "researcher"), "GET /users/champions failed");
+const researchers = await request("/users/researchers", { token: sessions.linkages });
+assert(researchers.response.status === 200 && researchers.payload.every((item) => item.role === "researcher"), "GET /users/researchers failed");
 const createdUser = await request("/users", { token: sessions.admin, method: "POST", body: { full_name: "Test Researcher", email: "test.researcher@example.com", password: "Password123", role: "researcher", department: "Computing" } });
 assert(createdUser.response.status === 201 && Number.isInteger(createdUser.payload.id), "POST /users failed");
 const disabledUser = await request(`/users/${createdUser.payload.id}`, { token: sessions.admin, method: "PATCH", body: { is_active: false } });

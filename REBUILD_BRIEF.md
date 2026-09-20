@@ -12,7 +12,7 @@ document; this brief translates it into concrete, checkable engineering tasks.
 
 ## 0. Non-negotiable ground rules
 
-1. There are **exactly four roles** in this system: `champion`, `linkages`,
+1. There are **exactly four roles** in this system: `researcher`, `linkages`,
    `legal`, `me` (Monitoring & Evaluation). Do not invent, keep, or reference
    any other role (`admin`, `approver`, `director_linkages`, `dvc`,
    `vc_office`, `executive`, `auditor`, `partner`-as-a-login-role, etc.). If a
@@ -100,7 +100,7 @@ must not coexist with the new model, even behind a flag.
 
 ### 2.1 Roles (exactly these four, these exact string values)
 ```
-champion   — proposes agreements, fills structured form, submits quarterly
+researcher   — proposes agreements, fills structured form, submits quarterly
              progress updates, sees ONLY their own agreements
 linkages   — verifies partners, manages templates, generates/re-uploads
              drafts, coordinates physical signing, uploads final signed scan,
@@ -131,7 +131,7 @@ never hardcode a duplicate matrix that can drift)
 
 | Status | Who can upload a new document version | Who can comment |
 |---|---|---|
-| `draft_generated` | no one | no one |
+| `draft_generated` | `linkages` (uploads the Linkages-prepared legal draft) | no one |
 | `pending_legal_review` | no one (locked) | `legal` |
 | `returned_for_corrections` | `linkages` | `legal` (view-only, cannot add new comments, can still resolve/re-open their own existing ones if you choose — default: view-only means read-only) |
 | `pending_legal_verification` | no one (locked) | `legal` |
@@ -145,7 +145,7 @@ never hardcode a duplicate matrix that can drift)
 edges)
 ```
 draft_generated
-  → pending_legal_review              [system, automatic, on draft generation]
+  → pending_legal_review              [linkages, when the Linkages-prepared legal draft is uploaded]
 pending_legal_review
   → returned_for_corrections          [legal requests changes]
   → approved_for_signing              [legal verifies, no changes needed — see 2.4a]
@@ -189,7 +189,7 @@ Agreement
   title: string
   partner: FK → Partner (or partner_name string if no Partner table is kept)
   department: string
-  champion: FK → User (role=champion)
+  researcher: FK → User (role=researcher)
   status: enum, one of the 9 values in 2.2
   start_date: date
   end_date: date
@@ -239,8 +239,8 @@ ProgressUpdate
   agreement_id: FK → Agreement
   quarter: string (e.g. "2026-Q1")
   notes: text
-  submitted_by: FK → User (must have role=champion, and must be the
-                agreement's own champion — enforce server-side)
+  submitted_by: FK → User (must have role=researcher, and must be the
+                agreement's own researcher — enforce server-side)
   created_at: timestamp
   # Only creatable when Agreement.status == 'fully_executed' or 'expired'.
   # Reject creation attempts otherwise with a clear 400 error.
@@ -266,7 +266,7 @@ FieldDefinition
                                 # "Partner Organization Name"
   required: boolean, default true
   # This table is the single source of truth for: (a) which fields appear on
-  # the Champion's structured form, and (b) which {{tags}} are checked for
+  # the Researcher's structured form, and (b) which {{tags}} are checked for
   # during template upload validation (Phase 2). Adding a new field to the
   # system = one row here + no other code change to merge/validation logic.
 ```
@@ -274,12 +274,12 @@ FieldDefinition
 ### 2.7 Visibility rules (enforce server-side in every list/detail query —
 do not rely on frontend filtering alone)
 ```
-champion → only Agreements where Agreement.champion == current_user
+researcher → only Agreements where Agreement.researcher == current_user
            (sees: their own proposal, all versions, comments read-only if any
-           are visible to them — spec doesn't grant champion comment
-           visibility explicitly, default to: champion can see the final
+           are visible to them — spec doesn't grant researcher comment
+           visibility explicitly, default to: researcher can see the final
            signed AgreementVersion and their own ProgressUpdates; do not
-           expose Legal's in-progress comments to Champion — that's an
+           expose Legal's in-progress comments to Researcher — that's an
            internal Linkages/Legal conversation)
 linkages → ALL agreements, all versions, all comments
 legal    → ALL agreements, all versions, all comments (same as linkages)
@@ -312,7 +312,7 @@ me       → ALL agreements' status/progress data; ProgressUpdates; expiry
 ## 3. Phase 2 — Document generation engine
 
 This is the single most important missing capability. Currently nothing
-merges Champion form data into a template. Build this before anything else in
+merges Researcher form data into a template. Build this before anything else in
 Phase 2/3.
 
 ### 3.1 Library
@@ -321,22 +321,23 @@ merge library without flagging it — `docxtpl` is the spec's named
 recommendation.
 
 ### 3.2 Flow (implement exactly this, no shortcuts)
-1. Champion fills a structured form on the frontend — one input per active
+1. Researcher fills a structured form on the frontend — one input per active
    `FieldDefinition` row (label + required flag drive the form; do not
    hardcode field names in the frontend).
-2. Champion submits → backend creates the `Agreement` row with
-   `status = draft_generated`.
-3. Backend endpoint (e.g. `POST /agreements/{id}/generate-draft`) immediately:
-   a. Looks up the active `Template` for the relevant `document_type`.
-   b. Merges the submitted field values into the template using `docxtpl`,
-      producing a `.docx` (and/or PDF if you also render one — PDF is not
-      required by the spec, `.docx` is sufficient).
-   c. Creates the first `AgreementVersion` (uploaded_by = system/linkages,
-      status_at_time = `draft_generated`, is_final = false).
-   d. Transitions `Agreement.status` to `pending_legal_review` and fires the
-      "Draft ready → notify Legal" notification (Phase 4).
-4. **Champion never uploads a file at any point in this flow.** There must be
-   no file-upload input rendered anywhere in the Champion-facing form.
+2. Researcher submits → backend creates the `Agreement` row with
+   `status = draft_generated` and notifies Linkages. This is the Linkages
+   intake state; it is not yet Legal review.
+3. Linkages reviews the system-generated document and prepares the actual
+   agreement draft. Linkages uploads that draft through a dedicated version
+   upload endpoint. The upload:
+   a. creates the first `AgreementVersion` with `uploaded_by = linkages`,
+      `status_at_time = draft_generated`, and `is_final = false`;
+   b. transitions `Agreement.status` to `pending_legal_review`; and
+   c. fires the "Draft ready → notify Legal" notification.
+4. The system-generated Researcher document is retained as intake data/history;
+   it is not sent to Legal as the legal draft. **Researcher never uploads a
+   file at any point in this flow.** There must be
+   no file-upload input rendered anywhere in the Researcher-facing form.
 
 ### 3.3 Template validation on upload (Linkages-facing)
 When Linkages uploads a new `.docx` template (`POST /templates`):
@@ -359,16 +360,17 @@ and enforce it consistently in both the merge code and the validation scan).
 ### Phase 2 Acceptance Criteria
 - [ ] `docxtpl` and `python-docx` are in `backend/requirements.txt` and
       actually imported/used (not just declared).
-- [ ] Submitting the Champion form for an agreement with a valid active
-      template produces a real, downloadable `.docx` file with the submitted
-      values correctly merged in (verify by generating one and opening it).
-- [ ] There is no code path where a `champion`-role user can call a
+- [ ] Submitting the Researcher form produces the system-generated intake
+      document and routes the agreement to Linkages in `draft_generated`.
+- [ ] Linkages can upload the actual agreement draft as a new version, which
+      moves the agreement to `pending_legal_review` and notifies Legal.
+- [ ] There is no code path where a `researcher`-role user can call a
       file-upload endpoint for a new `AgreementVersion`. Attempting it
       returns 403.
 - [ ] Uploading a template missing a required placeholder returns the
       validation summary and prevents `is_active=true` on that template until
       fixed.
-- [ ] The field list on the Champion's form is generated dynamically from
+- [ ] The field list on the Researcher's form is generated dynamically from
       `FieldDefinition` rows, not hardcoded in frontend JSX.
 
 ---
@@ -407,7 +409,7 @@ and enforce it consistently in both the merge code and the validation scan).
   - Reject any further `POST /agreements/{id}/versions` or comment-creation
     calls for this agreement (return 409/423 "agreement is fully executed and
     locked").
-  - Fire "Fully executed → notify Legal, Champion, M&E simultaneously" (all
+  - Fire "Fully executed → notify Legal, Researcher, M&E simultaneously" (all
     three, in one call — this was previously missing).
   - Compute and store `expiry_alert_date = end_date - relativedelta(months=6)`
     on the `Agreement` row, right here, once. Do not compute it elsewhere or
@@ -440,7 +442,7 @@ and enforce it consistently in both the merge code and the validation scan).
   `# TODO(spec): confirm deployment topology with team`, but include the lock.
 
 ### 4.5 Quarterly progress updates
-- `POST /agreements/{id}/progress-updates`: `champion`-only, only for their
+- `POST /agreements/{id}/progress-updates`: `researcher`-only, only for their
   own agreement, only when status is `fully_executed` (or `expired` — an
   agreement can still be actively monitored while expired-pending-renewal).
   Reject with a clear error otherwise.
@@ -458,7 +460,7 @@ more, no fewer — verify each one fires by writing a test that asserts a
 | Legal requests changes (→ returned_for_corrections) | `linkages` |
 | Corrected draft resubmitted (→ pending_legal_verification) | `legal` |
 | Legal approves (→ approved_for_signing) | `linkages` |
-| Fully executed (awaiting_signatures → fully_executed) | `legal`, `champion` (this agreement's), `me` — all three, same event |
+| Fully executed (awaiting_signatures → fully_executed) | `legal`, `researcher` (this agreement's), `me` — all three, same event |
 | Expiry approaching (expiry_alert_date reached) | `me` |
 | Agreement expired (end_date passed) | `me` |
 
@@ -486,12 +488,12 @@ more, no fewer — verify each one fires by writing a test that asserts a
 ## 5. Phase 4 — Frontend rebuild
 
 ### 5.1 Four role-scoped views only
-- `champion`: agreement list (own only), the structured proposal form
+- `researcher`: agreement list (own only), the structured proposal form
   (dynamic fields from `FieldDefinition`), agreement detail (read-only
   document + their own progress-update submission form once
   fully_executed/expired).
 - `linkages`: shared filterable agreements table (all agreements — columns:
-  partner, department, status, champion, start/end date), agreement detail
+  partner, department, status, researcher, start/end date), agreement detail
   page (version history, comment thread read/participate, status action
   buttons per Section 2.3), template admin screen (upload/activate/deactivate
   templates, see validation summary from 3.3), a static "template authoring
@@ -516,7 +518,7 @@ and backend-enforced permissions is a bug — the backend must reject
 disallowed actions regardless of what the frontend shows (defense in depth,
 frontend is not the security boundary).
 
-### 5.3 Champion form
+### 5.3 Researcher form
 Reuse `AgreementForm.jsx`'s wizard shell, but:
 - Remove the manual file-upload step entirely.
 - Remove the `template_id` manual-selection step — template selection is
@@ -525,13 +527,13 @@ Reuse `AgreementForm.jsx`'s wizard shell, but:
 - Remove `confidentiality` and any other field not in `FieldDefinition` /
   the core `Agreement` fields listed in Section 2.6.
 - Remove the code path that lets `linkages`/other roles use this same wizard
-  to create agreements on a Champion's behalf, unless the spec-referenced
-  workflow explicitly requires it (it doesn't — Champion self-initiates).
+  to create agreements on a Researcher's behalf, unless the spec-referenced
+  workflow explicitly requires it (it doesn't — Researcher self-initiates).
 
 ### Phase 4 Acceptance Criteria
 - [ ] Exactly 4 top-level authenticated views/dashboards exist, one per role.
       No routes reachable for removed roles.
-- [ ] No file-upload `<input>` exists anywhere in a `champion`-role-rendered
+- [ ] No file-upload `<input>` exists anywhere in a `researcher`-role-rendered
       page.
 - [ ] No file-upload button/action renders anywhere in a `legal`-role-rendered
       page.
@@ -568,6 +570,26 @@ them again in your completion report so a human can decide.
 5. Single vs. multi-instance deployment (affects whether the scheduler lock
    in 4.4 is load-bearing) — **Default: implement the lock anyway (cheap
    insurance), assume single-instance for now.**
+6. What concretely happens when M&E clicks "Update" on an `Expired`
+   agreement (Section 2.5)? Confirmed with Jason on 2026-09-20, still
+   pending a real answer from Linkages Office at the next requirements
+   meeting. Two things ARE confirmed and must be respected in the
+   meantime:
+   - An agreement sitting in `Expired` does **not** mean the collaboration
+     is no longer wanted — it can sit there indefinitely while a renewal
+     is slowly being worked out. Nothing should auto-archive it, add a
+     time limit, or otherwise treat `Expired` as a countdown to deletion.
+   - Archiving is **always** a deliberate, manual M&E action. Never
+     archive an agreement automatically for any reason (age, inactivity,
+     time since expiry, etc.) — only an explicit M&E "Archive" click may
+     set `archived = true` / move status to `archived`.
+   What's still unknown: what "Update" actually produces (does it collect
+   new dates from the Researcher? does it route back through Legal review,
+   or straight to a new active status? does it reset
+   `expiry_alert_date`/`expiry_notified`, and how?). **Default until
+   answered: keep the Phase 1 placeholder** (`expired → approved_for_signing`,
+   with the existing `# TODO(spec)` comment in `agreements/service.py`) —
+   do not build out a fuller renewal workflow on speculation.
 
 ---
 
@@ -578,7 +600,7 @@ checklists (Sections 2, 3, 4, 5) pass, AND:
 - [ ] Every item in Section 1 ("what gets removed") is confirmed removed —
       `grep` for each named symbol/file returns nothing in `app/` or `src/`.
 - [ ] The full lifecycle (Section 2.4) can be walked end-to-end manually:
-      champion submits → draft auto-generated → legal comments → linkages
+      researcher submits → draft auto-generated → legal comments → linkages
       corrects → legal approves → linkages marks awaiting signatures →
       linkages uploads signed scan → all three parties notified → expiry
       alert fires 6 months before end_date → agreement auto-expires → M&E

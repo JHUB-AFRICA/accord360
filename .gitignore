@@ -6,8 +6,9 @@ backend/venv/
 backend/accord360.db
 accord360.db
 backend/demo_accord360.db
-backend/test_accord360.db
+backend/*.db
 backend/test_uploads/
+backend/test_*_uploads/
 backend/uploads/*
 !backend/uploads/.gitkeep
 

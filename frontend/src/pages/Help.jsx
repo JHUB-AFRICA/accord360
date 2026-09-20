@@ -8,7 +8,7 @@ const articles = [
   { category: "Corrections & returns", title: "Respond to a structured correction", text: "Open the correction record, follow the deep link to the exact item, submit a response and attach replacement evidence." },
   { category: "Legal review", title: "Understand blocking Legal comments", text: "Legal approval remains unavailable while unresolved blocking comments exist." },
   { category: "Governance", title: "DVC RPE and VC responsibilities", text: "DVC RPE endorses the legally approved package. The VC Office receives the complete package and tracks execution." },
-  { category: "Monitoring & reporting", title: "Submit a six-month Champion report", text: "Update activities, outputs, challenges, value, evidence and renewal recommendation, then submit to Linkages." },
+  { category: "Monitoring & reporting", title: "Submit a six-month Researcher report", text: "Update activities, outputs, challenges, value, evidence and renewal recommendation, then submit to Linkages." },
   { category: "Access", title: "Role-specific workspaces", text: "Accord360 only displays navigation, actions and records relevant to the signed-in user's role and organization scope." }
 ];
 

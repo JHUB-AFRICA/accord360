@@ -18,6 +18,10 @@ class TemplateOut(ORMModel):
     is_active: bool
     uploaded_by: UserOut
     timestamp: datetime
+    present: list[str] = []
+    missing_required: list[str] = []
+    unknown_tokens: list[str] = []
+    validated: bool = False
 
 
 class FieldDefinitionCreate(BaseModel):

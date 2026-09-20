@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,8 @@ class AgreementCreate(BaseModel):
     partner_id: int
     start_date: date
     end_date: date
+    document_type: str = Field(default="Standard MoU", min_length=2, max_length=120)
+    field_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgreementUpdate(BaseModel):
@@ -73,7 +75,7 @@ class AgreementListOut(ORMModel):
     department: str
     status: AgreementStatus
     partner: PartnerOut
-    champion: UserOut
+    researcher: UserOut
     start_date: date
     end_date: date
     expiry_alert_date: date | None

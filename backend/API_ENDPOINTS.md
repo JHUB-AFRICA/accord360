@@ -172,10 +172,10 @@ Requires a valid token. Returns the authenticated `user` object shown above.
 
 Requires `admin`. Returns `UserOut[]`.
 
-### `GET /users/champions`
+### `GET /users/researchers`
 
 Requires `admin`, `linkages`, or `director_linkages`. Returns active researcher
-accounts eligible to be assigned as Champions. The response uses `UserOut[]`.
+accounts eligible to be assigned as Researchers. The response uses `UserOut[]`.
 
 ### `POST /users`
 
@@ -364,9 +364,9 @@ Request:
   "strategic_alignment": "Strategic alignment",
   "department": "Computing",
   "partner_id": 1,
-  "champion_user_id": 2,
+  "researcher_user_id": 2,
   "confidentiality": "internal",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01"
@@ -375,7 +375,7 @@ Request:
 
 `agreement_type` must be `MoU`, `CRA`, `CA`, or `Other`. `purpose` must be at
 least 10 characters. Linkages roles must provide an active researcher
-`champion_user_id`; researchers become the owner automatically.
+`researcher_user_id`; researchers become the owner automatically.
 
 Returns `AgreementDetailOut` with status `201`.
 
@@ -395,7 +395,7 @@ Requires a valid token and edit permission. Send only fields being changed:
   "strategic_alignment": "Updated alignment",
   "department": "Computing",
   "confidentiality": "confidential",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01",
@@ -660,8 +660,8 @@ internal agreement routes reject the partner role.
 
 ## Agreement ownership and personal visibility
 
-Each agreement records `owner_id` for the assigned Champion and `initiator_id`
-for the user who created the request. Champion/researcher accounts can only
+Each agreement records `owner_id` for the assigned Researcher and `initiator_id`
+for the user who created the request. Researcher/researcher accounts can only
 list and open agreements where they are the owner or initiator. Linkages and
 Director of Linkages accounts retain the office-wide operational view. This
 scope is enforced by the backend query and detail authorization checks, not
@@ -728,7 +728,7 @@ The following paths are present in some frontend code/contracts but are not
 currently exposed by this backend:
 
 ```text
-GET /directory/champions
+GET /directory/researchers
 GET /corrections
 GET /corrections/{id}
 POST /corrections/{id}/respond
@@ -748,7 +748,7 @@ Use these backend names exactly:
 | Frontend assumption | Backend implementation |
 |---|---|
 | `GET /dashboard` | `GET /dashboard/workspace` and `GET /dashboard/stats` |
-| `GET /directory/champions` | `GET /users/champions` |
+| `GET /directory/researchers` | `GET /users/researchers` |
 | `PATCH /partners/{id}` | `PUT /partners/{id}` |
 | `POST /agreements/{id}/actions/{action}` | `POST /agreements/{id}/transition` with `{ "action": "...", "comment": "..." }` |
 | `agreement_type` query value named `type` | `agreement_type` |

@@ -23,6 +23,7 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["SEED_DEMO_DATA"] = "false"
 
 import pytest
+from docx import Document
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
@@ -45,14 +46,14 @@ def _make_user(db, role: str, suffix: str) -> User:
     return user
 
 
-def _make_agreement(db, champion: User, partner: Partner, status: str = "awaiting_signatures") -> Agreement:
+def _make_agreement(db, researcher: User, partner: Partner, status: str = "awaiting_signatures") -> Agreement:
     from datetime import date, timedelta
 
     agreement = Agreement(
         title=f"Invariant test agreement {uuid4().hex[:8]}",
         partner_id=partner.id,
         department="Computing",
-        champion_id=champion.id,
+        researcher_id=researcher.id,
         status=status,
         start_date=date.today(),
         end_date=date.today() + timedelta(days=365),
@@ -60,6 +61,16 @@ def _make_agreement(db, champion: User, partner: Partner, status: str = "awaitin
     db.add(agreement)
     db.flush()
     return agreement
+
+
+def _template_bytes(text: str) -> bytes:
+    import io
+
+    document = Document()
+    document.add_paragraph(text)
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
 
 
 def test_activating_template_deactivates_sibling_of_same_document_type():
@@ -70,11 +81,11 @@ def test_activating_template_deactivates_sibling_of_same_document_type():
 
         first = template_service.create_template(
             db, TemplateCreate(document_type="Standard MoU"), linkages, request=None,
-            content=b"first-template-bytes", original_name="first.docx",
+            content=_template_bytes("Plain template"), original_name="first.docx",
         )
         second = template_service.create_template(
             db, TemplateCreate(document_type="Standard MoU"), linkages, request=None,
-            content=b"second-template-bytes", original_name="second.docx",
+            content=_template_bytes("Plain template"), original_name="second.docx",
         )
         assert first.is_active is False
         assert second.is_active is False
@@ -104,12 +115,12 @@ def test_activating_template_deactivates_sibling_of_same_document_type():
 def test_agreement_version_is_final_exclusivity_and_lock():
     suffix = uuid4().hex[:8]
     with SessionLocal() as db:
-        champion = _make_user(db, "champion", suffix)
+        researcher = _make_user(db, "researcher", suffix)
         linkages = _make_user(db, "linkages", f"{suffix}-l")
         partner = Partner(name=f"Invariant Partner {suffix}", sector="Technology", country="Kenya")
         db.add(partner)
         db.flush()
-        agreement = _make_agreement(db, champion, partner, status="awaiting_signatures")
+        agreement = _make_agreement(db, researcher, partner, status="awaiting_signatures")
         db.commit()
 
         add_agreement_version(db, agreement, file="drafts/v1.docx", uploaded_by=linkages, is_final=False)

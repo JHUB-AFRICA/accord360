@@ -12,7 +12,7 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 |---|---|
 | Workspace dashboard | `GET /dashboard/workspace` |
 | Portfolio statistics | `GET /dashboard/stats` |
-| Champion directory | `GET /users/champions` |
+| Researcher directory | `GET /users/researchers` |
 | Update partner | `PUT /partners/{partner_id}` |
 | Review partner | `POST /partners/{partner_id}/review` and `GET /partners/{partner_id}/reviews` |
 | Template library | `GET/POST /templates`, `PATCH /templates/{template_id}`, `GET /templates/{template_id}/download` |
@@ -79,21 +79,21 @@ Scorecard pages use persisted, role-scoped snapshots through `GET /scorecards`,
 `GET /scorecards/{agreement_id}/history`. Administrators can inspect and publish
 versioned definitions through `GET/POST /scorecards/definitions`.
 
-Agreement responses include both `owner` (the assigned Champion) and
-`initiator` (the user who created the request). Personal Champion views are
+Agreement responses include both `owner` (the assigned Researcher) and
+`initiator` (the user who created the request). Personal Researcher views are
 backend-scoped to agreements where either field identifies the current user;
 Linkages office roles retain their authorized office-wide scope.
 
 Historical records are reviewed through the protected `/data-review` routes.
 The UI preserves the original source fields, saves Linkages corrections, and
-requires a Champion assignment before marking a record verified.
+requires a Researcher assignment before marking a record verified.
 
 ## Unsupported backend capabilities
 
 No production request is sent to:
 
 - `/dashboard`
-- `/directory/champions`
+- `/directory/researchers`
 - `/auth/forgot-password`
 - `/auth/register-partner`
 - `/me/reports`

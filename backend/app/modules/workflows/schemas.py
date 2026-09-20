@@ -19,7 +19,8 @@ class WorkflowEventOut(ORMModel):
 
 # Exactly the transition-graph edges in REBUILD_BRIEF.md Section 2.4 that are
 # triggered by a user action (as opposed to the two system/automatic edges —
-# draft_generated -> pending_legal_review on draft generation (Phase 2), and
+# draft_generated remains the Linkages intake state until Linkages uploads the
+# legal draft; that upload transitions the agreement to pending_legal_review.
 # fully_executed -> expired on the daily expiry job (Phase 3) — neither of
 # which is exposed through this endpoint).
 TransitionAction = Literal[

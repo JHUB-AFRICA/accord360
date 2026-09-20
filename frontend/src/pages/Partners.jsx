@@ -26,7 +26,7 @@ export default function Partners() {
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
-  const canCreate = ["champion", "linkages"].includes(user.role);
+  const canCreate = ["researcher", "linkages"].includes(user.role);
   const canVerify = ["linkages"].includes(user.role);
 
   const load = useCallback(() => {

@@ -30,7 +30,7 @@ export default function CorrectionDetail() {
   if (error && !record) return <><PageHeader eyebrow="Correction workspace" title="Correction details" /><ErrorState message={error} onRetry={load} /></>;
   if (!record) return <LoadingState label="Loading correction details" />;
 
-  const canRespond = record.status === "pending" && ((record.return_action === "return_correction" && ["champion", "linkages"].includes(user.role)) || (record.return_action === "return_dvc" && user.role === "legal"));
+  const canRespond = record.status === "pending" && ((record.return_action === "return_correction" && ["researcher", "linkages"].includes(user.role)) || (record.return_action === "return_dvc" && user.role === "legal"));
   const canResolve = record.status === "responded" && (user.role === "linkages" || user.role === record.requested_by?.role);
 
   async function submitResponse() {

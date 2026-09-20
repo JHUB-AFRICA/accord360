@@ -177,10 +177,10 @@ Invalid or expired tokens return `400`.
 
 Requires `admin`. Returns `UserOut[]`.
 
-### `GET /users/champions`
+### `GET /users/researchers`
 
 Requires `admin`, `linkages`, or `director_linkages`. Returns active researcher
-accounts eligible to be assigned as Champions. The response uses `UserOut[]`.
+accounts eligible to be assigned as Researchers. The response uses `UserOut[]`.
 
 ### `POST /users`
 
@@ -390,7 +390,7 @@ The assigned response role submits the correction response:
 {"response_text": "Updated the clause with the approved wording."}
 ```
 
-For `return_correction`, the assigned Champion or Linkages user responds and
+For `return_correction`, the assigned Researcher or Linkages user responds and
 the agreement advances through `submit`. For `return_dvc`, Legal responds and
 the agreement advances through `approve_legal`.
 
@@ -468,9 +468,9 @@ Request:
   "strategic_alignment": "Strategic alignment",
   "department": "Computing",
   "partner_id": 1,
-  "champion_user_id": 2,
+  "researcher_user_id": 2,
   "confidentiality": "internal",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01"
@@ -479,7 +479,7 @@ Request:
 
 `agreement_type` must be `MoU`, `CRA`, `CA`, or `Other`. `purpose` must be at
 least 10 characters. Linkages roles must provide an active researcher
-`champion_user_id`; researchers become the owner automatically.
+`researcher_user_id`; researchers become the owner automatically.
 
 Returns `AgreementDetailOut` with status `201`.
 
@@ -499,7 +499,7 @@ Requires a valid token and edit permission. Send only fields being changed:
   "strategic_alignment": "Updated alignment",
   "department": "Computing",
   "confidentiality": "confidential",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01",
@@ -802,7 +802,7 @@ currently exposed by this backend:
 GET/POST/PATCH /configuration
 GET/POST/PATCH /templates
 GET /reference-data
-GET /directory/champions
+GET /directory/researchers
 GET /reports/portfolio
 POST /reports/ai-summary
 GET /reports/export.pdf
@@ -822,7 +822,7 @@ Use these backend names exactly:
 | Frontend assumption | Backend implementation |
 |---|---|
 | `GET /dashboard` | `GET /dashboard/workspace` and `GET /dashboard/stats` |
-| `GET /directory/champions` | `GET /users/champions` |
+| `GET /directory/researchers` | `GET /users/researchers` |
 | `PATCH /partners/{id}` | `PUT /partners/{id}` |
 | `POST /agreements/{id}/actions/{action}` | `POST /agreements/{id}/transition` with `{ "action": "...", "comment": "..." }` |
 | `agreement_type` query value named `type` | `agreement_type` |

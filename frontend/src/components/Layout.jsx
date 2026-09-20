@@ -43,8 +43,8 @@ const iconMap = {
 // audit) and removed roles (approver, director_linkages, dvc, vc_office,
 // executive, admin, auditor). Keyed by the four Section 2.1 roles.
 const navigation = {
-  champion: [
-    ["home", "Dashboard", "/champion"],
+  researcher: [
+    ["home", "Dashboard", "/researcher"],
     ["new", "Create request", "/agreements/new"],
     ["agreements", "My requests", "/agreements"],
     ["corrections", "Corrections", "/corrections"],

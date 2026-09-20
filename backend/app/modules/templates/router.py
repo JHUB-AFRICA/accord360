@@ -10,9 +10,13 @@ from app.deps import get_current_user, require_roles
 from app.modules.users.models import User
 
 from . import service
-from .schemas import TemplateCreate, TemplateOut
+from .schemas import FieldDefinitionOut, TemplateCreate, TemplateOut
 
 router = APIRouter(prefix="/templates", tags=["Templates"])
+
+
+def _template_out(db: Session, template) -> TemplateOut:
+    return TemplateOut.model_validate(template).model_copy(update=service.template_response_data(db, template))
 
 
 @router.get("", response_model=list[TemplateOut])
@@ -21,7 +25,15 @@ def list_templates(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return service.list_templates(db, document_type)
+    return [_template_out(db, item) for item in service.list_templates(db, document_type)]
+
+
+@router.get("/fields", response_model=list[FieldDefinitionOut])
+def list_field_definitions(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return service.list_field_definitions(db)
 
 
 @router.post("", response_model=TemplateOut, status_code=status.HTTP_201_CREATED)
@@ -35,7 +47,8 @@ async def create_template(
     try:
         content = await file.read()
         payload = TemplateCreate(document_type=document_type)
-        return service.create_template(db, payload, actor, request, content, file.filename)
+        template = service.create_template(db, payload, actor, request, content, file.filename)
+        return TemplateOut.model_validate(template).model_copy(update=service.validate_docx_placeholders(db, content))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -48,9 +61,11 @@ def activate_template(
     actor: User = Depends(require_roles("linkages")),
 ):
     try:
-        return service.activate_template(db, template_id, actor, request)
+        return _template_out(db, service.activate_template(db, template_id, actor, request))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{template_id}/deactivate", response_model=TemplateOut)
@@ -61,7 +76,7 @@ def deactivate_template(
     actor: User = Depends(require_roles("linkages")),
 ):
     try:
-        return service.deactivate_template(db, template_id, actor, request)
+        return _template_out(db, service.deactivate_template(db, template_id, actor, request))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -1,19 +1,18 @@
 import { Download, FileCheck2, FileLock2, FileText, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { downloadAgreementDocument, getAgreement, uploadAgreementDocument } from "../lib/backend.js";
+import { downloadAgreementDocument, downloadAgreementVersion, getAgreement, uploadAgreementDocument } from "../lib/backend.js";
 import { formatDateTime } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
 import Modal from "./Modal.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 
-const uploadRoles = ["champion", "linkages", "legal", "me"];
 const allowedExtensions = ["pdf", "doc", "docx", "xls", "xlsx", "csv", "png", "jpg", "jpeg", "txt"];
 
 export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ file: null, documentType: "supporting", version: "1.0", confidentiality: "internal", isOfficial: false });
-  const canUpload = uploadRoles.includes(user.role) && record.backend_stage !== "archived";
+  const canUpload = (user.role === "linkages" && record.status === "returned_for_corrections") || (user.role === "me" && record.status === "expired");
 
   async function upload() {
     if (!form.file) {
@@ -57,7 +56,7 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
               <span className="document-icon">{document.status === "final_signed" ? <FileCheck2 /> : document.is_official ? <FileLock2 /> : <FileText />}</span>
               <div><strong>{document.name}</strong><span>{document.type} · Version {document.version} · {document.confidentiality}</span><small>Uploaded {formatDateTime(document.uploaded_at)} · {Math.ceil(Number(document.size || 0) / 1024)} KB</small></div>
               <StatusBadge status={document.status} />
-              <button className="icon-button" onClick={() => downloadAgreementDocument(record.id, document.id, document.name).catch((error) => onError(error.message))} aria-label={`Download ${document.name}`}><Download size={18} /></button>
+              <button className="icon-button" onClick={() => (document.source === "agreement_version" ? downloadAgreementVersion(record.id, document.version_id, document.name) : downloadAgreementDocument(record.id, document.id, document.name)).catch((error) => onError(error.message))} aria-label={`Download ${document.name}`}><Download size={18} /></button>
             </article>
           ))}
           {!record.documents?.length && <EmptyState title="No documents uploaded" text="Upload the first required or supporting document." />}
