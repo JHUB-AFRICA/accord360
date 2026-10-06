@@ -24,11 +24,23 @@ def test_login_and_dashboard():
     assert "kpis" in response.json()
 
 
-def test_partner_and_agreement_creation():
+def test_partner_and_agreement_creation(monkeypatch):
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Phase B: create_agreement calls the
+    # Drive integration — no test may depend on real Google credentials.
+    from app.modules.agreements import service as agreement_service
+
+    monkeypatch.setattr(agreement_service.google_drive, "copy_template", lambda master_doc_id, name: "smoke-test-copy")
+    monkeypatch.setattr(agreement_service.google_drive, "grant_permission", lambda doc_id, email, role="writer", notify=True: f"perm-{email}")
+    monkeypatch.setattr(agreement_service.google_drive, "doc_url", lambda doc_id: f"https://docs.google.com/document/d/{doc_id}/edit")
+
     login = client.post("/api/auth/login", json={"email": "linkages@accord360.app", "password": "Linkages@123"})
     token = login.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    partner = client.post("/api/partners", headers=headers, json={"name": "Smoke Test Partner Unique", "sector": "Technology"})
+    partner = client.post(
+        "/api/partners",
+        headers=headers,
+        json={"name": "Smoke Test Partner Unique", "sector": "Technology", "contact_email": "partner-smoke@example.org"},
+    )
     assert partner.status_code in {201, 409}
     if partner.status_code == 409:
         partner_id = next(item["id"] for item in client.get("/api/partners", headers=headers).json() if item["name"] == "Smoke Test Partner Unique")

@@ -253,46 +253,22 @@ export function normalizeAudit(item) {
 }
 
 export function normalizeDashboard(workspace, stats) {
-  const byType = stats?.by_type || [];
   return {
     workspace,
     kpis: workspace?.metrics || [],
-    queue: (workspace?.queue || []).map((item) => normalizeAgreementList({
-      ...item,
-      reference_number: item.reference_number,
-      partner: { name: item.partner },
-      owner: {},
-      agreement_type: item.agreement_type || "—",
-      department: item.department || "—",
-      effective_date: null,
-      expiry_date: null,
-      legal_review_days: null,
-      created_at: item.updated_at || new Date().toISOString(),
-      updated_at: item.updated_at || new Date().toISOString()
+    queue: (workspace?.queue || []).map((item) => ({
+      id: Number(item.id),
+      title: item.title,
+      partner_name: item.partner,
+      department: item.department,
+      status: item.status
     })),
-    by_stage: stats?.by_stage || [],
-    by_type: byType,
-    by_risk: stats?.by_risk || [],
-    trend: (stats?.monthly_pipeline || []).map((item) => ({ month: item.month, requests: item.count })),
-    recent: (stats?.recent_agreements || []).map((item) => normalizeAgreementList({
+    byStatus: stats?.by_status || [],
+    monthlyCreated: (stats?.monthly_created || []).map((item) => ({
       ...item,
-      reference_number: item.reference_number,
-      partner: { name: item.partner },
-      owner: {},
-      agreement_type: item.agreement_type || "—",
-      department: item.department || "—",
-      effective_date: null,
-      expiry_date: null,
-      created_at: item.updated_at,
-      updated_at: item.updated_at
+      label: new Date(`${item.month}-01T00:00:00`).toLocaleDateString(undefined, { month: "short" })
     })),
-    totals: {
-      total_partnerships: Number(stats?.kpis?.total_partnerships ?? byType.reduce((sum, item) => sum + Number(item.value || 0), 0)),
-      active_agreements: Number(stats?.kpis?.active_partnerships || 0),
-      pipeline: Number(stats?.kpis?.pipeline_volume || 0),
-      at_risk: Number(stats?.kpis?.at_risk || 0),
-      value_by_currency: stats?.kpis?.value_by_currency || []
-    }
+    kpiTotals: stats?.kpis || {}
   };
 }
 

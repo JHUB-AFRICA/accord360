@@ -23,7 +23,6 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["SEED_DEMO_DATA"] = "false"
 
 import pytest
-from docx import Document
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
@@ -63,16 +62,6 @@ def _make_agreement(db, researcher: User, partner: Partner, status: str = "await
     return agreement
 
 
-def _template_bytes(text: str) -> bytes:
-    import io
-
-    document = Document()
-    document.add_paragraph(text)
-    output = io.BytesIO()
-    document.save(output)
-    return output.getvalue()
-
-
 def test_activating_template_deactivates_sibling_of_same_document_type():
     suffix = uuid4().hex[:8]
     with SessionLocal() as db:
@@ -80,12 +69,10 @@ def test_activating_template_deactivates_sibling_of_same_document_type():
         db.commit()
 
         first = template_service.create_template(
-            db, TemplateCreate(document_type="Standard MoU"), linkages, request=None,
-            content=_template_bytes("Plain template"), original_name="first.docx",
+            db, TemplateCreate(document_type="MoU", master_doc_id=f"master-{suffix}-1"), linkages, request=None,
         )
         second = template_service.create_template(
-            db, TemplateCreate(document_type="Standard MoU"), linkages, request=None,
-            content=_template_bytes("Plain template"), original_name="second.docx",
+            db, TemplateCreate(document_type="MoU", master_doc_id=f"master-{suffix}-2"), linkages, request=None,
         )
         assert first.is_active is False
         assert second.is_active is False
@@ -106,7 +93,7 @@ def test_activating_template_deactivates_sibling_of_same_document_type():
         # At most one active Template per document_type, ever.
         active_count = (
             db.query(Template)
-            .filter(Template.document_type == "Standard MoU", Template.is_active.is_(True))
+            .filter(Template.document_type == "MoU", Template.is_active.is_(True))
             .count()
         )
         assert active_count == 1

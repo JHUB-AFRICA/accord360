@@ -3,7 +3,6 @@ import AccountState from "./pages/AccountState.jsx";
 import AgreementDetail from "./pages/AgreementDetail.jsx";
 import AgreementForm from "./pages/AgreementForm.jsx";
 import Agreements from "./pages/Agreements.jsx";
-import Configuration from "./pages/Configuration.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Help from "./pages/Help.jsx";
@@ -16,6 +15,8 @@ import PartnerDetail from "./pages/PartnerDetail.jsx";
 import PartnerVerification from "./pages/PartnerVerification.jsx";
 import Partners from "./pages/Partners.jsx";
 import Reports from "./pages/Reports.jsx";
+import ResearcherHome from "./pages/ResearcherHome.jsx";
+import Templates from "./pages/Templates.jsx";
 import WorkflowQueue from "./pages/WorkflowQueue.jsx";
 import Layout from "./components/Layout.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
@@ -47,9 +48,8 @@ export default function App() {
         <Route path="/workspace" element={<RoleHomeRedirect />} />
         <Route path="/access-denied" element={<AccountState type="access-denied" />} />
 
-        <Route path="/researcher" element={role(["researcher"], <Dashboard />)} />
+        <Route path="/researcher" element={role(["researcher"], <ResearcherHome />)} />
         <Route path="/linkages" element={role(["linkages"], <Dashboard />)} />
-        <Route path="/linkages/queue" element={role(["linkages"], <WorkflowQueue mode="linkages" />)} />
         <Route path="/legal" element={role(["legal"], <Dashboard />)} />
         <Route path="/legal/queue" element={role(["legal"], <WorkflowQueue mode="legal" />)} />
         <Route path="/legal/:id" element={role(["legal"], <AgreementDetail defaultTab="corrections" />)} />
@@ -58,16 +58,12 @@ export default function App() {
         <Route path="/agreements" element={role(INTERNAL_ROLES, <Agreements />)} />
         <Route path="/agreements/new" element={role(agreementCreators, <AgreementForm />)} />
         <Route path="/agreements/:id" element={role(INTERNAL_ROLES, <AgreementDetail />)} />
-        <Route path="/partners" element={role(["researcher", "linkages"], <Partners />)} />
-        <Route path="/partners/:id" element={role(["researcher", "linkages"], <PartnerDetail />)} />
+        <Route path="/partners" element={role(["linkages"], <Partners />)} />
+        <Route path="/partners/:id" element={role(["linkages"], <PartnerDetail />)} />
         <Route path="/partners/:id/verify" element={role(["linkages"], <PartnerVerification />)} />
         <Route path="/notifications" element={role(ALL_ROLES, <Notifications />)} />
         <Route path="/reports" element={role(reportRoles, <Reports />)} />
-        {/* Re-homed from the removed `admin` role to `linkages` per
-            REBUILD_BRIEF.md Section 1 ("if a capability seems to need an admin
-            role, it belongs to linkages instead") and Section 5.1's
-            linkages-owned template admin screen. */}
-        <Route path="/configuration" element={role(["linkages"], <Configuration />)} />
+        <Route path="/templates" element={role(["linkages"], <Templates />)} />
         <Route path="/help" element={role(ALL_ROLES, <Help />)} />
       </Route>
 

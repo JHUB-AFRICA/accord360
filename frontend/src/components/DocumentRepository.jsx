@@ -1,37 +1,39 @@
-import { Download, FileCheck2, FileText, UploadCloud } from "lucide-react";
+import { Download, ExternalLink, FileCheck2, UploadCloud } from "lucide-react";
 import { useState } from "react";
 import { downloadAgreementVersion, uploadAgreementDraft } from "../lib/backend.js";
 import { formatDateTime } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 
-// Version history and the single upload path (REBUILD_BRIEF.md Section 3.2,
-// 4.2, 4.3): Linkages uploads a new AgreementVersion at exactly three points
-// in the lifecycle (draft_generated, returned_for_corrections,
-// awaiting_signatures) through the same POST /agreements/{id}/versions
-// endpoint; no one else ever uploads a version.
-const UPLOAD_COPY = {
-  draft_generated: { title: "Upload legal agreement draft", helper: "Review the Researcher intake, prepare the agreement, then upload the .docx for Legal." },
-  returned_for_corrections: { title: "Upload corrected agreement draft", helper: "Upload the corrected .docx so Legal can verify the requested changes were made." },
-  awaiting_signatures: { title: "Upload final signed scan", helper: "Once fully signed, upload the executed .docx. This locks the agreement." }
-};
+// GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5: drafting-stage content lives only
+// in the live Google Doc (template_copy_url) — Accord 360 stores no file
+// until the agreement is fully signed. So this tab shows the Doc link while
+// drafting/review is in progress, and only shows a real, downloadable
+// version once the final signed scan has been uploaded.
+const DRAFTING_STATUSES = new Set([
+  "draft_generated",
+  "pending_legal_review",
+  "returned_for_corrections",
+  "pending_legal_verification",
+  "approved_for_signing",
+  "awaiting_signatures"
+]);
 
 export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const uploadCopy = UPLOAD_COPY[record.status];
-  const canUpload = user.role === "linkages" && Boolean(uploadCopy);
+  const isDrafting = DRAFTING_STATUSES.has(record.status);
+  const canUpload = user.role === "linkages" && record.status === "awaiting_signatures";
   const versions = [...(record.versions || [])].reverse();
 
   async function upload() {
-    if (!file) return onError("Choose the .docx file to upload.");
-    if (!file.name.toLowerCase().endsWith(".docx")) return onError("Only .docx files are accepted for agreement versions.");
+    if (!file) return onError("Choose the signed file to upload.");
     setSubmitting(true);
     try {
       const updated = await uploadAgreementDraft(record.id, file);
       onRecordChange(updated);
       setFile(null);
-      onMessage(record.status === "awaiting_signatures" ? "Final signed scan uploaded. This agreement is now fully executed and locked." : "Draft uploaded.");
+      onMessage("Final signed scan uploaded. This agreement is now fully executed and locked.");
     } catch (error) {
       onError(error.message);
     } finally {
@@ -41,28 +43,35 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
 
   return (
     <section className="panel data-panel">
+      {isDrafting && <div className="panel inset-panel">
+        <div className="panel-head"><div><h2>Drafting document</h2><p>This agreement is drafted directly in Google Docs. Everyone with access edits the same live document — nothing is uploaded to Accord 360 until it's signed.</p></div></div>
+        {record.template_copy_url
+          ? <a className="primary-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in Google Docs</a>
+          : <p className="empty-state">No drafting document is linked to this agreement.</p>}
+      </div>}
+
       <div className="panel-head">
-        <div><h2>Version history</h2><p>Every upload creates a new version. Older versions stay visible, read-only, as superseded.</p></div>
+        <div><h2>Final signed document</h2><p>Accord 360 stores exactly one file per agreement: the signed scan, uploaded once this is fully executed.</p></div>
       </div>
       <div className="document-list">
-        {versions.map((version, index) => (
+        {versions.map((version) => (
           <article className="document-row" key={version.id}>
-            <span className="document-icon">{version.is_final ? <FileCheck2 /> : <FileText />}</span>
+            <span className="document-icon"><FileCheck2 /></span>
             <div>
-              <strong>{index === 0 ? "Current version" : "Superseded version"}</strong>
-              <span>Uploaded by {version.uploaded_by?.full_name || "Accord360"} · status at the time: {version.status_at_time}</span>
+              <strong>Final signed document</strong>
+              <span>Uploaded by {version.uploaded_by?.full_name || "Accord360"}</span>
               <small>{formatDateTime(version.timestamp)}</small>
             </div>
-            {version.is_final && <StatusBadge tone="green">Final, locked</StatusBadge>}
-            <button className="icon-button" onClick={() => downloadAgreementVersion(record.id, version.id, `agreement-${record.id}-v${versions.length - index}.docx`).catch((error) => onError(error.message))} aria-label="Download this version"><Download size={18} /></button>
+            <StatusBadge tone="green">Final, locked</StatusBadge>
+            <button className="icon-button" onClick={() => downloadAgreementVersion(record.id, version.id, `agreement-${record.id}-signed`).catch((error) => onError(error.message))} aria-label="Download the signed document"><Download size={18} /></button>
           </article>
         ))}
-        {!versions.length && <EmptyState title="No versions yet" text="A version is created automatically once the Researcher's intake is submitted." />}
+        {!versions.length && <EmptyState title="Not signed yet" text="The final signed document appears here once Linkages uploads it after physical signing." />}
       </div>
 
       {canUpload && <div className="panel inset-panel">
-        <div className="panel-head"><div><h2>{uploadCopy.title}</h2><p>{uploadCopy.helper}</p></div></div>
-        <label className="upload-zone compact-upload"><UploadCloud /><strong>{file?.name || "Choose a .docx file"}</strong><span>Only Linkages can upload at this stage.</span><input type="file" accept="application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
+        <div className="panel-head"><div><h2>Upload final signed scan</h2><p>Once fully signed, upload the executed document. This locks the agreement.</p></div></div>
+        <label className="upload-zone compact-upload"><UploadCloud /><strong>{file?.name || "Choose the signed file"}</strong><span>Only Linkages can upload at this stage.</span><input type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
         <button className="primary-button" disabled={submitting || !file} onClick={upload}>{submitting ? "Uploading…" : "Upload"}</button>
       </div>}
     </section>

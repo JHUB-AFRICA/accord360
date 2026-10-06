@@ -6,8 +6,8 @@ from .models import Agreement, User
 
 # Visibility rules — REBUILD_BRIEF.md Section 2.7:
 #   researcher -> only Agreements where Agreement.researcher == current_user
-#   linkages -> ALL agreements, all versions, all comments
-#   legal    -> ALL agreements, all versions, all comments (same as linkages)
+#   linkages -> ALL agreements and versions
+#   legal    -> ALL agreements and versions (same as linkages)
 #   me       -> ALL agreements' status/progress data
 FULL_READ_ROLES = {"linkages", "legal", "me"}
 
@@ -36,8 +36,8 @@ def ensure_can_view_agreement(user: User, agreement: Agreement) -> None:
 
 def can_edit_agreement(user: User, agreement: Agreement) -> bool:
     """Basic field edits (title/department/dates) prior to document
-    generation locking the record. Section 2.3's upload/comment matrix
-    governs AgreementVersion/Comment mutation, not this.
+    generation locking the record. Section 2.3's upload matrix governs
+    AgreementVersion mutation, not this.
     """
     if agreement.status in {"fully_executed", "archived"}:
         return False
@@ -71,23 +71,5 @@ UPLOAD_ALLOWED_ROLES_BY_STATUS: dict[str, set[str]] = {
     "archived": set(),
 }
 
-COMMENT_ALLOWED_ROLES_BY_STATUS: dict[str, set[str]] = {
-    "draft_generated": set(),
-    "pending_legal_review": {"legal"},
-    # "returned_for_corrections": view-only for legal (no new comments) — see can_create_comment.
-    "returned_for_corrections": set(),
-    "pending_legal_verification": {"legal"},
-    "approved_for_signing": set(),
-    "awaiting_signatures": set(),
-    "fully_executed": set(),
-    "expired": set(),
-    "archived": set(),
-}
-
-
 def can_upload_new_version(user: User, agreement: Agreement) -> bool:
     return user.role in UPLOAD_ALLOWED_ROLES_BY_STATUS.get(agreement.status, set())
-
-
-def can_create_comment(user: User, agreement: Agreement) -> bool:
-    return user.role in COMMENT_ALLOWED_ROLES_BY_STATUS.get(agreement.status, set())

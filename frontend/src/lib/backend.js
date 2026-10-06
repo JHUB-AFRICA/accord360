@@ -115,10 +115,6 @@ export async function createTemplate(payload) {
   return api("/templates", { method: "POST", body: formData });
 }
 
-export async function updateTemplate(id, payload) {
-  return api(`/templates/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-
 export async function downloadTemplate(id, fallbackName = "template") {
   return downloadFile(`/templates/${Number(id)}/download`, fallbackName);
 }
@@ -138,31 +134,6 @@ export async function createProgressUpdate(agreementId, payload) {
 export async function listProgressUpdates(agreementId = null) {
   const query = cleanParams({ agreement_id: agreementId ? Number(agreementId) : undefined });
   return api(`/progress-updates${query ? `?${query}` : ""}`);
-}
-
-export async function listConfiguration() {
-  return api("/configuration");
-}
-
-export async function createConfiguration(payload) {
-  return api("/configuration", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export async function updateConfiguration(key, payload) {
-  return api(`/configuration/${encodeURIComponent(key)}`, { method: "PATCH", body: JSON.stringify(payload) });
-}
-
-export async function listReferenceData(category = "") {
-  const query = cleanParams({ category });
-  return api(`/reference-data${query ? `?${query}` : ""}`);
-}
-
-export async function createReferenceData(payload) {
-  return api("/reference-data", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export async function updateReferenceData(id, payload) {
-  return api(`/reference-data/${Number(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
 export async function listAgreements(filters = {}) {

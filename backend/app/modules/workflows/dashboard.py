@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -11,6 +11,7 @@ from ...access import apply_agreement_scope
 from ...db.session import get_db
 from ...deps import get_current_user
 from ...models import Agreement, AuditLog, User
+from ..agreements.models import AGREEMENT_STATUSES
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -115,32 +116,32 @@ def _metrics_for_role(db: Session, user: User, agreements: list[Agreement], queu
 
     if role == "researcher":
         return [
-            {"label": "My agreements", "value": len(agreements), "note": "Records where you are the Researcher", "icon": "agreements", "tone": "green"},
-            {"label": "Needing my attention", "value": len(queue), "note": "Corrections or renewal-related items", "icon": "pending", "tone": "blue"},
-            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green"},
-            {"label": "Expired", "value": expired, "note": "Awaiting M&E action", "icon": "risk", "tone": "orange"},
+            {"label": "My agreements", "value": len(agreements), "note": "Records where you are the Researcher", "icon": "agreements", "tone": "green", "statuses": []},
+            {"label": "Needing my attention", "value": len(queue), "note": "Corrections or renewal-related items", "icon": "pending", "tone": "blue", "statuses": ["returned_for_corrections", "expired"]},
+            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green", "statuses": ["fully_executed"]},
+            {"label": "Expired", "value": expired, "note": "Awaiting M&E action", "icon": "risk", "tone": "orange", "statuses": ["expired"]},
         ]
     if role == "linkages":
         return [
-            {"label": "Operational queue", "value": len(queue), "note": "Records requiring Linkages action", "icon": "pending", "tone": "blue"},
-            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green"},
-            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green"},
-            {"label": "Expired", "value": expired, "note": "Awaiting M&E renewal/archive", "icon": "risk", "tone": "orange"},
+            {"label": "Operational queue", "value": len(queue), "note": "Records requiring Linkages action", "icon": "pending", "tone": "blue", "statuses": ["returned_for_corrections", "approved_for_signing", "awaiting_signatures"]},
+            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green", "statuses": []},
+            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green", "statuses": ["fully_executed"]},
+            {"label": "Expired", "value": expired, "note": "Awaiting M&E renewal/archive", "icon": "risk", "tone": "orange", "statuses": ["expired"]},
         ]
     if role == "legal":
         return [
-            {"label": "Legal queue", "value": len(queue), "note": "Drafts currently requiring Legal action", "icon": "legal", "tone": "blue"},
-            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green"},
-            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green"},
+            {"label": "Legal queue", "value": len(queue), "note": "Drafts currently requiring Legal action", "icon": "legal", "tone": "blue", "statuses": ["pending_legal_review", "pending_legal_verification"]},
+            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green", "statuses": []},
+            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green", "statuses": ["fully_executed"]},
         ]
     if role == "me":
         return [
-            {"label": "Expired, needs action", "value": len(queue), "note": "Update or archive", "icon": "pending", "tone": "orange"},
-            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green"},
-            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green"},
+            {"label": "Expired, needs action", "value": len(queue), "note": "Update or archive", "icon": "pending", "tone": "orange", "statuses": ["expired"]},
+            {"label": "Portfolio", "value": len(agreements), "note": "All agreements", "icon": "agreements", "tone": "green", "statuses": []},
+            {"label": "Fully executed", "value": fully_executed, "note": "Signed and in force", "icon": "complete", "tone": "green", "statuses": ["fully_executed"]},
         ]
     return [
-        {"label": "Portfolio", "value": len(agreements), "note": "Visible agreements", "icon": "agreements", "tone": "green"},
+        {"label": "Portfolio", "value": len(agreements), "note": "Visible agreements", "icon": "agreements", "tone": "green", "statuses": []},
     ]
 
 
@@ -166,6 +167,23 @@ def workspace(db: Session = Depends(get_db), user: User = Depends(get_current_us
     return config
 
 
+def _monthly_created(agreements: list[Agreement], months: int = 6) -> list[dict]:
+    """Agreements created per month, oldest to newest, zero-filled so the
+    trend line is always `months` points long even with no data yet."""
+    today = date.today().replace(day=1)
+    buckets: dict[str, int] = {}
+    cursor = today
+    for _ in range(months):
+        buckets[cursor.strftime("%Y-%m")] = 0
+        cursor = (cursor.replace(day=1) - timedelta(days=1)).replace(day=1)
+    for agreement in agreements:
+        key = agreement.created_at.strftime("%Y-%m")
+        if key in buckets:
+            buckets[key] += 1
+    ordered_keys = sorted(buckets.keys())
+    return [{"month": key, "count": buckets[key]} for key in ordered_keys]
+
+
 @router.get("/stats")
 def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     agreements = _load_scoped_agreements(db, user)
@@ -180,8 +198,12 @@ def stats(db: Session = Depends(get_db), user: User = Depends(get_current_user))
             "expired": status_counts.get("expired", 0),
             "archived": status_counts.get("archived", 0),
         },
-        "by_status": [{"name": key.replace("_", " ").title(), "value": value} for key, value in status_counts.items()],
+        "by_status": [
+            {"status": status, "name": status.replace("_", " ").title(), "value": status_counts.get(status, 0)}
+            for status in AGREEMENT_STATUSES
+        ],
         "by_department": [{"name": key, "value": value} for key, value in department_counts.items()],
+        "monthly_created": _monthly_created(agreements),
         "recent_agreements": [
             {
                 "id": a.id,

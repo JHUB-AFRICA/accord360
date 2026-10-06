@@ -44,21 +44,18 @@ const iconMap = {
 // executive, admin, auditor). Keyed by the four Section 2.1 roles.
 const navigation = {
   researcher: [
-    ["home", "Dashboard", "/researcher"],
-    ["new", "Create request", "/agreements/new"],
-    ["agreements", "My requests", "/agreements"],
+    ["home", "My agreements", "/researcher"],
+    ["new", "Create new agreement", "/agreements/new"],
     ["notifications", "Notifications", "/notifications"],
     ["help", "Help", "/help"]
   ],
   linkages: [
     ["home", "Dashboard", "/linkages"],
-    ["partners", "Partner registry", "/partners"],
-    ["approvals", "Linkages review queue", "/linkages/queue"],
-    ["agreements", "Agreement lifecycle", "/agreements"],
-    ["monitoring", "Monitoring & evaluation", "/monitoring"],
-    ["templates", "Templates", "/configuration?tab=templates"],
+    ["agreements", "All agreements", "/agreements"],
+    ["partners", "Partners", "/partners"],
+    ["templates", "Templates", "/templates"],
     ["notifications", "Notifications", "/notifications"],
-    ["reports", "Reports", "/reports"]
+    ["help", "Help", "/help"]
   ],
   legal: [
     ["home", "Legal dashboard", "/legal"],
@@ -73,6 +70,11 @@ const navigation = {
     ["reports", "Performance reports", "/reports"]
   ]
 };
+
+// The topbar search only makes sense on pages you actually browse/search a
+// list of agreements from -- not on a create form, a single agreement's own
+// detail page, notifications, help, or anywhere else.
+const SEARCH_VISIBLE_PATHS = ["/researcher", "/linkages", "/legal", "/monitoring", "/agreements"];
 
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -140,10 +142,10 @@ export default function Layout() {
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu size={22} /></button>
           <div className="topbar-title"><strong>{config.workspace}</strong><span>{config.shortDescription}</span></div>
-          <form className="global-search" role="search" onSubmit={(event) => { event.preventDefault(); const query = globalSearch.trim(); if (query) navigate(`/agreements?search=${encodeURIComponent(query)}`); }}>
+          {SEARCH_VISIBLE_PATHS.includes(location.pathname) && <form className="global-search" role="search" onSubmit={(event) => { event.preventDefault(); const query = globalSearch.trim(); if (query) navigate(`/agreements?search=${encodeURIComponent(query)}`); }}>
             <Search size={18} aria-hidden="true" />
             <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} aria-label="Search agreements and partners" placeholder="Search reference, agreement or partner…" />
-          </form>
+          </form>}
           <div className="topbar-actions">
             {isMockMode && <StatusBadge tone="blue">Demo mode</StatusBadge>}
             <div className="notification-wrap">
@@ -152,13 +154,13 @@ export default function Layout() {
                 <div className="notification-popover">
                   <div className="popover-head"><div><strong>Notifications</strong><span>{unread} unread</span></div><Link to="/notifications" onClick={() => setShowNotifications(false)}>View all</Link></div>
                   <div className="popover-list">
-                    {notifications.slice(0, 5).map((item) => (
-                      <Link key={item.id} to={item.link || "/notifications"} className={`popover-notification ${item.is_read ? "read" : ""}`} onClick={() => { markRead(item); setShowNotifications(false); }}>
+                    {notifications.filter((item) => !item.is_read).slice(0, 5).map((item) => (
+                      <Link key={item.id} to={item.link || "/notifications"} className="popover-notification" onClick={() => { markRead(item); setShowNotifications(false); }}>
                         <span className={`priority-dot priority-${item.priority}`} />
                         <div><strong>{item.title}</strong><span>{item.record_reference}</span><small>{item.required_action}</small></div>
                       </Link>
                     ))}
-                    {!notifications.length && <div className="popover-empty">No notifications.</div>}
+                    {!unread && <div className="popover-empty">{notifications.length ? "You're all caught up." : "No notifications yet."}</div>}
                   </div>
                 </div>
               )}

@@ -24,3 +24,12 @@ backend/.env.docker
 .vscode/
 .idea/
 .DS_Store
+
+# Local dev launcher (personal, not shared)
+run-dev.sh
+LOCAL_DEV.md
+
+# Google service-account keys
+backend/*.json
+!backend/package.json
+!backend/package-lock.json

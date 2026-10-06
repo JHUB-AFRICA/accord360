@@ -14,9 +14,6 @@ from .schemas import (
     AgreementDetailOut,
     AgreementListOut,
     AgreementUpdate,
-    CommentCreate,
-    CommentOut,
-    CommentUpdate,
     ProgressUpdateCreate,
     ProgressUpdateOut,
 )
@@ -24,7 +21,6 @@ from app.modules.workflows.schemas import TransitionRequest
 from . import service
 
 router = APIRouter(prefix="/agreements", tags=["Agreements"])
-comments_router = APIRouter(tags=["Comments"])
 progress_router = APIRouter(tags=["Progress updates"])
 
 
@@ -87,7 +83,7 @@ def transition_agreement(
 
 
 @router.post("/{agreement_id}/versions", response_model=AgreementDetailOut)
-async def upload_initial_draft(
+async def upload_final_signed_document(
     agreement_id: int,
     request: Request,
     file: UploadFile = File(...),
@@ -95,7 +91,7 @@ async def upload_initial_draft(
     user: User = Depends(require_roles("linkages")),
 ):
     content = await file.read()
-    return service.upload_initial_draft(db, user, agreement_id, content, file.filename, request)
+    return service.upload_final_signed_document(db, user, agreement_id, content, file.filename, request)
 
 
 @router.get("/{agreement_id}/versions/{version_id}/download")
@@ -111,37 +107,6 @@ def download_version(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Agreement version file is unavailable")
     return FileResponse(path, filename=path.name)
-
-
-@comments_router.get("/versions/{version_id}/comments", response_model=list[CommentOut])
-def list_version_comments(
-    version_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return service.list_comments(db, user, version_id)
-
-
-@comments_router.post("/versions/{version_id}/comments", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
-def create_version_comment(
-    version_id: int,
-    payload: CommentCreate,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return service.create_comment(db, user, version_id, payload, request)
-
-
-@comments_router.patch("/comments/{comment_id}", response_model=CommentOut)
-def update_version_comment(
-    comment_id: int,
-    payload: CommentUpdate,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return service.update_comment(db, user, comment_id, payload, request)
 
 
 @progress_router.post("/agreements/{agreement_id}/progress-updates", response_model=ProgressUpdateOut, status_code=status.HTTP_201_CREATED)

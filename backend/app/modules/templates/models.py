@@ -23,7 +23,15 @@ class Template(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     document_type: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    file: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Optional reference copy for Linkages; never parsed or rendered by
+    # Accord 360 — GOOGLE_DOCS_DRAFTING_BRIEF.md Phase D retired the
+    # docx-merge path. The real drafting source is master_doc_id below.
+    file: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — the Google Doc id of the
+    # master template, shared with the Drive service account as Editor.
+    # This is what create_agreement actually copies; a Template can't be
+    # activated without one (see templates/service.py::activate_template).
+    master_doc_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)

@@ -70,7 +70,7 @@ for (const value of unsupportedBackendPaths) {
 const requiredBackendPaths = [
   "/auth/login", "/auth/me", "/users", "/users/researchers", "/partners", "/agreements",
   "/transition", "/dashboard/workspace", "/dashboard/stats", "/notifications",
-  "/templates", "/configuration", "/reference-data"
+  "/templates"
 ];
 for (const value of requiredBackendPaths) {
   if (!backendContent.includes(value)) failures.push(`src/lib/backend.js is missing implemented endpoint ${value}`);

@@ -1,4 +1,9 @@
-"""Phase 3 comments, execution, progress, expiry and notification tests."""
+"""Phase 3 execution, progress, expiry and notification tests.
+
+Legal's comments live natively in the Google Doc as of
+GOOGLE_DOCS_DRAFTING_BRIEF.md — there is no in-app Comment model/CRUD left
+to test here (see that brief's Phase D).
+"""
 
 from __future__ import annotations
 
@@ -22,17 +27,14 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.main import app  # noqa: F401
-from app.models import Agreement, AgreementVersion, Notification, Partner, User
+from app.models import Agreement, Notification, Partner, User
 from app.modules.agreements.expiry import run_daily_expiry_check
-from app.modules.agreements.schemas import CommentCreate, CommentUpdate, ProgressUpdateCreate
+from app.modules.agreements.schemas import ProgressUpdateCreate
 from app.modules.agreements.service import (
-    create_comment,
     create_progress_update,
     list_progress_updates,
-    list_comments,
     transition_agreement,
-    update_comment,
-    upload_initial_draft,
+    upload_final_signed_document,
 )
 from app.modules.workflows.schemas import TransitionRequest
 from app.core.security import hash_password
@@ -50,7 +52,7 @@ def _user(db, role: str, suffix: str) -> User:
     return user
 
 
-def _agreement(db, researcher: User, status: str) -> Agreement:
+def _agreement(db, researcher: User, status: str, *, with_drive_copy: bool = False) -> Agreement:
     partner = Partner(name=f"Partner {uuid4().hex[:8]}", sector="Research", country="Kenya")
     db.add(partner)
     db.flush()
@@ -63,60 +65,47 @@ def _agreement(db, researcher: User, status: str) -> Agreement:
         start_date=date.today() - timedelta(days=30),
         end_date=date.today() + timedelta(days=365),
     )
+    if with_drive_copy:
+        agreement.template_copy_doc_id = f"copy-{uuid4().hex[:8]}"
+        agreement.template_copy_url = f"https://docs.google.com/document/d/{agreement.template_copy_doc_id}/edit"
     db.add(agreement)
     db.flush()
     return agreement
 
 
-def _version(db, agreement: Agreement, uploader: User, is_final: bool = False) -> AgreementVersion:
-    version = AgreementVersion(
-        agreement_id=agreement.id,
-        file=f"agreement-versions/{uuid4().hex}.docx",
-        uploaded_by_id=uploader.id,
-        status_at_time=agreement.status,
-        is_final=is_final,
-    )
-    db.add(version)
-    db.flush()
-    return version
+def _mock_drive(monkeypatch):
+    """No test may depend on real Google credentials — GOOGLE_DOCS_DRAFTING_BRIEF.md
+    Phase B acceptance criteria.
+    """
+    from app.modules.agreements import service as agreement_service
+
+    counter = {"n": 0}
+
+    def fake_grant_permission(doc_id, email, role="writer", notify=True):
+        counter["n"] += 1
+        return f"perm-{counter['n']}"
+
+    def fake_revoke_permission(doc_id, permission_id):
+        return None
+
+    monkeypatch.setattr(agreement_service.google_drive, "grant_permission", fake_grant_permission)
+    monkeypatch.setattr(agreement_service.google_drive, "revoke_permission", fake_revoke_permission)
 
 
-def test_legal_comments_are_scoped_and_status_gated():
+def test_status_notifications_use_the_phase3_recipient_table(monkeypatch):
     with SessionLocal() as db:
-        suffix = uuid4().hex[:8]
-        researcher = _user(db, "researcher", suffix)
-        legal = _user(db, "legal", f"{suffix}-legal")
-        linkages = _user(db, "linkages", f"{suffix}-linkages")
-        agreement = _agreement(db, researcher, "pending_legal_review")
-        version = _version(db, agreement, linkages)
-        db.commit()
-
-        comment = create_comment(db, legal, version.id, CommentCreate(text="Review Clause 4.2", section_reference="Clause 4.2"), None)
-        assert comment.status == "open"
-        assert len(list_comments(db, legal, version.id)) == 1
-        resolved = update_comment(db, legal, comment.id, CommentUpdate(status="resolved"), None)
-        assert resolved.status == "resolved"
-
-        agreement.status = "returned_for_corrections"
-        db.commit()
-        with pytest.raises(HTTPException) as error:
-            create_comment(db, legal, version.id, CommentCreate(text="No new comment here"), None)
-        assert error.value.status_code == 409
-
-
-def test_status_notifications_use_the_phase3_recipient_table():
-    with SessionLocal() as db:
+        _mock_drive(monkeypatch)
         suffix = uuid4().hex[:8]
         researcher = _user(db, "researcher", suffix)
         linkages = _user(db, "linkages", f"{suffix}-linkages")
         legal = _user(db, "legal", f"{suffix}-legal")
 
-        draft = _agreement(db, researcher, "draft_generated")
+        draft = _agreement(db, researcher, "draft_generated", with_drive_copy=True)
         db.commit()
-        upload_initial_draft(db, linkages, draft.id, b"legal draft", "draft.docx", None)
+        transition_agreement(db, researcher, draft.id, TransitionRequest(action="submit"), None)
         draft_notifications = db.scalars(select(Notification).where(Notification.agreement_id == draft.id)).all()
-        legal_ids = {item.id for item in db.scalars(select(User).where(User.role == "legal")).all()}
-        assert {item.user_id for item in draft_notifications} == legal_ids
+        expected_ids = {item.id for item in db.scalars(select(User).where(User.role.in_(["linkages", "legal"]))).all()}
+        assert {item.user_id for item in draft_notifications} == expected_ids
 
         changes = _agreement(db, researcher, "pending_legal_review")
         db.commit()
@@ -130,7 +119,7 @@ def test_status_notifications_use_the_phase3_recipient_table():
         assert {item.user_id for item in db.scalars(select(Notification).where(Notification.agreement_id == approval.id)).all()} == linkages_ids
 
 
-def test_corrected_upload_and_final_upload_lock_and_notify():
+def test_corrections_are_a_plain_transition_and_final_upload_locks_and_notifies():
     with SessionLocal() as db:
         suffix = uuid4().hex[:8]
         researcher = _user(db, "researcher", suffix)
@@ -142,17 +131,21 @@ def test_corrected_upload_and_final_upload_lock_and_notify():
 
         agreement_id = agreement.id
         researcher_id, linkages_id, legal_id, me_id = researcher.id, linkages.id, legal.id, me.id
-        corrected = upload_initial_draft(db, linkages, agreement_id, b"corrected", "corrected.docx", None)
+        # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.4: corrections happen
+        # directly in the live Google Doc — resubmitting for verification is
+        # a plain status transition, no file upload.
+        corrected = transition_agreement(db, linkages, agreement_id, TransitionRequest(action="resubmit_for_verification"), None)
         assert corrected.status == "pending_legal_verification"
+        assert corrected.versions == []
 
     # Separate sessions mirror the application request lifecycle and ensure
-    # the version history is reloaded after the corrected upload.
+    # the version history is reloaded after the corrected transition.
     with SessionLocal() as db:
         agreement = db.get(Agreement, agreement_id)
         linkages = db.get(User, linkages_id)
         agreement.status = "awaiting_signatures"
         db.commit()
-        final = upload_initial_draft(db, linkages, agreement_id, b"signed", "signed.docx", None)
+        final = upload_final_signed_document(db, linkages, agreement_id, b"signed", "signed.pdf", None)
         assert final.status == "fully_executed"
         assert final.versions[-1].is_final is True
         assert final.expiry_alert_date == agreement.end_date - relativedelta(months=6)
@@ -163,31 +156,22 @@ def test_corrected_upload_and_final_upload_lock_and_notify():
         assert {researcher_id, legal_id, me_id}.issubset(recipients)
 
         with pytest.raises(HTTPException) as error:
-            upload_initial_draft(db, linkages, agreement_id, b"another", "another.docx", None)
+            upload_final_signed_document(db, linkages, agreement_id, b"another", "another.pdf", None)
         assert error.value.status_code == 409
 
 
-def test_generic_transition_cannot_bypass_the_required_file_upload():
-    """Section 4.2/4.3: resubmit_for_verification and mark_fully_executed
-    must only ever happen as a side effect of upload_initial_draft actually
-    storing a new AgreementVersion. Both are kept in TRANSITIONS so
-    available_actions() can still surface them to the frontend, but calling
-    them through the generic transition endpoint must not be able to move
-    status forward without a real corrected/signed document ever existing.
+def test_generic_transition_cannot_bypass_the_required_final_upload():
+    """GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.5: mark_fully_executed must
+    only ever happen as a side effect of upload_final_signed_document
+    actually storing the signed scan. It stays in TRANSITIONS so
+    available_actions() can still surface it to the frontend, but calling it
+    through the generic transition endpoint must not be able to move status
+    forward without a real signed document ever existing.
     """
     with SessionLocal() as db:
         suffix = uuid4().hex[:8]
         researcher = _user(db, "researcher", suffix)
         linkages = _user(db, "linkages", f"{suffix}-linkages")
-
-        corrections = _agreement(db, researcher, "returned_for_corrections")
-        db.commit()
-        with pytest.raises(HTTPException) as error:
-            transition_agreement(db, linkages, corrections.id, TransitionRequest(action="resubmit_for_verification"), None)
-        assert error.value.status_code == 409
-        db.refresh(corrections)
-        assert corrections.status == "returned_for_corrections"
-        assert len(db.scalars(select(AgreementVersion).where(AgreementVersion.agreement_id == corrections.id)).all()) == 0
 
         signing = _agreement(db, researcher, "awaiting_signatures")
         db.commit()

@@ -4,12 +4,14 @@ import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 
 const articles = [
-  { category: "Getting started", title: "Create a partnership request", text: "Select a partner, agreement type, JKUAT ownership, approved template and required documents before submission." },
-  { category: "Corrections & returns", title: "Respond to a structured correction", text: "Open the correction record, follow the deep link to the exact item, submit a response and attach replacement evidence." },
-  { category: "Legal review", title: "Understand blocking Legal comments", text: "Legal approval remains unavailable while unresolved blocking comments exist." },
-  { category: "Governance", title: "DVC RPE and VC responsibilities", text: "DVC RPE endorses the legally approved package. The VC Office receives the complete package and tracks execution." },
-  { category: "Monitoring & reporting", title: "Submit a six-month Researcher report", text: "Update activities, outputs, challenges, value, evidence and renewal recommendation, then submit to Linkages." },
-  { category: "Access", title: "Role-specific workspaces", text: "Accord360 only displays navigation, actions and records relevant to the signed-in user's role and organization scope." }
+  { category: "Researcher", title: "Create a new agreement", text: "From My Agreements, click Create new agreement. Fill in the partner, department and dates — no document upload needed. Submitting sends your intake straight to Linkages, who prepares the actual draft." },
+  { category: "Researcher", title: "Submit a quarterly progress update", text: "Open the agreement from your list and go to its Progress tab. Once the agreement is fully executed (or has expired while renewal is in progress), you can submit a quarter and notes there." },
+  { category: "Linkages", title: "Upload the legal draft, corrected draft, or signed scan", text: "Open the agreement's Documents tab. Depending on its current status, you'll see the right upload prompt: the intake draft for Legal, a corrected draft after Legal returns it, or the final signed scan once it's ready — each upload moves the agreement to its next status." },
+  { category: "Linkages", title: "Manage the MoU, CA and CRA templates", text: "Go to Templates to upload a new .docx, review its placeholder validation summary, and activate it. Only one template per document type can be active at a time. The Available tags panel lists every {{tag}} the Researcher's form can fill in." },
+  { category: "Legal", title: "Comment on a draft", text: "Open the agreement's Legal review tab. You can add comments scoped to the current version, mark them resolved once addressed, and request corrections or approve the draft — visible immediately to Linkages." },
+  { category: "M&E", title: "Update or archive an expired agreement", text: "Agreements that pass their end date without renewal are tagged Expired. From the Monitoring workspace, use Update to move it back into an active flow, or Archive if it's no longer being pursued. Nothing is ever archived automatically." },
+  { category: "Workflow", title: "The nine agreement statuses", text: "Draft generated → Pending Legal review → Returned for corrections → Pending Legal verification → Approved for signing → Awaiting signatures → Fully executed → Expired → Archived. Each status only allows the actions relevant to whoever's turn it is." },
+  { category: "Access", title: "Role-specific workspaces", text: "Accord360 only shows the navigation, actions and records relevant to your role: Researchers see only their own agreements; Linkages, Legal and M&E see everything." }
 ];
 
 export default function Help() {

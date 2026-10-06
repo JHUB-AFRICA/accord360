@@ -24,17 +24,19 @@ from ...access import (
     apply_agreement_scope,
     ensure_can_edit_agreement,
     ensure_can_view_agreement,
-    can_create_comment,
 )
 from ...deps import audit
 from ...core.config import settings
-from .models import Agreement, AgreementVersion, Comment, ProgressUpdate
+from ...timeutils import utc_now
+from .models import Agreement, AgreementDrivePermission, AgreementVersion, ProgressUpdate
+from app.integrations import google_drive
+from app.integrations.google_drive import DriveError
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
 from app.modules.templates import service as template_service
 from app.modules.templates.models import Template
-from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, CommentCreate, CommentUpdate, ProgressUpdateCreate
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, ProgressUpdateCreate
 from app.modules.workflows.schemas import TransitionRequest
 from ..workflows.service import notify_roles
 
@@ -48,11 +50,8 @@ __all__ = [
     "update_agreement",
     "transition_agreement",
     "add_agreement_version",
-    "upload_initial_draft",
+    "upload_final_signed_document",
     "available_actions",
-    "create_comment",
-    "list_comments",
-    "update_comment",
     "create_progress_update",
     "list_progress_updates",
 ]
@@ -75,6 +74,11 @@ RESEARCHER_EDIT_FIELDS = {"title", "department", "start_date", "end_date"}
 # daily expiry job and is not reachable through this table.
 # (from_status, action) -> (to_status, allowed_roles)
 TRANSITIONS: dict[tuple[str, str], tuple[str, set[str]]] = {
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.2 — Researcher confirms the
+    # partner's edits are satisfactory and explicitly submits. This is the
+    # sole way an agreement leaves draft_generated; Linkages no longer
+    # advances it by uploading a file (see Section 5.3).
+    ("draft_generated", "submit"): ("pending_legal_review", {"researcher"}),
     ("pending_legal_review", "request_corrections"): ("returned_for_corrections", {"legal"}),
     # inferred edge, confirm with Linkages Office (Section 2.4a)
     ("pending_legal_review", "approve"): ("approved_for_signing", {"legal"}),
@@ -95,6 +99,7 @@ def _transition_recipient_roles(to_status: str) -> set[str]:
     7-trigger notification table is Phase 3, Section 4.6).
     """
     mapping = {
+        "pending_legal_review": {"linkages", "legal"},
         "returned_for_corrections": {"linkages"},
         "pending_legal_verification": {"legal"},
         "approved_for_signing": {"linkages"},
@@ -117,6 +122,55 @@ def available_actions(user: User, agreement: Agreement) -> list[str]:
         for (from_status, action), (_, roles) in TRANSITIONS.items()
         if from_status == agreement.status and user.role in roles
     ]
+
+
+def _grant_drive_access(db: Session, agreement: Agreement, *, role: str, email: str, drive_role: str = "writer") -> None:
+    """Grant Drive access and record it — GOOGLE_DOCS_DRAFTING_BRIEF.md
+    Section 4. Every grant MUST be recorded here so revocation (below) can
+    go through the stored permission_id instead of a permissions.list call.
+    """
+    permission_id = google_drive.grant_permission(agreement.template_copy_doc_id, email, role=drive_role)
+    db.add(
+        AgreementDrivePermission(
+            agreement_id=agreement.id,
+            role=role,
+            email=email,
+            permission_id=permission_id,
+        )
+    )
+
+
+def _revoke_drive_access(db: Session, agreement: Agreement, *, role: str) -> None:
+    """Revoke the un-revoked grant for `role` on this agreement's doc, using
+    the locally stored permission_id — never a live permissions.list lookup.
+    """
+    grant = db.scalar(
+        select(AgreementDrivePermission).where(
+            AgreementDrivePermission.agreement_id == agreement.id,
+            AgreementDrivePermission.role == role,
+            AgreementDrivePermission.revoked_at.is_(None),
+        )
+    )
+    if grant is None:
+        return
+    google_drive.revoke_permission(agreement.template_copy_doc_id, grant.permission_id)
+    grant.revoked_at = utc_now()
+
+
+def _advance_draft_to_linkages(db: Session, agreement: Agreement) -> None:
+    """Side effects of the `submit` transition — GOOGLE_DOCS_DRAFTING_BRIEF.md
+    Section 5.2: cut the external partner off immediately, then grant every
+    current Linkages/Legal staff member individual access (the "individual
+    staff email" grant model, not a shared group).
+    """
+    try:
+        _revoke_drive_access(db, agreement, role="partner")
+        for role in ("linkages", "legal"):
+            staff = db.scalars(select(User).where(User.role == role, User.is_active.is_(True))).all()
+            for member in staff:
+                _grant_drive_access(db, agreement, role=role, email=member.email)
+    except DriveError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def scoped_query(user: User):
@@ -145,7 +199,8 @@ def list_agreements(
             )
         )
     if status_filter:
-        stmt = stmt.where(Agreement.status == status_filter)
+        statuses = [item.strip() for item in status_filter.split(",") if item.strip()]
+        stmt = stmt.where(Agreement.status.in_(statuses)) if len(statuses) > 1 else stmt.where(Agreement.status == statuses[0])
     if department:
         stmt = stmt.where(Agreement.department == department)
     return db.scalars(stmt.order_by(Agreement.updated_at.desc())).all()
@@ -169,34 +224,34 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
         )
     )
     if not template:
-        raise HTTPException(status_code=400, detail=f"No active .docx template exists for {payload.document_type}")
+        raise HTTPException(status_code=400, detail=f"No active template exists for {payload.document_type}")
+    if not template.master_doc_id:
+        raise HTTPException(status_code=400, detail="The active template is not linked to a Google Doc")
+    if not partner.contact_email:
+        raise HTTPException(status_code=400, detail="The selected partner has no contact email on file")
 
+    # Structured intake fields still gate Submit (spec Section 4's "trust-based
+    # confirmation") even though they're no longer merged into a document —
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.1.
     definitions = template_service.list_field_definitions(db)
     known_fields = {item.field_name for item in definitions}
     unknown_fields = sorted(set(payload.field_values) - known_fields)
     if unknown_fields:
         raise HTTPException(status_code=400, detail=f"Unknown form fields: {', '.join(unknown_fields)}")
     values = {key: str(value) for key, value in payload.field_values.items() if value is not None}
-    values.update(
-        {
-            "partner_name": partner.name,
-            "agreement_title": payload.title,
-            "department": payload.department,
-            "start_date": payload.start_date.isoformat(),
-            "end_date": payload.end_date.isoformat(),
-            "researcher_name": user.full_name,
-        }
-    )
+    # These duplicate what AgreementCreate already captures directly
+    # (title/department/dates/partner/researcher) — auto-fill them so a
+    # FieldDefinition of the same name doesn't force the caller to retype
+    # data the form already collected elsewhere.
+    values.setdefault("partner_name", partner.name)
+    values.setdefault("agreement_title", payload.title)
+    values.setdefault("department", payload.department)
+    values.setdefault("start_date", payload.start_date.isoformat())
+    values.setdefault("end_date", payload.end_date.isoformat())
+    values.setdefault("researcher_name", user.full_name)
     missing = sorted(item.field_name for item in definitions if item.required and not str(values.get(item.field_name, "")).strip())
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing required form fields: {', '.join(missing)}")
-    summary = template_service.template_response_data(db, template)
-    if summary["missing_required"] or summary["unknown_tokens"]:
-        raise HTTPException(status_code=400, detail="The active template is not valid for the configured form fields")
-    try:
-        generated_content = template_service.generate_document(template, values)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     agreement = Agreement(
         title=payload.title,
@@ -209,13 +264,25 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
     )
     db.add(agreement)
     db.flush()
-    generated_name = f"generated-intake/{uuid4().hex}.docx"
-    generated_path = settings.upload_path / generated_name
-    generated_path.parent.mkdir(parents=True, exist_ok=True)
-    generated_path.write_bytes(generated_content)
-    add_agreement_version(db, agreement, file=generated_name, uploaded_by=user)
+
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.1: copy the master template via
+    # the Drive API (the master itself is never touched) and grant the
+    # researcher + the external partner writer access on the copy. No
+    # AgreementVersion is created here — drafting-stage content lives only in
+    # the live Google Doc; Accord 360 stores just the access grants below.
+    try:
+        doc_id = google_drive.copy_template(template.master_doc_id, name=f"{payload.title} — {partner.name}")
+        agreement.template_copy_doc_id = doc_id
+        agreement.template_copy_url = google_drive.doc_url(doc_id)
+        _grant_drive_access(db, agreement, role="researcher", email=user.email)
+        _grant_drive_access(db, agreement, role="partner", email=partner.contact_email)
+    except DriveError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.title)
-    notify_roles(db, {"linkages"}, "Researcher intake ready for Linkages", f"{agreement.title} was submitted by {user.full_name}.", agreement.id)
+    # Linkages is deliberately NOT notified here — only once the Researcher
+    # explicitly hits Submit (the new "submit" transition) after the partner
+    # has finished editing. See GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.1 step 6.
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
 
@@ -279,10 +346,12 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
         raise HTTPException(status_code=403, detail=f"Role '{user.role}' cannot perform '{payload.action}'")
     if payload.action == "mark_fully_executed":
         raise HTTPException(status_code=409, detail="Upload the final signed scan to complete execution")
-    if payload.action == "resubmit_for_verification":
-        raise HTTPException(status_code=409, detail="Upload the corrected agreement draft to resubmit for verification")
+    if payload.action == "submit" and agreement.researcher_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the agreement's Researcher can submit it")
 
     from_status = agreement.status
+    if payload.action == "submit":
+        _advance_draft_to_linkages(db, agreement)
     agreement.status = to_status
     if to_status == "archived":
         agreement.archived = True
@@ -345,7 +414,7 @@ def add_agreement_version(
     return version
 
 
-def upload_initial_draft(
+def upload_final_signed_document(
     db: Session,
     user: User,
     agreement_id: int,
@@ -353,139 +422,63 @@ def upload_initial_draft(
     original_name: str | None,
     request: Request,
 ) -> AgreementDetailOut:
-    """Store the Linkages-prepared legal draft and route it to Legal.
+    """Store the physically-signed scan Linkages uploads after signing.
 
-    The Researcher-generated intake stays in the agreement record; this is
-    the first AgreementVersion that Legal is expected to review.
+    GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.5: this is the ONLY point in the
+    agreement's lifecycle where Accord 360 stores a real file — everything
+    before this stays a live Google Doc link. Formerly named
+    `upload_initial_draft`; it also used to cover the draft_generated and
+    returned_for_corrections edges, which are now pure status transitions
+    (Sections 5.2/5.4) with no file upload at all.
     """
     agreement = db.get(Agreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
     ensure_can_view_agreement(user, agreement)
     if user.role != "linkages":
-        raise HTTPException(status_code=403, detail="Only Linkages can upload the legal agreement draft")
-    if agreement.status not in {"draft_generated", "returned_for_corrections", "awaiting_signatures"}:
-        raise HTTPException(status_code=409, detail="This agreement is locked or is not ready for a Linkages upload")
+        raise HTTPException(status_code=403, detail="Only Linkages can upload the final signed document")
+    if agreement.status != "awaiting_signatures":
+        raise HTTPException(status_code=409, detail="This agreement is not awaiting a signed document upload")
     if not content:
-        raise HTTPException(status_code=400, detail="The agreement draft file is required")
+        raise HTTPException(status_code=400, detail="The signed agreement file is required")
 
-    suffix = (Path(original_name or "agreement-draft.docx").suffix or ".docx").lower()
-    if suffix != ".docx":
-        raise HTTPException(status_code=400, detail="The legal agreement draft must be a .docx file")
+    suffix = (Path(original_name or "signed-agreement.pdf").suffix or ".pdf").lower()
     stored_name = f"agreement-versions/{uuid4().hex}{suffix}"
     target = settings.upload_path / stored_name
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
 
     from_status = agreement.status
-    is_final = from_status == "awaiting_signatures"
-    add_agreement_version(db, agreement, file=stored_name, uploaded_by=user, is_final=is_final)
-    if from_status == "draft_generated":
-        agreement.status = "pending_legal_review"
-        notification_roles = {"legal"}
-        notification_title = "Draft ready for Legal review"
-        notification_message = f"{agreement.title} is ready for Legal review."
-    elif from_status == "returned_for_corrections":
-        agreement.status = "pending_legal_verification"
-        notification_roles = {"legal"}
-        notification_title = "Corrected draft ready for Legal verification"
-        notification_message = f"{agreement.title} has been resubmitted for Legal verification."
-    else:
-        agreement.status = "fully_executed"
-        # This is the only runtime write site for expiry_alert_date. Renewal
-        # semantics remain the explicit Phase 1 TODO and are not inferred here.
-        agreement.expiry_alert_date = agreement.end_date - relativedelta(months=6)
-        agreement.expiry_notified = False
-        notification_roles = {"legal", "me"}
-        notification_title = "Agreement fully executed"
-        notification_message = f"{agreement.title} has been fully executed."
+    add_agreement_version(db, agreement, file=stored_name, uploaded_by=user, is_final=True)
+    agreement.status = "fully_executed"
+    # This is the only runtime write site for expiry_alert_date. Renewal
+    # semantics remain the explicit Phase 1 TODO and are not inferred here.
+    agreement.expiry_alert_date = agreement.end_date - relativedelta(months=6)
+    agreement.expiry_notified = False
+    notification_roles = {"legal", "me"}
+    notification_title = "Agreement fully executed"
+    notification_message = f"{agreement.title} has been fully executed."
     db.add(
         WorkflowEvent(
             agreement_id=agreement.id,
             from_stage=from_status,
             to_stage=agreement.status,
-            action="upload_final_signed_scan" if is_final else "upload_legal_draft",
-            comment="Linkages uploaded the final signed scan." if is_final else "Linkages uploaded the agreement draft.",
+            action="upload_final_signed_scan",
+            comment="Linkages uploaded the final signed scan.",
             actor_id=user.id,
         )
     )
-    audit(db, user, "upload_legal_draft", "agreement", agreement.id, request, old_value=from_status, new_value=agreement.status)
+    audit(db, user, "upload_final_signed_document", "agreement", agreement.id, request, old_value=from_status, new_value=agreement.status)
     notify_roles(db, notification_roles, notification_title, notification_message, agreement.id)
-    if is_final:
-        researcher = db.get(User, agreement.researcher_id)
-        if researcher:
-            from ..workflows.service import notify_user
+    researcher = db.get(User, agreement.researcher_id)
+    if researcher:
+        from ..workflows.service import notify_user
 
-            notify_user(db, researcher, notification_title, notification_message, agreement.id)
+        notify_user(db, researcher, notification_title, notification_message, agreement.id)
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
 
 
-def _get_version_with_agreement(db: Session, version_id: int) -> AgreementVersion:
-    version = db.scalar(
-        select(AgreementVersion)
-        .where(AgreementVersion.id == version_id)
-        .options(selectinload(AgreementVersion.agreement))
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Agreement version not found")
-    return version
-
-
-def list_comments(db: Session, user: User, version_id: int) -> list[Comment]:
-    version = _get_version_with_agreement(db, version_id)
-    ensure_can_view_agreement(user, version.agreement)
-    if user.role not in {"linkages", "legal"}:
-        raise HTTPException(status_code=403, detail="Comments are internal to Linkages and Legal")
-    return db.scalars(
-        select(Comment)
-        .where(Comment.version_id == version_id)
-        .options(selectinload(Comment.author))
-        .order_by(Comment.timestamp)
-    ).all()
-
-
-def create_comment(db: Session, user: User, version_id: int, payload: CommentCreate, request: Request) -> Comment:
-    version = _get_version_with_agreement(db, version_id)
-    ensure_can_view_agreement(user, version.agreement)
-    if user.role != "legal":
-        raise HTTPException(status_code=403, detail="Only Legal can create comments")
-    if version.is_final or version.agreement.status == "fully_executed":
-        raise HTTPException(status_code=409, detail="Fully executed agreements are locked")
-    if not can_create_comment(user, version.agreement):
-        raise HTTPException(status_code=409, detail="Comments are not allowed at this workflow status")
-    comment = Comment(
-        version_id=version_id,
-        author_id=user.id,
-        text=payload.text.strip(),
-        section_reference=payload.section_reference,
-        status="open",
-    )
-    db.add(comment)
-    db.flush()
-    audit(db, user, "create_comment", "comment", comment.id, request, new_value=comment.text)
-    db.commit()
-    db.refresh(comment)
-    return comment
-
-
-def update_comment(db: Session, user: User, comment_id: int, payload: CommentUpdate, request: Request) -> Comment:
-    comment = db.scalar(select(Comment).where(Comment.id == comment_id).options(selectinload(Comment.version).selectinload(AgreementVersion.agreement)))
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    ensure_can_view_agreement(user, comment.version.agreement)
-    if user.role != "legal":
-        raise HTTPException(status_code=403, detail="Only Legal can update comments")
-    if comment.version.is_final or comment.version.agreement.status == "fully_executed":
-        raise HTTPException(status_code=409, detail="Fully executed agreements are locked")
-    if comment.version.agreement.status not in {"pending_legal_review", "pending_legal_verification"}:
-        raise HTTPException(status_code=409, detail="Comments are read-only at this workflow status")
-    old_status = comment.status
-    comment.status = payload.status
-    audit(db, user, "update_comment", "comment", comment.id, request, old_value=old_status, new_value=comment.status)
-    db.commit()
-    db.refresh(comment)
-    return comment
 
 
 def create_progress_update(db: Session, user: User, agreement_id: int, payload: ProgressUpdateCreate, request: Request) -> ProgressUpdate:

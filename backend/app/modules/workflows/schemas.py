@@ -24,6 +24,7 @@ class WorkflowEventOut(ORMModel):
 # fully_executed -> expired on the daily expiry job (Phase 3) — neither of
 # which is exposed through this endpoint).
 TransitionAction = Literal[
+    "submit",
     "request_corrections",
     "approve",
     "resubmit_for_verification",

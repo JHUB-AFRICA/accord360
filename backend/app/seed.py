@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import argparse
-import io
 from datetime import date, timedelta
 
+from app.core.config import settings
 from sqlalchemy import delete, select
 
 from .db.session import SessionLocal
 from .models import (
     Agreement,
+    AgreementDrivePermission,
     AgreementVersion,
     AuditLog,
-    Comment,
     FieldDefinition,
     Notification,
     Partner,
@@ -51,43 +51,28 @@ def seed_field_definitions(db) -> None:
     db.flush()
 
 
-STANDARD_MOU_DOCUMENT_TYPE = "Standard MoU"
-
-
-def _standard_mou_docx_bytes() -> bytes:
-    """Build a minimal, valid .docx containing every FieldDefinition's
-    {{tag}}, so a fresh environment always has one workable active template
-    (REBUILD_BRIEF.md Section 3 depends on one existing before any Researcher
-    can submit an intake)."""
-    from docx import Document
-
-    document = Document()
-    document.add_heading("Memorandum of Understanding", level=1)
-    document.add_paragraph(
-        "This Memorandum of Understanding is entered into between JKUAT and "
-        "{{partner_name}} regarding {{agreement_title}}."
-    )
-    document.add_paragraph("Department: {{department}}")
-    document.add_paragraph("Start date: {{start_date}}")
-    document.add_paragraph("End date: {{end_date}}")
-    document.add_paragraph("Researcher: {{researcher_name}}")
-    output = io.BytesIO()
-    document.save(output)
-    return output.getvalue()
+STANDARD_MOU_DOCUMENT_TYPE = "MoU"
 
 
 def seed_standard_mou_template(db, linkages_user: User) -> None:
+    # With real Drive enabled, templates come only from the Templates page —
+    # never seed a dummy one with a fake Doc id.
+    if settings.google_drive_enabled:
+        return
     if db.scalar(
         select(Template).where(Template.document_type == STANDARD_MOU_DOCUMENT_TYPE, Template.is_active.is_(True))
     ):
         return
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — a demo/dev environment
+    # without real Drive credentials still needs an active Template for
+    # create_agreement's master_doc_id check; this id is only real once a
+    # Google Doc with this id is actually shared with the service account
+    # (see the brief's Section 1 external setup).
     template = template_service.create_template(
         db,
-        TemplateCreate(document_type=STANDARD_MOU_DOCUMENT_TYPE),
+        TemplateCreate(document_type=STANDARD_MOU_DOCUMENT_TYPE, master_doc_id="demo-standard-mou-master-doc"),
         linkages_user,
         request=None,
-        content=_standard_mou_docx_bytes(),
-        original_name="standard-mou.docx",
     )
     template_service.activate_template(db, template.id, linkages_user, request=None)
 
@@ -99,10 +84,10 @@ def seed(reset: bool = False, demo: bool = True) -> None:
             for model in [
                 Notification,
                 AuditLog,
-                Comment,
                 AgreementVersion,
                 ProgressUpdate,
                 WorkflowEvent,
+                AgreementDrivePermission,
                 Agreement,
                 Partner,
                 Template,

@@ -1,8 +1,14 @@
-"""Phase 2 document-generation and Researcher/Linkages hand-off tests."""
+"""Phase 2 template activation + Google Docs drafting hand-off tests.
+
+GOOGLE_DOCS_DRAFTING_BRIEF.md Phase D retired the docx-template-merge
+engine entirely: a Template is now just a pointer to a Google Doc
+(master_doc_id), and create_agreement copies it via the (mocked, in tests)
+Drive integration. The Researcher/Linkages hand-off is the explicit `submit`
+transition, not a file upload.
+"""
 
 from __future__ import annotations
 
-import io
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -17,26 +23,18 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["SEED_DEMO_DATA"] = "false"
 
 import pytest
-from docx import Document
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.core.security import hash_password
-from app.core.config import settings
 from app.db.session import SessionLocal
 from app.main import app  # noqa: F401
-from app.models import Agreement, FieldDefinition, Partner, Template, User
-from app.modules.agreements.service import create_agreement, upload_initial_draft
+from app.models import Agreement, AgreementDrivePermission, FieldDefinition, Partner, User
+from app.modules.agreements.service import create_agreement, transition_agreement
 from app.modules.agreements.schemas import AgreementCreate
 from app.modules.templates import service as template_service
 from app.modules.templates.schemas import TemplateCreate
-
-
-def _docx(text: str) -> bytes:
-    document = Document()
-    document.add_paragraph(text)
-    output = io.BytesIO()
-    document.save(output)
-    return output.getvalue()
+from app.modules.workflows.schemas import TransitionRequest
 
 
 def _user(db, role: str, suffix: str) -> User:
@@ -52,8 +50,6 @@ def _user(db, role: str, suffix: str) -> User:
 
 
 def _definitions(db) -> None:
-    from sqlalchemy import select
-
     for name, required in [
         ("partner_name", True),
         ("agreement_title", True),
@@ -67,61 +63,87 @@ def _definitions(db) -> None:
     db.flush()
 
 
-def test_template_validation_reports_present_missing_and_unknown_tokens():
-    with SessionLocal() as db:
-        _definitions(db)
-        summary = template_service.validate_docx_placeholders(
-            db,
-            _docx("{{partner_name}} {{agreement_title}} {{unknown_token}}"),
-        )
-        assert summary == {
-            "present": ["agreement_title", "partner_name"],
-            "missing_required": ["department", "end_date", "researcher_name", "start_date"],
-            "unknown_tokens": ["unknown_token"],
-            "validated": False,
-        }
+def _mock_drive(monkeypatch):
+    """Fake the Drive integration — Phase B acceptance criteria require no
+    test to depend on real Google credentials.
+    """
+    from app.modules.agreements import service as agreement_service
+
+    counter = {"n": 0}
+
+    def fake_copy_template(master_doc_id, name):
+        counter["n"] += 1
+        return f"copy-{counter['n']}"
+
+    def fake_grant_permission(doc_id, email, role="writer", notify=True):
+        counter["n"] += 1
+        return f"perm-{counter['n']}"
+
+    def fake_revoke_permission(doc_id, permission_id):
+        return None
+
+    def fake_doc_url(doc_id):
+        return f"https://docs.google.com/document/d/{doc_id}/edit"
+
+    monkeypatch.setattr(agreement_service.google_drive, "copy_template", fake_copy_template)
+    monkeypatch.setattr(agreement_service.google_drive, "grant_permission", fake_grant_permission)
+    monkeypatch.setattr(agreement_service.google_drive, "revoke_permission", fake_revoke_permission)
+    monkeypatch.setattr(agreement_service.google_drive, "doc_url", fake_doc_url)
 
 
-def test_template_missing_required_placeholder_cannot_be_activated():
+def test_template_cannot_be_activated_without_a_linked_google_doc():
     suffix = uuid4().hex[:8]
     with SessionLocal() as db:
-        _definitions(db)
         linkages = _user(db, "linkages", suffix)
         template = template_service.create_template(
             db,
-            TemplateCreate(document_type="Standard MoU"),
+            TemplateCreate(document_type="MoU", master_doc_id=f"master-{suffix}"),
             linkages,
             request=None,
-            content=_docx("{{partner_name}}"),
-            original_name="incomplete.docx",
         )
-        with pytest.raises(ValueError, match="missing required"):
+        # Simulate a legacy row created before master_doc_id was required.
+        template.master_doc_id = None
+        db.commit()
+
+        with pytest.raises(ValueError, match="linked to a Google Doc"):
             template_service.activate_template(db, template.id, linkages, request=None)
         db.refresh(template)
         assert template.is_active is False
 
 
-def test_researcher_submission_generates_intake_and_linkages_upload_routes_to_legal():
+def test_researcher_submission_copies_template_and_submit_routes_to_linkages_and_legal(monkeypatch):
     suffix = uuid4().hex[:8]
     with SessionLocal() as db:
+        _mock_drive(monkeypatch)
         _definitions(db)
         researcher = _user(db, "researcher", suffix)
         linkages = _user(db, "linkages", f"{suffix}-l")
         legal = _user(db, "legal", f"{suffix}-g")
-        partner = Partner(name=f"Partner {suffix}", sector="Research", country="Kenya")
+        partner = Partner(
+            name=f"Partner {suffix}",
+            sector="Research",
+            country="Kenya",
+            contact_email=f"partner-{suffix}@example.org",
+        )
         db.add(partner)
         db.flush()
         template = template_service.create_template(
             db,
-            TemplateCreate(document_type="Standard MoU"),
+            TemplateCreate(document_type="MoU", master_doc_id="master-doc-fixture"),
             linkages,
             request=None,
-            content=_docx("{{partner_name}} {{agreement_title}} {{department}} {{start_date}} {{end_date}} {{researcher_name}}"),
-            original_name="template.docx",
         )
         template_service.activate_template(db, template.id, linkages, request=None)
         db.commit()
 
+        field_values = {
+            "partner_name": partner.name,
+            "agreement_title": "Research collaboration",
+            "department": "Computing",
+            "start_date": date.today().isoformat(),
+            "end_date": (date.today() + timedelta(days=365)).isoformat(),
+            "researcher_name": researcher.full_name,
+        }
         agreement = create_agreement(
             db,
             researcher,
@@ -131,33 +153,53 @@ def test_researcher_submission_generates_intake_and_linkages_upload_routes_to_le
                 partner_id=partner.id,
                 start_date=date.today(),
                 end_date=date.today() + timedelta(days=365),
-                field_values={},
+                field_values=field_values,
             ),
             request=None,
         )
         agreement_id = agreement.id
         assert agreement.status == "draft_generated"
-        assert len(agreement.versions) == 1
-        assert agreement.versions[0].file.startswith("generated-intake/")
-        generated_path = settings.upload_path / agreement.versions[0].file
-        assert generated_path.is_file()
-        assert "Research collaboration" in "\n".join(paragraph.text for paragraph in Document(generated_path).paragraphs)
-        linkages_id, legal_id = linkages.id, legal.id
+        # Drafting-stage content lives only in the Google Doc — no
+        # AgreementVersion is created at this step.
+        assert agreement.versions == []
+        assert agreement.template_copy_url == "https://docs.google.com/document/d/copy-1/edit"
 
-    # Each block below uses its own fresh session, mirroring how a real
-    # deployment gets a brand-new session per HTTP request (app.db.session
-    # get_db()). This avoids relying on SQLAlchemy's same-session identity
-    # map / already-loaded-collection semantics, which do NOT reflect how
-    # separate requests actually behave.
+        grants = db.scalars(
+            select(AgreementDrivePermission).where(AgreementDrivePermission.agreement_id == agreement_id)
+        ).all()
+        assert {(g.role, g.email) for g in grants} == {
+            ("researcher", researcher.email),
+            ("partner", partner.contact_email),
+        }
+        linkages_id, legal_id, researcher_id = linkages.id, legal.id, researcher.id
+
+    with SessionLocal() as db:
+        researcher = db.get(User, researcher_id)
+        updated = transition_agreement(db, researcher, agreement_id, TransitionRequest(action="submit"), None)
+        assert updated.status == "pending_legal_review"
+
+        grants = db.scalars(
+            select(AgreementDrivePermission).where(AgreementDrivePermission.agreement_id == agreement_id)
+        ).all()
+        partner_grant = next(g for g in grants if g.role == "partner")
+        assert partner_grant.revoked_at is not None
+        assert {g.role for g in grants if g.revoked_at is None} == {"researcher", "linkages", "legal"}
+
     with SessionLocal() as db:
         linkages = db.get(User, linkages_id)
-        updated = upload_initial_draft(db, linkages, agreement_id, _docx("Legal draft"), "legal-draft.docx", None)
-        assert updated.status == "pending_legal_review"
-        assert len(updated.versions) == 2
-        assert updated.versions[-1].uploaded_by.id == linkages_id
-
-    with SessionLocal() as db:
-        legal = db.get(User, legal_id)
+        other_draft = Agreement(
+            title="Second collaboration",
+            department="Computing",
+            partner_id=db.scalar(select(Partner.id).limit(1)),
+            researcher_id=researcher_id,
+            status="draft_generated",
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=365),
+            template_copy_doc_id="copy-other",
+            template_copy_url="https://docs.google.com/document/d/copy-other/edit",
+        )
+        db.add(other_draft)
+        db.commit()
         with pytest.raises(HTTPException) as error:
-            upload_initial_draft(db, legal, agreement_id, _docx("Not allowed"), "not-allowed.docx", None)
+            transition_agreement(db, linkages, other_draft.id, TransitionRequest(action="submit"), None)
         assert error.value.status_code == 403

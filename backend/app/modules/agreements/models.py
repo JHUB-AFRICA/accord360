@@ -1,8 +1,11 @@
 """Agreement domain models — REBUILD_BRIEF.md Section 2.6.
 
 Agreement.status is the single authoritative workflow field (there is no
-separate "stage" concept anymore). AgreementVersion, Comment and
-ProgressUpdate are new tables that replace the old flat `Document` model.
+separate "stage" concept anymore). AgreementVersion and ProgressUpdate are
+new tables that replace the old flat `Document` model. The Comment model
+that used to live here was removed in GOOGLE_DOCS_DRAFTING_BRIEF.md Phase D
+— Legal's comments live natively in the Google Doc; Accord 360 only logs
+that a "returned for corrections" event happened, via WorkflowEvent.comment.
 """
 
 from __future__ import annotations
@@ -47,6 +50,17 @@ class Agreement(Base, TimestampMixin):
     # `status` enum for querying convenience; `status` remains authoritative.
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — the live, editable Google Doc
+    # copy for the current drafting cycle. Set once at create_agreement and
+    # never touched again by Accord 360; Google Docs' own revision history
+    # is authoritative for drafting-stage content, not these columns.
+    template_copy_doc_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    template_copy_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Self-referencing renewal chain (spec Section 5/9's "First/Second Final
+    # Signed Document"). Populating this on `expired -> renew` is explicitly
+    # out of scope for the current brief — see its "Open items" section.
+    renewal_of_id: Mapped[int | None] = mapped_column(ForeignKey("agreements.id"), nullable=True)
+
     partner: Mapped["Partner"] = relationship(back_populates="agreements")
     researcher: Mapped["User"] = relationship(back_populates="owned_agreements", foreign_keys=[researcher_id])
     versions: Mapped[list["AgreementVersion"]] = relationship(
@@ -56,6 +70,9 @@ class Agreement(Base, TimestampMixin):
         back_populates="agreement", cascade="all, delete-orphan", order_by="ProgressUpdate.created_at"
     )
     workflow_events: Mapped[list["WorkflowEvent"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
+    drive_permissions: Mapped[list["AgreementDrivePermission"]] = relationship(
+        back_populates="agreement", cascade="all, delete-orphan", order_by="AgreementDrivePermission.granted_at"
+    )
 
     @property
     def current_version(self) -> "AgreementVersion | None":
@@ -85,22 +102,27 @@ class AgreementVersion(Base):
 
     agreement: Mapped[Agreement] = relationship(back_populates="versions")
     uploaded_by: Mapped["User"] = relationship()
-    comments: Mapped[list["Comment"]] = relationship(back_populates="version", cascade="all, delete-orphan")
 
 
-class Comment(Base):
-    __tablename__ = "comments"
+class AgreementDrivePermission(Base):
+    """Local record of a Drive permission grant — GOOGLE_DOCS_DRAFTING_BRIEF.md
+    Section 4. Revocation always goes through the stored `permission_id`
+    here, never a permissions.list lookup against the Drive API.
+    """
+
+    __tablename__ = "agreement_drive_permissions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    version_id: Mapped[int] = mapped_column(ForeignKey("agreement_versions.id"), nullable=False, index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="open", nullable=False)
-    section_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreements.id"), nullable=False, index=True)
+    # "researcher" | "partner" | "linkages" | "legal" — why the grant exists,
+    # not the grantee's system role (see the brief for the distinction).
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    email: Mapped[str] = mapped_column(String(200), nullable=False)
+    permission_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    version: Mapped[AgreementVersion] = relationship(back_populates="comments")
-    author: Mapped["User"] = relationship()
+    agreement: Mapped[Agreement] = relationship(back_populates="drive_permissions")
 
 
 class ProgressUpdate(Base):

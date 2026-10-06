@@ -29,7 +29,7 @@ class AgreementCreate(BaseModel):
     partner_id: int
     start_date: date
     end_date: date
-    document_type: str = Field(default="Standard MoU", min_length=2, max_length=120)
+    document_type: str = Field(default="MoU", min_length=2, max_length=120)
     field_values: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -48,25 +48,6 @@ class AgreementVersionOut(ORMModel):
     timestamp: datetime
     status_at_time: str
     is_final: bool
-
-
-class CommentOut(ORMModel):
-    id: int
-    version_id: int
-    author: UserOut
-    text: str
-    status: str
-    section_reference: str | None
-    timestamp: datetime
-
-
-class CommentCreate(BaseModel):
-    text: str = Field(min_length=1, max_length=10000)
-    section_reference: str | None = Field(default=None, max_length=300)
-
-
-class CommentUpdate(BaseModel):
-    status: Literal["open", "resolved"]
 
 
 class ProgressUpdateOut(ORMModel):
@@ -96,6 +77,9 @@ class AgreementListOut(ORMModel):
     expiry_notified: bool
     archived: bool
     days_to_expiry: int | None = None
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — the live Google Doc for the
+    # current drafting cycle; None once no template copy has been made yet.
+    template_copy_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
