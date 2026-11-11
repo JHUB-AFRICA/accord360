@@ -54,6 +54,11 @@ Yes — this is the better arrangement, and we can fully test the integration ag
 
 **Testing:** once we have that key and the Shared Drive/folder id, we set them in Accord 360's backend configuration exactly as we do today — no code changes needed, only the credentials and ids change. We can then run the full flow (researcher creates a drafting copy, partner is invited, researcher submits, partner is removed and Linkages/Legal are granted access) against JKUAT's real environment before it's used for anything live.
 
+## Sender name and Shared Drive membership
+
+- **Display name:** please give the service account a clear display name such as "JKUAT Accord 360" (Cloud console → IAM & Admin → Service Accounts → edit name). Google's share emails say "<name> (via Google Docs)", and an official-looking sender is far less likely to be marked as spam. When a recipient marks it as spam or blocks it, Google refuses to share with them at all.
+- **Shared Drive members:** only the service account (Content Manager) and a JKUAT administrator should be members of the Shared Drive. Anyone who is a member has inherited access that can't be revoked per document, which breaks the "partner loses access at Submit" and "Legal loses access after review" rules. Researchers, Linkages and Legal staff and partners must not be added as drive members.
+
 ## What we're not asking for, and where things stand
 
 - No domain-wide delegation — the service account cannot act as any JKUAT user, only as itself, granted access document by document.
