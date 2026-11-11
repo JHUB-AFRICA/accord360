@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarClock } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import DocumentRepository from "../components/DocumentRepository.jsx";
@@ -16,7 +16,7 @@ import { formatDate, formatDateTime, humanize } from "../lib/format.js";
 
 const ALL_TABS = [
   ["overview", "Overview"], ["workflow", "Workflow"], ["documents", "Documents"],
-  ["corrections", "Legal review"], ["monitoring", "Progress"], ["history", "Status history"]
+  ["corrections", "Review"], ["monitoring", "Progress"], ["history", "Status history"]
 ];
 
 // Researchers only need to see where their agreement stands (Workflow
@@ -38,6 +38,37 @@ function roleDefaultTab(role, status) {
   return { legal: "corrections", me: "monitoring", researcher: "overview" }[role] || "overview";
 }
 
+const ACTION_LABELS = {
+  submit: "Submit to Linkages",
+  send_to_legal: "Send to Legal",
+  return_to_researcher: "Return to Researcher",
+  return_to_linkages: "Return to Linkages",
+  resubmit: "Resubmit to Linkages",
+  approve: "Approve",
+  start_signing: "Start signing"
+};
+
+// What each action does, shown in its confirm box so nobody has to guess.
+const ACTION_HELP = {
+  send_to_legal: "Legal gets edit access to the Google Doc and is notified. You keep your access.",
+  return_to_researcher: "The Researcher can edit the Google Doc again and is notified. Say what needs fixing in the note, or comment in the Doc.",
+  return_to_linkages: "Legal's access to the Google Doc is removed and Linkages is notified.",
+  approve: "Legal's access to the Google Doc is removed and Linkages is told the agreement is ready for signing.",
+  resubmit: "Sends the agreement back to Linkages for review."
+};
+
+// The one thing each role is here to do at each status: open the Doc, then
+// press one clear button. Shown as a focused panel; everything else is
+// tucked under "More details". Buttons come from the server's
+// available_actions, this only decides the wording and which ones to feature.
+function focusFor(role, status) {
+  if (role === "linkages" && status === "linkages_review") return { title: "Review this agreement", text: "Open the Google Doc, make your edits, then come back and choose what happens next.", actions: ["send_to_legal", "return_to_researcher"] };
+  if (role === "legal" && status === "legal_review") return { title: "Legal review", text: "Open the Google Doc and comment or edit as needed, then come back and approve it or return it to Linkages.", actions: ["approve", "return_to_linkages"] };
+  if (role === "researcher" && status === "returned_to_researcher") return { title: "Changes requested", text: "Open the Google Doc, address the comments, then resubmit it to Linkages.", actions: ["resubmit"] };
+  if (role === "linkages" && status === "approved_for_signing") return { title: "Approved by Legal", text: "Legal has approved this agreement. Open the Doc if you want a last look, then start the signing process.", actions: ["start_signing"] };
+  return null;
+}
+
 function InfoItem({ label, children }) {
   return <div className="info-item"><span>{label}</span><strong>{children || "—"}</strong></div>;
 }
@@ -53,6 +84,7 @@ export default function AgreementDetail({ defaultTab }) {
   const [reason, setReason] = useState("");
   const [fieldsConfirmed, setFieldsConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [progressForm, setProgressForm] = useState({ quarter: "", notes: "" });
   const navigate = useNavigate();
   const tabs = tabsForRole(user.role);
@@ -67,7 +99,7 @@ export default function AgreementDetail({ defaultTab }) {
   useEffect(() => { load(); }, [load]);
 
   const availableActions = useMemo(
-    () => (record?.available_actions || []).map((key) => ({ key, label: humanize(key), variant: key === "archive" ? "danger" : "primary" })),
+    () => (record?.available_actions || []).map((key) => ({ key, label: ACTION_LABELS[key] || humanize(key), variant: key === "archive" ? "danger" : "primary" })),
     [record]
   );
 
@@ -108,6 +140,11 @@ export default function AgreementDetail({ defaultTab }) {
   if (error && !record) return <><PageHeader eyebrow="Agreement workspace" title="Unable to open agreement" /><ErrorState message={error} onRetry={load} /></>;
   if (!record) return <LoadingState label="Loading agreement workspace" />;
 
+  const focus = focusFor(user.role, record.status);
+  const focusActions = focus ? availableActions.filter((item) => focus.actions.includes(item.key)) : [];
+  const headerActions = availableActions.filter((item) => !focusActions.includes(item));
+  const showTabs = !focus || showDetails;
+  const activeTab = showTabs ? tab : null;
   const canSubmitProgress = user.role === "researcher" && ["fully_executed", "expired"].includes(record.status);
 
   return (
@@ -118,7 +155,7 @@ export default function AgreementDetail({ defaultTab }) {
         eyebrow="Agreement workspace"
         title={record.title}
         description={record.partner_name}
-        actions={<><button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>{availableActions.map((item) => <button className={item.variant === "primary" ? "primary-button" : "danger-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</>}
+        actions={<><button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>{headerActions.map((item) => <button className={item.variant === "primary" ? "primary-button" : "danger-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</>}
         meta={<div className="header-badges"><StatusBadge status={record.status} /></div>}
       />
 
@@ -131,9 +168,35 @@ export default function AgreementDetail({ defaultTab }) {
         {record.expiry_alert_date && <InfoItem label="Expiry alert date">{formatDate(record.expiry_alert_date)}</InfoItem>}
       </section>
 
-      <nav className="tabs" aria-label="Agreement sections">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setSearchParams({ tab: key })}>{label}</button>)}</nav>
+      {record.status === "approved_for_signing" && record.approved_at && (
+        <div className={`inline-alert ${record.doc_modified_after_approval ? "warning" : "success"}`}>
+          <CheckCircle2 size={18} />
+          <div>
+            <strong>Approved by Legal{record.approved_by_name ? ` — ${record.approved_by_name}` : ""} on {formatDateTime(record.approved_at)}</strong>
+            <p>{record.doc_modified_after_approval
+              ? "The Google Doc was modified after this approval. Review the Doc's version history before starting signing."
+              : user.role === "linkages" ? "This agreement is ready for you to start signing." : "This agreement is ready for signing."}</p>
+          </div>
+        </div>
+      )}
 
-      {tab === "overview" && <div className="detail-grid">
+      {focus && (
+        <section className="panel focus-panel">
+          <h2>{focus.title}</h2>
+          <p>{focus.text}</p>
+          <div className="focus-steps">
+            {record.template_copy_url
+              ? <div><a className="primary-button focus-doc-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={18} /> Open Google Doc</a></div>
+              : <p className="helper-note">No Google Doc is linked to this agreement.</p>}
+            {focusActions.length > 0 && <div className="focus-actions">{focusActions.map((item) => <button key={item.key} className={item.key === focusActions[0].key ? "primary-button" : "secondary-button"} onClick={() => setAction(item)}>{item.label}</button>)}</div>}
+          </div>
+        </section>
+      )}
+      {focus && <div className="focus-more"><button className="secondary-button compact-button" onClick={() => setShowDetails((value) => !value)}>{showDetails ? "Hide details" : "More details"}</button></div>}
+
+      {showTabs && <nav className="tabs" aria-label="Agreement sections">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setSearchParams({ tab: key })}>{label}</button>)}</nav>}
+
+      {activeTab === "overview" && <div className="detail-grid">
         <section className="panel detail-main-card">
           <div className="panel-head"><div><h2>Agreement overview</h2></div></div>
           <div className="info-grid">
@@ -158,13 +221,13 @@ export default function AgreementDetail({ defaultTab }) {
         </aside>
       </div>}
 
-      {tab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Lifecycle</h2><p>The nine-status Accord 360 workflow.</p></div></div><WorkflowTimeline agreement={record} /></section>}
+      {activeTab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Lifecycle</h2><p>The nine-status Accord 360 workflow.</p></div></div><WorkflowTimeline agreement={record} /></section>}
 
-      {tab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+      {activeTab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
-      {tab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+      {activeTab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
-      {tab === "monitoring" && <div className="detail-grid">
+      {activeTab === "monitoring" && <div className="detail-grid">
         <section className="panel detail-main-card">
           <div className="panel-head"><div><h2>Quarterly progress updates</h2><p>Submitted by the Researcher once this agreement is fully executed or expired.</p></div></div>
           <div className="activity-timeline">
@@ -186,7 +249,7 @@ export default function AgreementDetail({ defaultTab }) {
         </aside>}
       </div>}
 
-      {tab === "history" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Status history</h2><p>Every status change this agreement has been through, and who made it.</p></div></div><div className="activity-timeline">{[...(record.workflow_events || [])].reverse().map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{humanize(item.action)}</strong><p>{humanize(item.from_stage || "Created")} → {humanize(item.to_stage)} · {item.actor?.full_name || "System"}</p>{item.comment && <p>{item.comment}</p>}<small>{formatDateTime(item.created_at)}</small></div></article>)}</div></section>}
+      {activeTab === "history" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Status history</h2><p>Every status change this agreement has been through, and who made it.</p></div></div><div className="activity-timeline">{[...(record.workflow_events || [])].reverse().map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{humanize(item.action)}</strong><p>{humanize(item.from_stage || "Created")} → {humanize(item.to_stage)} · {item.actor?.full_name || "System"}</p>{item.comment && <p>{item.comment}</p>}<small>{formatDateTime(item.created_at)}</small></div></article>)}</div></section>}
 
       <Modal
         open={Boolean(action)}
@@ -195,6 +258,7 @@ export default function AgreementDetail({ defaultTab }) {
         description={`${record.title} · ${humanize(record.status)}`}
         footer={<><button className="secondary-button" onClick={() => { setAction(null); setFieldsConfirmed(false); }}>Cancel</button><button className={action?.variant === "danger" ? "danger-button" : "primary-button"} disabled={submitting || (action?.key === "submit" && !fieldsConfirmed)} onClick={performAction}>{submitting ? "Processing…" : `Confirm ${action?.label || "action"}`}</button></>}
       >
+        {ACTION_HELP[action?.key] && <p className="helper-note">{ACTION_HELP[action.key]}</p>}
         {action?.key === "submit" && <>
           <p className="helper-note">Submitting cuts off the external partner's access to the Google Doc and hands review to Linkages and Legal. Make sure the partner is done editing first.</p>
           <label className="form-field checkbox-field">

@@ -15,6 +15,24 @@ import { humanize } from "../lib/format.js";
 
 const kpiIcons = [Gauge, ClipboardCheck, AlertTriangle, CheckCircle2];
 
+// Linkages' queue is split by what they have to do next, so a new submission
+// can't be missed among returns and signing items. Other roles get one list.
+const QUEUE_GROUPS = {
+  linkages: [
+    { key: "new", title: "New — needs your review", empty: "No new submissions.", match: (item) => item.status === "linkages_review" && !item.returned_by_legal },
+    { key: "returned", title: "Returned by Legal", empty: "Nothing returned by Legal.", match: (item) => item.status === "linkages_review" && item.returned_by_legal },
+    { key: "approved", title: "Approved by Legal — start signing", empty: "Nothing waiting to start signing.", match: (item) => item.status === "approved_for_signing" },
+    { key: "signing", title: "Awaiting signatures", empty: "Nothing awaiting signatures.", match: (item) => item.status === "awaiting_signatures" }
+  ]
+};
+
+function waitingLabel(value) {
+  if (!value) return "—";
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
+  if (days <= 0) return "Today";
+  return days === 1 ? "1 day" : `${days} days`;
+}
+
 // A small, role-scoped landing dashboard: real KPIs, two quick-glance charts
 // (status breakdown and a 6-month creation trend, both from real
 // /dashboard/stats data), and a priority queue of agreements needing this
@@ -36,7 +54,8 @@ export default function Dashboard() {
 
   const queueColumns = useMemo(() => [
     { key: "title", label: "Agreement", render: (item) => <div className="stacked-cell"><strong>{item.title}</strong><span>{item.partner_name}</span></div> },
-    { key: "department", label: "Department" },
+    { key: "researcher_name", label: "Researcher" },
+    { key: "waiting", label: "Waiting", render: (item) => waitingLabel(item.updated_at) },
     { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status}>{humanize(item.status)}</StatusBadge> }
   ], []);
 
@@ -70,6 +89,24 @@ export default function Dashboard() {
         ))}
       </section>
 
+      {QUEUE_GROUPS[user.role] && <div className="queue-groups">
+        {QUEUE_GROUPS[user.role].map((group) => {
+            const rows = (data.queue || []).filter(group.match);
+            return (
+              <section className="panel data-panel" key={group.key}>
+                <div className="panel-head"><div><h2>{group.title} <span className="queue-count">{rows.length}</span></h2></div>{group.key === "new" && <Link to="/agreements" className="text-link">View all agreements <ArrowRight size={15} /></Link>}</div>
+                <DataTable
+                  columns={queueColumns}
+                  rows={rows}
+                  onRowClick={(item) => navigate(`/agreements/${item.id}`)}
+                  emptyTitle={group.empty}
+                  emptyText=""
+                />
+              </section>
+            );
+          })}
+      </div>}
+
       <section className="dashboard-grid">
         <article className="panel chart-panel span-2">
           <div className="panel-head"><div><h2>Agreements by status</h2><p>Where every visible agreement currently stands.</p></div></div>
@@ -82,16 +119,16 @@ export default function Dashboard() {
         </article>
       </section>
 
-      <section className="panel data-panel">
-        <div className="panel-head"><div><h2>{workspace.queue_title || "My priority queue"}</h2><p>{workspace.queue_description || "Agreements that currently need your action."}</p></div><Link to="/agreements" className="text-link">View all agreements <ArrowRight size={15} /></Link></div>
-        <DataTable
-          columns={queueColumns}
-          rows={data.queue || []}
-          onRowClick={(item) => navigate(`/agreements/${item.id}`)}
-          emptyTitle="Nothing needs your attention"
-          emptyText="Your queue is clear right now."
-        />
-      </section>
+      {!QUEUE_GROUPS[user.role] && <section className="panel data-panel">
+          <div className="panel-head"><div><h2>{workspace.queue_title || "My priority queue"}</h2><p>{workspace.queue_description || "Agreements that currently need your action."}</p></div><Link to="/agreements" className="text-link">View all agreements <ArrowRight size={15} /></Link></div>
+          <DataTable
+            columns={queueColumns}
+            rows={data.queue || []}
+            onRowClick={(item) => navigate(`/agreements/${item.id}`)}
+            emptyTitle="Nothing needs your attention"
+            emptyText="Your queue is clear right now."
+          />
+        </section>}
     </>
   );
 }

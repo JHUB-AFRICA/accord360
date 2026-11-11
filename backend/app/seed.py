@@ -152,7 +152,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                 department="Department of Computing",
                 partner_id=partner_b.id,
                 researcher_id=users["researcher"].id,
-                status="pending_legal_review",
+                status="legal_review",
                 start_date=date.today() - timedelta(days=10),
                 end_date=date.today() + timedelta(days=700),
             )
@@ -185,7 +185,7 @@ def seed(reset: bool = False, demo: bool = True) -> None:
                     WorkflowEvent(
                         agreement_id=in_legal_review.id,
                         from_stage="draft_generated",
-                        to_stage="pending_legal_review",
+                        to_stage="legal_review",
                         action="generate_draft",
                         comment="Draft generated and routed to Legal for review.",
                         actor_id=users["linkages"].id,

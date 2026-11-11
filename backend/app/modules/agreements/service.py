@@ -38,7 +38,7 @@ from app.modules.templates import service as template_service
 from app.modules.templates.models import Template
 from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, ProgressUpdateCreate
 from app.modules.workflows.schemas import TransitionRequest
-from ..workflows.service import notify_roles
+from ..workflows.service import notify_roles, notify_user
 
 __all__ = [
     "notify_roles",
@@ -74,17 +74,17 @@ RESEARCHER_EDIT_FIELDS = {"title", "department", "start_date", "end_date"}
 # daily expiry job and is not reachable through this table.
 # (from_status, action) -> (to_status, allowed_roles)
 TRANSITIONS: dict[tuple[str, str], tuple[str, set[str]]] = {
-    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 5.2 — Researcher confirms the
-    # partner's edits are satisfactory and explicitly submits. This is the
-    # sole way an agreement leaves draft_generated; Linkages no longer
-    # advances it by uploading a file (see Section 5.3).
-    ("draft_generated", "submit"): ("pending_legal_review", {"researcher"}),
-    ("pending_legal_review", "request_corrections"): ("returned_for_corrections", {"legal"}),
-    # inferred edge, confirm with Linkages Office (Section 2.4a)
-    ("pending_legal_review", "approve"): ("approved_for_signing", {"legal"}),
-    ("returned_for_corrections", "resubmit_for_verification"): ("pending_legal_verification", {"linkages"}),
-    ("pending_legal_verification", "approve"): ("approved_for_signing", {"legal"}),
-    ("pending_legal_verification", "request_corrections"): ("returned_for_corrections", {"legal"}),
+    # Researcher confirms the partner's edits are satisfactory and submits to
+    # Linkages. The partner is cut off from the Doc at this point.
+    ("draft_generated", "submit"): ("linkages_review", {"researcher"}),
+    # Linkages reviews/edits the Doc, then either sends it to Legal or back to
+    # the Researcher. Every agreement goes through Legal before signing.
+    ("linkages_review", "send_to_legal"): ("legal_review", {"linkages"}),
+    ("linkages_review", "return_to_researcher"): ("returned_to_researcher", {"linkages"}),
+    # Legal comments/edits in the Doc, then returns it to Linkages or approves.
+    ("legal_review", "return_to_linkages"): ("linkages_review", {"legal"}),
+    ("legal_review", "approve"): ("approved_for_signing", {"legal"}),
+    ("returned_to_researcher", "resubmit"): ("linkages_review", {"researcher"}),
     ("approved_for_signing", "start_signing"): ("awaiting_signatures", {"linkages"}),
     ("awaiting_signatures", "mark_fully_executed"): ("fully_executed", {"linkages"}),
     # TODO(spec): confirm exact renewal semantics with Linkages Office
@@ -99,9 +99,9 @@ def _transition_recipient_roles(to_status: str) -> set[str]:
     7-trigger notification table is Phase 3, Section 4.6).
     """
     mapping = {
-        "pending_legal_review": {"linkages", "legal"},
-        "returned_for_corrections": {"linkages"},
-        "pending_legal_verification": {"legal"},
+        "linkages_review": {"linkages"},
+        "legal_review": {"legal"},
+        "returned_to_researcher": set(),  # the agreement's own Researcher is notified explicitly
         "approved_for_signing": {"linkages"},
         "awaiting_signatures": {"linkages"},
         # The agreement's own Researcher is notified explicitly at the final
@@ -124,12 +124,32 @@ def available_actions(user: User, agreement: Agreement) -> list[str]:
     ]
 
 
-def _grant_drive_access(db: Session, agreement: Agreement, *, role: str, email: str, drive_role: str = "writer") -> None:
+def _active_grants(db: Session, agreement: Agreement, *, role: str) -> list[AgreementDrivePermission]:
+    return list(
+        db.scalars(
+            select(AgreementDrivePermission).where(
+                AgreementDrivePermission.agreement_id == agreement.id,
+                AgreementDrivePermission.role == role,
+                AgreementDrivePermission.revoked_at.is_(None),
+            )
+        ).all()
+    )
+
+
+def _grant_drive_access(
+    db: Session, agreement: Agreement, *, role: str, email: str, drive_role: str = "writer", message: str | None = None
+) -> None:
     """Grant Drive access and record it — GOOGLE_DOCS_DRAFTING_BRIEF.md
     Section 4. Every grant MUST be recorded here so revocation (below) can
     go through the stored permission_id instead of a permissions.list call.
+    Idempotent: an existing active grant for the same role and email is kept
+    (and, when a message is given, the person is just re-emailed).
     """
-    permission_id = google_drive.grant_permission(agreement.template_copy_doc_id, email, role=drive_role)
+    if any(g.email.lower() == email.lower() for g in _active_grants(db, agreement, role=role)):
+        if message:
+            google_drive.send_notification(agreement.template_copy_doc_id, email, message, role=drive_role)
+        return
+    permission_id = google_drive.grant_permission(agreement.template_copy_doc_id, email, role=drive_role, message=message)
     db.add(
         AgreementDrivePermission(
             agreement_id=agreement.id,
@@ -138,37 +158,84 @@ def _grant_drive_access(db: Session, agreement: Agreement, *, role: str, email: 
             permission_id=permission_id,
         )
     )
+    db.flush()  # session autoflush is off; later idempotency/shared-id checks must see this row
 
 
 def _revoke_drive_access(db: Session, agreement: Agreement, *, role: str) -> None:
-    """Revoke the un-revoked grant for `role` on this agreement's doc, using
-    the locally stored permission_id — never a live permissions.list lookup.
+    """Revoke every un-revoked grant for `role` on this agreement's doc, using
+    the locally stored permission_ids — never a live permissions.list lookup.
+
+    Drive hands back the same permission id when the same Google account is
+    granted twice (e.g. one person holding two roles), so a Drive-side delete
+    is skipped while another active local grant still shares that id.
     """
-    grant = db.scalar(
-        select(AgreementDrivePermission).where(
-            AgreementDrivePermission.agreement_id == agreement.id,
-            AgreementDrivePermission.role == role,
-            AgreementDrivePermission.revoked_at.is_(None),
+    for grant in _active_grants(db, agreement, role=role):
+        shared = db.scalar(
+            select(AgreementDrivePermission.id).where(
+                AgreementDrivePermission.agreement_id == agreement.id,
+                AgreementDrivePermission.permission_id == grant.permission_id,
+                AgreementDrivePermission.revoked_at.is_(None),
+                AgreementDrivePermission.id != grant.id,
+                AgreementDrivePermission.role != role,
+            )
         )
-    )
-    if grant is None:
+        if shared is None:
+            google_drive.revoke_permission(agreement.template_copy_doc_id, grant.permission_id)
+        grant.revoked_at = utc_now()
+        db.flush()
+
+
+def _staff_emails(db: Session, role: str) -> list[str]:
+    return [m.email for m in db.scalars(select(User).where(User.role == role, User.is_active.is_(True))).all()]
+
+
+def _grant_staff(db: Session, agreement: Agreement, role: str, message: str | None = None) -> None:
+    for email in _staff_emails(db, role):
+        _grant_drive_access(db, agreement, role=role, email=email, message=message)
+
+
+def _email_via_drive(agreement: Agreement, emails: list[str], message: str) -> None:
+    """Hand-off email through Google's own share notification (best-effort)."""
+    if not agreement.template_copy_doc_id:
         return
-    google_drive.revoke_permission(agreement.template_copy_doc_id, grant.permission_id)
-    grant.revoked_at = utc_now()
+    for email in emails:
+        google_drive.send_notification(agreement.template_copy_doc_id, email, message)
 
 
-def _advance_draft_to_linkages(db: Session, agreement: Agreement) -> None:
-    """Side effects of the `submit` transition — GOOGLE_DOCS_DRAFTING_BRIEF.md
-    Section 5.2: cut the external partner off immediately, then grant every
-    current Linkages/Legal staff member individual access (the "individual
-    staff email" grant model, not a shared group).
+def _handoff_message(agreement: Agreement, text: str, actor: User, comment: str | None) -> str:
+    message = f"Accord 360 — {agreement.title}\n{text}"
+    if comment:
+        message += f"\nNote from {actor.full_name}: {comment}"
+    return message
+
+
+def _apply_drive_side_effects(db: Session, agreement: Agreement, action: str, actor: User, comment: str | None = None) -> None:
+    """Drive access changes and hand-off emails for a transition. The
+    researcher keeps edit access throughout. Hand-off emails are Google's
+    share notification with a custom message, sent to whoever the Doc just
+    came to — see google_drive.send_notification.
     """
+
+    def msg(text: str) -> str:
+        return _handoff_message(agreement, text, actor, comment)
+
     try:
-        _revoke_drive_access(db, agreement, role="partner")
-        for role in ("linkages", "legal"):
-            staff = db.scalars(select(User).where(User.role == role, User.is_active.is_(True))).all()
-            for member in staff:
-                _grant_drive_access(db, agreement, role=role, email=member.email)
+        if action == "submit":
+            # Cut the external partner off immediately, then bring in Linkages.
+            _revoke_drive_access(db, agreement, role="partner")
+            _grant_staff(db, agreement, "linkages", msg(f"{actor.full_name} submitted this agreement for your review."))
+        elif action == "send_to_legal":
+            _grant_staff(db, agreement, "legal", msg("Linkages sent you this agreement for legal review. Comment or edit in the Doc."))
+        elif action == "return_to_linkages":
+            _revoke_drive_access(db, agreement, role="legal")
+            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg("Legal returned this agreement to Linkages. See the comments in the Doc."))
+        elif action == "approve":
+            _revoke_drive_access(db, agreement, role="legal")
+            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg("APPROVED by Legal — this agreement is ready to start signing."))
+        elif action == "return_to_researcher":
+            _email_via_drive(agreement, [agreement.researcher.email], msg("Linkages returned this agreement to you. See the comments in the Doc, then resubmit."))
+        elif action == "resubmit":
+            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg(f"{actor.full_name} resubmitted this agreement after making changes."))
     except DriveError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -300,6 +367,10 @@ def get_agreement_detail(db: Session, user: User, agreement_id: int) -> Agreemen
         raise HTTPException(status_code=404, detail="Agreement not found")
     result = AgreementDetailOut.model_validate(agreement)
     result.available_actions = available_actions(user, agreement)
+    if agreement.status == "approved_for_signing" and agreement.approved_doc_modified_at and agreement.template_copy_doc_id:
+        current = google_drive.get_modified_time(agreement.template_copy_doc_id)
+        if current:
+            result.doc_modified_after_approval = current > agreement.approved_doc_modified_at
     return result
 
 
@@ -346,12 +417,17 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
         raise HTTPException(status_code=403, detail=f"Role '{user.role}' cannot perform '{payload.action}'")
     if payload.action == "mark_fully_executed":
         raise HTTPException(status_code=409, detail="Upload the final signed scan to complete execution")
-    if payload.action == "submit" and agreement.researcher_id != user.id:
+    if payload.action in {"submit", "resubmit"} and agreement.researcher_id != user.id:
         raise HTTPException(status_code=403, detail="Only the agreement's Researcher can submit it")
 
     from_status = agreement.status
-    if payload.action == "submit":
-        _advance_draft_to_linkages(db, agreement)
+    _apply_drive_side_effects(db, agreement, payload.action, user, (payload.comment or "").strip() or None)
+    if payload.action == "approve":
+        agreement.approved_at = utc_now()
+        agreement.approved_by_name = user.full_name
+        agreement.approved_doc_modified_at = (
+            google_drive.get_modified_time(agreement.template_copy_doc_id) if agreement.template_copy_doc_id else None
+        )
     agreement.status = to_status
     if to_status == "archived":
         agreement.archived = True
@@ -368,12 +444,25 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     )
     audit(db, user, f"transition_{payload.action}", "agreement", agreement.id, request, old_value=from_status, new_value=to_status)
 
+    if to_status == "returned_to_researcher":
+        notify_user(
+            db,
+            agreement.researcher,
+            "Returned to you",
+            f"{agreement.title}: Linkages returned the agreement to you. See the comments in the Google Doc.",
+            agreement.id,
+        )
     notify_roles(
         db,
         _transition_recipient_roles(to_status),
-        "Workflow update",
-        f"{agreement.title}: {payload.action.replace('_', ' ')} by {user.full_name}.",
+        "Approved by Legal" if payload.action == "approve" else "Workflow update",
+        (
+            f"{agreement.title}: Legal approved this agreement ({user.full_name}). It is ready to start signing."
+            if payload.action == "approve"
+            else f"{agreement.title}: {payload.action.replace('_', ' ')} by {user.full_name}."
+        ),
         agreement.id,
+        level="success" if payload.action == "approve" else "info",
     )
     db.commit()
     return get_agreement_detail(db, user, agreement.id)

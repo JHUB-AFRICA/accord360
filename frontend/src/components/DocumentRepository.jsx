@@ -12,9 +12,9 @@ import StatusBadge from "./StatusBadge.jsx";
 // version once the final signed scan has been uploaded.
 const DRAFTING_STATUSES = new Set([
   "draft_generated",
-  "pending_legal_review",
-  "returned_for_corrections",
-  "pending_legal_verification",
+  "linkages_review",
+  "legal_review",
+  "returned_to_researcher",
   "approved_for_signing",
   "awaiting_signatures"
 ]);

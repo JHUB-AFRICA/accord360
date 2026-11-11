@@ -61,9 +61,9 @@ UPLOAD_ALLOWED_ROLES_BY_STATUS: dict[str, set[str]] = {
     # The Researcher submission creates the intake record. Linkages uploads
     # the first legal agreement draft after reviewing that intake.
     "draft_generated": {"linkages"},
-    "pending_legal_review": set(),
-    "returned_for_corrections": {"linkages"},
-    "pending_legal_verification": set(),
+    "linkages_review": set(),
+    "legal_review": set(),
+    "returned_to_researcher": set(),
     "approved_for_signing": set(),
     "awaiting_signatures": set(),
     "fully_executed": set(),

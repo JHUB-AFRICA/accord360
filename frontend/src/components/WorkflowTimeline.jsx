@@ -2,10 +2,13 @@ import { Check, RotateCcw } from "lucide-react";
 import { WORKFLOW_STATUSES, statusLabel, statusResponsible } from "../lib/workflow";
 
 export default function WorkflowTimeline({ agreement, compact = false }) {
-  const currentIndex = Math.max(0, WORKFLOW_STATUSES.indexOf(agreement.status));
+  // "Returned to Researcher" is a side branch, not a step every agreement
+  // passes through, so it only appears while it is the current status.
+  const statuses = WORKFLOW_STATUSES.filter((status) => status !== "returned_to_researcher" || agreement.status === "returned_to_researcher");
+  const currentIndex = Math.max(0, statuses.indexOf(agreement.status));
   return (
     <div className={`workflow-timeline ${compact ? "workflow-compact" : ""}`}>
-      {WORKFLOW_STATUSES.map((status, index) => {
+      {statuses.map((status, index) => {
         const state = index < currentIndex ? "completed" : index === currentIndex ? "active" : "pending";
         return (
           <div className={`workflow-stage workflow-${state}`} key={status}>

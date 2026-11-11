@@ -75,7 +75,7 @@ def _mock_drive(monkeypatch):
         counter["n"] += 1
         return f"copy-{counter['n']}"
 
-    def fake_grant_permission(doc_id, email, role="writer", notify=True):
+    def fake_grant_permission(doc_id, email, role="writer", notify=True, message=None):
         counter["n"] += 1
         return f"perm-{counter['n']}"
 
@@ -176,14 +176,15 @@ def test_researcher_submission_copies_template_and_submit_routes_to_linkages_and
     with SessionLocal() as db:
         researcher = db.get(User, researcher_id)
         updated = transition_agreement(db, researcher, agreement_id, TransitionRequest(action="submit"), None)
-        assert updated.status == "pending_legal_review"
+        assert updated.status == "linkages_review"
 
         grants = db.scalars(
             select(AgreementDrivePermission).where(AgreementDrivePermission.agreement_id == agreement_id)
         ).all()
         partner_grant = next(g for g in grants if g.role == "partner")
         assert partner_grant.revoked_at is not None
-        assert {g.role for g in grants if g.revoked_at is None} == {"researcher", "linkages", "legal"}
+        # Legal gets access only once Linkages sends the agreement to Legal.
+        assert {g.role for g in grants if g.revoked_at is None} == {"researcher", "linkages"}
 
     with SessionLocal() as db:
         linkages = db.get(User, linkages_id)

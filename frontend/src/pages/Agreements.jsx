@@ -11,7 +11,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { exportAgreementsCsv, listAgreements } from "../lib/backend.js";
 import { canCreateAgreement } from "../lib/roles.js";
 import { formatDate, humanize } from "../lib/format.js";
-const agreementStatuses = ["draft_generated", "pending_legal_review", "returned_for_corrections", "pending_legal_verification", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"];
+const agreementStatuses = ["draft_generated", "linkages_review", "legal_review", "returned_to_researcher", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"];
 const agreementTypes = ["MoU", "CRA", "CA", "Other"];
 
 function useQueryFilters() {

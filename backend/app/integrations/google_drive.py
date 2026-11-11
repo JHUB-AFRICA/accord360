@@ -10,6 +10,7 @@ each master template Doc before copy_template() will work on it.
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 
 from app.core.config import settings
@@ -77,7 +78,7 @@ def copy_template(master_doc_id: str, name: str) -> str:
     return file_id
 
 
-def grant_permission(doc_id: str, email: str, role: str = "writer", notify: bool = True) -> str:
+def grant_permission(doc_id: str, email: str, role: str = "writer", notify: bool = True, message: str | None = None) -> str:
     """Grant `email` `role` access to `doc_id`, returning the Drive permission id.
 
     Callers MUST persist the returned id (AgreementDrivePermission.permission_id)
@@ -91,24 +92,65 @@ def grant_permission(doc_id: str, email: str, role: str = "writer", notify: bool
                 fileId=doc_id,
                 body={"type": "user", "role": role, "emailAddress": email},
                 sendNotificationEmail=notify,
+                # Shown in Google's "shared with you" email; only used when notify is on.
+                **({"emailMessage": message} if (notify and message) else {}),
+                supportsAllDrives=True,
                 fields="id",
             )
             .execute()
         )
     except Exception as exc:
-        raise DriveError(f"Could not grant {role!r} access on {doc_id!r} to {email!r}") from exc
+        logging.getLogger("accord360.drive").warning("Drive grant of %s on %s to %s failed: %s", role, doc_id, email, exc)
+        if "cannotShareGeneric" in str(exc):
+            # Google refuses to share with an address that has blocked or
+            # spam-marked the sender — seen live with a Gmail recipient.
+            raise DriveError(
+                f"Google can't share this document with {email}. They may have blocked or marked Accord 360 "
+                "emails as spam — ask them to check their spam folder and blocked senders, then try again."
+            ) from exc
+        raise DriveError(f"Could not grant {role!r} access on {doc_id!r} to {email!r}: {exc}") from exc
     permission_id = response.get("id")
     if not permission_id:
         raise DriveError(f"Drive did not return a permission id for {email!r} on {doc_id!r}")
     return permission_id
 
 
+def send_notification(doc_id: str, email: str, message: str, role: str = "writer") -> bool:
+    """Email `email` a Google "shared with you" message about `doc_id`.
+
+    Google sends this email every time a share call asks for a notification —
+    even when the person already has access, in which case the call is a
+    no-op for permissions and just re-sends the email (verified live). That
+    makes it the free hand-off email: no SMTP, no access gap. Best-effort:
+    a failed email must never roll back or block a workflow transition, so
+    this logs and returns False instead of raising.
+    """
+    try:
+        grant_permission(doc_id, email, role=role, notify=True, message=message)
+        return True
+    except DriveError as exc:
+        logging.getLogger("accord360.drive").warning("Hand-off email to %s for doc %s failed: %s", email, doc_id, exc)
+        return False
+
+
 def revoke_permission(doc_id: str, permission_id: str) -> None:
     try:
-        _client().permissions().delete(fileId=doc_id, permissionId=permission_id).execute()
+        _client().permissions().delete(fileId=doc_id, permissionId=permission_id, supportsAllDrives=True).execute()
     except Exception as exc:
-        raise DriveError(f"Could not revoke permission {permission_id!r} on {doc_id!r}") from exc
+        raise DriveError(f"Could not revoke permission {permission_id!r} on {doc_id!r}: {exc}") from exc
 
 
 def doc_url(doc_id: str) -> str:
     return f"https://docs.google.com/document/d/{doc_id}/edit"
+
+
+def get_modified_time(doc_id: str) -> str | None:
+    """Drive's `modifiedTime` for the Doc (RFC 3339 string), or None if it
+    cannot be read. Used to flag edits made after Legal's approval; callers
+    must treat None as "unknown", never as "unchanged".
+    """
+    try:
+        response = _client().files().get(fileId=doc_id, fields="modifiedTime", supportsAllDrives=True).execute()
+    except Exception:
+        return None
+    return response.get("modifiedTime") or None

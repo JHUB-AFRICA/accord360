@@ -102,6 +102,7 @@ export default function AgreementForm() {
           </FormField>
           <FormField label="Partner email (will be invited to the Google Doc)" required>
             <input type="email" value={partnerEmail} onChange={(event) => setPartnerEmail(event.target.value)} />
+            <small className="helper-note">The partner gets a Google Docs invitation from "Accord 360". Ask them to check their spam folder, and not to block or report it — Google will then stop us sharing with them.</small>
           </FormField>
           <FormField label="Document template" required>
             <select value={documentType} onChange={(event) => setDocumentType(event.target.value)}>

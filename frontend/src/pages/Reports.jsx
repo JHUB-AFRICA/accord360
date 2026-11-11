@@ -8,7 +8,7 @@ import Toast from "../components/Toast.jsx";
 import { exportAgreementsCsv, getPortfolioReport } from "../lib/backend.js";
 import { humanize } from "../lib/format.js";
 
-const agreementStatuses = ["draft_generated", "pending_legal_review", "returned_for_corrections", "pending_legal_verification", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"];
+const agreementStatuses = ["draft_generated", "linkages_review", "legal_review", "returned_to_researcher", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"];
 const initialFilters = { status: "", department: "", partner_sector: "", expiry_from: "", expiry_to: "" };
 
 export default function Reports() {

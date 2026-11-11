@@ -261,7 +261,10 @@ export function normalizeDashboard(workspace, stats) {
       title: item.title,
       partner_name: item.partner,
       department: item.department,
-      status: item.status
+      status: item.status,
+      researcher_name: item.researcher || null,
+      updated_at: item.updated_at || null,
+      returned_by_legal: Boolean(item.returned_by_legal)
     })),
     byStatus: stats?.by_status || [],
     monthlyCreated: (stats?.monthly_created || []).map((item) => ({

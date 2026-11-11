@@ -21,9 +21,9 @@ from app.timeutils import utc_now
 # Exactly nine statuses, exact order, per REBUILD_BRIEF.md Section 2.2.
 AGREEMENT_STATUSES = (
     "draft_generated",
-    "pending_legal_review",
-    "returned_for_corrections",
-    "pending_legal_verification",
+    "linkages_review",
+    "legal_review",
+    "returned_to_researcher",
     "approved_for_signing",
     "awaiting_signatures",
     "fully_executed",
@@ -55,6 +55,12 @@ class Agreement(Base, TimestampMixin):
     # never touched again by Accord 360; Google Docs' own revision history
     # is authoritative for drafting-stage content, not these columns.
     template_copy_doc_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Legal's approval, recorded when the `approve` transition runs so Linkages
+    # can see who approved, when, and whether the Doc changed afterwards
+    # (approved_doc_modified_at is Drive's modifiedTime at approval).
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    approved_doc_modified_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     template_copy_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Self-referencing renewal chain (spec Section 5/9's "First/Second Final
     # Signed Document"). Populating this on `expired -> renew` is explicitly

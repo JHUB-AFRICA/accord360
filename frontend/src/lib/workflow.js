@@ -1,15 +1,15 @@
 // The 9 real agreement statuses (REBUILD_BRIEF.md Section 2.2), in order.
 export const WORKFLOW_STATUSES = [
-  "draft_generated", "pending_legal_review", "returned_for_corrections",
-  "pending_legal_verification", "approved_for_signing", "awaiting_signatures",
+  "draft_generated", "linkages_review", "legal_review", "returned_to_researcher",
+  "approved_for_signing", "awaiting_signatures",
   "fully_executed", "expired", "archived"
 ];
 
 export const STATUS_LABELS = {
   draft_generated: "Draft generated",
-  pending_legal_review: "Pending Legal review",
-  returned_for_corrections: "Returned for corrections",
-  pending_legal_verification: "Pending Legal verification",
+  linkages_review: "Linkages review",
+  legal_review: "Legal review",
+  returned_to_researcher: "Returned to Researcher",
   approved_for_signing: "Approved for signing",
   awaiting_signatures: "Awaiting signatures",
   fully_executed: "Fully executed",
@@ -25,9 +25,9 @@ export const STATUS_LABELS = {
 
 export const STATUS_TONES = {
   draft_generated: "slate",
-  pending_legal_review: "yellow",
-  returned_for_corrections: "orange",
-  pending_legal_verification: "yellow",
+  linkages_review: "yellow",
+  legal_review: "yellow",
+  returned_to_researcher: "orange",
   approved_for_signing: "blue",
   awaiting_signatures: "blue",
   fully_executed: "green",
@@ -47,11 +47,11 @@ export const RISK_TONES = { low: "green", medium: "yellow", high: "orange", crit
 // the permission matrix already enforced server-side in access.py/TRANSITIONS,
 // not a separate guess). Terminal/locked statuses have no responsible party.
 export const STATUS_RESPONSIBLE = {
-  draft_generated: "Linkages — prepare and upload the agreement draft",
-  pending_legal_review: "Legal — review the draft",
-  returned_for_corrections: "Linkages — upload the corrected draft",
-  pending_legal_verification: "Legal — verify the corrections",
-  approved_for_signing: "Linkages — start the signing process",
+  draft_generated: "Researcher — finish drafting with the partner, then submit to Linkages",
+  linkages_review: "Linkages — review and edit the Doc, then send to Legal or return to the Researcher",
+  legal_review: "Legal — comment on the Doc, then approve or return to Linkages",
+  returned_to_researcher: "Researcher — address Linkages' comments in the Doc, then resubmit",
+  approved_for_signing: "Linkages — approved by Legal; start the signing process",
   awaiting_signatures: "Linkages — coordinate physical signing, then upload the signed scan",
   fully_executed: "No one — fully executed and locked",
   expired: "M&E — update or archive",

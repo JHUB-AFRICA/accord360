@@ -12,9 +12,9 @@ from app.modules.workflows.schemas import WorkflowEventOut
 # Exactly nine statuses, exact order, per REBUILD_BRIEF.md Section 2.2.
 AgreementStatus = Literal[
     "draft_generated",
-    "pending_legal_review",
-    "returned_for_corrections",
-    "pending_legal_verification",
+    "linkages_review",
+    "legal_review",
+    "returned_to_researcher",
     "approved_for_signing",
     "awaiting_signatures",
     "fully_executed",
@@ -80,6 +80,11 @@ class AgreementListOut(ORMModel):
     # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — the live Google Doc for the
     # current drafting cycle; None once no template copy has been made yet.
     template_copy_url: str | None = None
+    approved_at: datetime | None = None
+    approved_by_name: str | None = None
+    # True when the Doc was modified after Legal approved it. None when unknown
+    # (not approved yet, or Drive could not be reached).
+    doc_modified_after_approval: bool | None = None
     created_at: datetime
     updated_at: datetime
 

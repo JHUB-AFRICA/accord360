@@ -25,9 +25,11 @@ class WorkflowEventOut(ORMModel):
 # which is exposed through this endpoint).
 TransitionAction = Literal[
     "submit",
-    "request_corrections",
+    "send_to_legal",
+    "return_to_researcher",
+    "return_to_linkages",
+    "resubmit",
     "approve",
-    "resubmit_for_verification",
     "start_signing",
     "mark_fully_executed",
     "renew",
