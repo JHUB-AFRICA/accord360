@@ -23,22 +23,25 @@ def me(user: User = Depends(get_current_user)):
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+# NOTE(rebuild-phase0): admin/director_linkages removed per REBUILD_BRIEF.md
+# Section 1. Per ground rule 0.1, admin-shaped capabilities belong to
+# linkages instead.
 @router.get("", response_model=list[UserOut])
 def list_users(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(require_roles("linkages")),
 ):
     return service.list_users(db)
 
 
 
 
-@router.get("/champions", response_model=list[UserOut])
-def list_champions(
+@router.get("/researchers", response_model=list[UserOut])
+def list_researchers(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin", "linkages", "director_linkages")),
+    _: User = Depends(require_roles("linkages")),
 ):
-    return service.list_champions(db)
+    return service.list_researchers(db)
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -46,7 +49,7 @@ def create_user(
     payload: UserCreate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin")),
+    actor: User = Depends(require_roles("linkages")),
 ):
     return service.create_user(db, payload, request, actor)
 
@@ -57,7 +60,7 @@ def update_user(
     payload: UserUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin")),
+    actor: User = Depends(require_roles("linkages")),
 ):
     return service.update_user(db, user_id, payload, request, actor)
 

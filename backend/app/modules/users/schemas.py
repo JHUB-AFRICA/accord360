@@ -6,7 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-Role = Literal["admin", "researcher", "approver", "linkages", "director_linkages", "legal", "dvc", "vc_office", "executive", "me", "auditor", "partner"]
+# Exactly four roles per REBUILD_BRIEF.md Section 2.1.
+Role = Literal["researcher", "linkages", "legal", "me"]
 
 
 class ORMModel(BaseModel):

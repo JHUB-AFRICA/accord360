@@ -1,126 +1,99 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-AgreementType = Literal["MoU", "CRA", "CA", "Other"]
 from app.modules.users.schemas import ORMModel, UserOut
 from app.modules.partners.schemas import PartnerOut
-from app.modules.workflows.schemas import DeliverableOut, ValueRecordOut, WorkflowEventOut
+from app.modules.workflows.schemas import WorkflowEventOut
+
+# Exactly nine statuses, exact order, per REBUILD_BRIEF.md Section 2.2.
+AgreementStatus = Literal[
+    "draft_generated",
+    "linkages_review",
+    "legal_review",
+    "returned_to_researcher",
+    "approved_for_signing",
+    "awaiting_signatures",
+    "fully_executed",
+    "expired",
+    "archived",
+]
+
 
 class AgreementCreate(BaseModel):
     title: str = Field(min_length=3, max_length=300)
-    agreement_type: AgreementType
-    purpose: str = Field(min_length=10)
-    expected_outcomes: str | None = None
-    strategic_alignment: str | None = None
     department: str = Field(min_length=2, max_length=180)
     partner_id: int
-    template_id: int | None = None
-    champion_user_id: int | None = None
-    confidentiality: str = "internal"
-    internal_champion: str | None = None
-    partner_liaison: str | None = None
-    effective_date: date | None = None
-    expiry_date: date | None = None
+    start_date: date
+    end_date: date
+    document_type: str = Field(default="MoU", min_length=2, max_length=120)
+    field_values: dict[str, Any] = Field(default_factory=dict)
+
 
 class AgreementUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=3, max_length=300)
-    purpose: str | None = Field(default=None, min_length=10)
-    expected_outcomes: str | None = None
-    strategic_alignment: str | None = None
     department: str | None = None
-    confidentiality: str | None = None
-    internal_champion: str | None = None
-    partner_liaison: str | None = None
-    effective_date: date | None = None
-    expiry_date: date | None = None
-    signing_date: date | None = None
-    date_sent_vc: date | None = None
-    date_sent_partner: date | None = None
-    assigned_approver_id: int | None = None
-    assigned_linkages_id: int | None = None
-    legal_reviewer_id: int | None = None
-    next_action: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
 
-class HistoricalReviewUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=3, max_length=300)
-    agreement_type: AgreementType | None = None
-    purpose: str | None = Field(default=None, min_length=10)
-    expected_outcomes: str | None = None
-    strategic_alignment: str | None = None
-    department: str | None = Field(default=None, min_length=2, max_length=180)
-    effective_date: date | None = None
-    expiry_date: date | None = None
-    owner_id: int | None = None
-    initiator_id: int | None = None
-    partner_liaison: str | None = None
-    assigned_linkages_id: int | None = None
-    assigned_approver_id: int | None = None
-    legal_reviewer_id: int | None = None
-    status: str | None = None
-    stage: str | None = None
-    status_color: str | None = None
-    next_action: str | None = None
-    data_quality_note: str | None = None
 
-class HistoricalReviewVerify(BaseModel):
-    review_notes: str | None = Field(default=None, max_length=4000)
+class AgreementVersionOut(ORMModel):
+    id: int
+    agreement_id: int
+    file: str
+    original_filename: str | None = None
+    content_type: str | None = None
+    file_size: int | None = None
+    uploaded_by: UserOut
+    timestamp: datetime
+    status_at_time: str
+    is_final: bool
+
+
+class ProgressUpdateOut(ORMModel):
+    id: int
+    agreement_id: int
+    quarter: str
+    notes: str
+    submitted_by: UserOut
+    created_at: datetime
+
+
+class ProgressUpdateCreate(BaseModel):
+    quarter: str = Field(min_length=7, max_length=20)
+    notes: str = Field(min_length=1, max_length=20000)
+
 
 class AgreementListOut(ORMModel):
     id: int
-    reference_number: str
     title: str
-    agreement_type: str
     department: str
-    stage: str
-    status: str
-    status_color: str
-    next_action: str | None
+    status: AgreementStatus
     partner: PartnerOut
-    template_id: int | None
-    owner: UserOut
-    initiator: UserOut | None
-    source_row_number: int | None = None
-    source_section: str | None = None
-    source_date_raw: str | None = None
-    source_type_raw: str | None = None
-    source_status_raw: str | None = None
-    data_quality_status: str
-    data_quality_note: str | None = None
-    effective_date: date | None
-    expiry_date: date | None
-    legal_review_days: int | None = None
+    researcher: UserOut
+    start_date: date
+    end_date: date
+    expiry_alert_date: date | None
+    expiry_notified: bool
+    archived: bool
     days_to_expiry: int | None = None
+    # GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — the live Google Doc for the
+    # current drafting cycle; None once no template copy has been made yet.
+    template_copy_url: str | None = None
+    approved_at: datetime | None = None
+    approved_by_name: str | None = None
+    # True when the Doc was modified after Legal approved it. None when unknown
+    # (not approved yet, or Drive could not be reached).
+    doc_modified_after_approval: bool | None = None
     created_at: datetime
     updated_at: datetime
 
-class DocumentOut(ORMModel):
-    id: int
-    agreement_id: int
-    document_type: str
-    version: str
-    original_name: str
-    mime_type: str | None
-    size_bytes: int
-    is_official: bool
-    confidentiality: str
-    created_at: datetime
 
 class AgreementDetailOut(AgreementListOut):
-    purpose: str
-    expected_outcomes: str | None
-    strategic_alignment: str | None
-    confidentiality: str
-    internal_champion: str | None
-    partner_liaison: str | None
-    signing_date: date | None
-    date_sent_vc: date | None
-    date_sent_partner: date | None
-    documents: list[DocumentOut]
-    workflow_events: list[WorkflowEventOut]
-    deliverables: list[DeliverableOut]
-    values: list[ValueRecordOut]
+    versions: list[AgreementVersionOut] = []
+    progress_updates: list[ProgressUpdateOut] = []
+    workflow_events: list[WorkflowEventOut] = []
+    available_actions: list[str] = []

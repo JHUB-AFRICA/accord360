@@ -14,14 +14,14 @@ const BACKEND_STAGE_TO_CANONICAL = {
 };
 
 const STAGE_OFFICES = {
-  initiation: "Researcher / Champion",
+  initiation: "Researcher",
   department_approval: "Faculty / Department Approver",
   linkages_review: "Directorate of Linkages (RPE)",
   legal_review: "University Legal Office",
   dvc_approval: "DVC RPE",
   vc_submission: "Directorate of Linkages (RPE)",
   validation_signing: "VC Office / Partner Signatory",
-  active: "Champion / M&E",
+  active: "Researcher / M&E",
   renewal_closure: "Director, Linkages",
   archived: "Institutional Archive"
 };
@@ -82,7 +82,7 @@ export function normalizePartner(partner) {
     verification_status: partner.status,
     region: partner.country,
     website: "",
-    champion_name: null,
+    researcher_name: null,
     active_agreements: null
   };
 }
@@ -127,8 +127,8 @@ export function normalizeAgreementList(item) {
     partner_name: item.partner?.name || "Unknown partner",
     initiator_id: item.initiator?.id ? Number(item.initiator.id) : null,
     initiator_name: item.initiator?.full_name || item.owner?.full_name || "Unknown initiator",
-    champion_id: item.owner?.id ? Number(item.owner.id) : null,
-    champion_name: item.owner?.full_name || null,
+    researcher_id: item.researcher?.id ? Number(item.researcher.id) : null,
+    researcher_name: item.researcher?.full_name || null,
     stage,
     backend_stage: item.stage,
     backend_stage_label: backendStageLabel(item.stage),
@@ -152,7 +152,37 @@ export function normalizeAgreementDetail(item) {
     started_at: [...(item.workflow_events || [])].reverse().find((event) => event.to_stage === item.stage)?.created_at || item.updated_at
   };
   const lifecycleHistory = [...workflowEvents, currentStageEntry];
-  const documents = (item.documents || []).map(normalizeDocument).filter(Boolean);
+  const rawVersions = item.versions?.length ? item.versions : (item.documents || []).filter((document) => document.document_type === "signed" && document.is_official).map((document) => ({
+    id: document.id,
+    original_filename: document.original_name,
+    content_type: document.mime_type,
+    byte_size: document.size_bytes,
+    file: document.file,
+    is_final: true,
+    status_at_time: "fully_executed",
+    timestamp: document.created_at,
+    uploaded_by: document.uploaded_by
+  }));
+  const agreementVersions = rawVersions.map((version) => ({
+    id: Number(version.id),
+    version_id: Number(version.id),
+    name: version.original_filename || version.file?.split("/").pop() || `Agreement version ${version.id}`,
+    original_filename: version.original_filename || null,
+    content_type: version.content_type || null,
+    byte_size: Number(version.byte_size ?? version.file_size ?? 0) || 0,
+    file: version.file,
+    type: version.is_final ? "final_signed" : "agreement_draft",
+    version: version.status_at_time,
+    status: version.is_final ? "final_signed" : "uploaded",
+    is_final: version.is_final,
+    uploaded_at: version.timestamp,
+    timestamp: version.timestamp || version.uploaded_at,
+    uploaded_by: version.uploaded_by?.full_name || version.uploaded_by || "Accord360",
+    source: "agreement_version"
+  }));
+  const documents = agreementVersions.length
+    ? agreementVersions
+    : (item.documents || []).map(normalizeDocument).filter(Boolean);
   const legalComments = (item.workflow_events || [])
     .filter((event) => event.comment && ["return_correction", "return_dvc", "reject", "approve_legal", "send_legal"].includes(event.action))
     .map((event) => ({
@@ -183,10 +213,11 @@ export function normalizeAgreementDetail(item) {
       ? Math.max(1, Math.round((new Date(item.expiry_date) - new Date(item.effective_date)) / 2629800000))
       : null,
     confidentiality: item.confidentiality,
-    champion_name: item.internal_champion || item.owner?.full_name || null,
-    champion_id: item.owner?.id ? Number(item.owner.id) : null,
+    researcher_name: item.researcher?.full_name || null,
+    researcher_id: item.researcher?.id ? Number(item.researcher.id) : null,
     partner_liaison_name: item.partner_liaison,
     documents,
+    versions: agreementVersions,
     workflow_events: item.workflow_events || [],
     lifecycle_history: lifecycleHistory,
     deliverables: item.deliverables || [],
@@ -207,17 +238,19 @@ export function normalizeAgreementDetail(item) {
 
 export function normalizeNotification(item) {
   if (!item) return null;
-  const priority = item.level === "red" ? "critical" : item.level === "orange" ? "high" : item.level === "yellow" ? "normal" : "low";
+  const severity = item.severity || (item.level === "red" ? "critical" : item.level === "orange" ? "warning" : item.level === "yellow" ? "warning" : "info");
   return {
     ...item,
     id: Number(item.id),
-    record_reference: item.agreement_id ? `Agreement #${item.agreement_id}` : "System",
-    required_action: item.message,
-    sender: "Accord360",
-    link: item.agreement_id ? `/agreements/${item.agreement_id}` : "/notifications",
-    priority,
-    escalation_level: item.level === "red" ? 2 : item.level === "orange" ? 1 : 0,
-    email_status: "not_exposed"
+    severity,
+    category: item.category || "system",
+    actor_name: item.actor_name || "System",
+    agreement_title: item.agreement_title || null,
+    action_url: item.action_url || (item.agreement_id ? `/agreements/${item.agreement_id}` : "/notifications"),
+    requires_action: Boolean(item.requires_action),
+    record_reference: item.agreement_title || (item.agreement_id ? `Agreement #${item.agreement_id}` : "System"),
+    required_action: item.requires_action ? item.message : null,
+    priority: severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "success" ? "normal" : "low"
   };
 }
 
@@ -237,46 +270,25 @@ export function normalizeAudit(item) {
 }
 
 export function normalizeDashboard(workspace, stats) {
-  const byType = stats?.by_type || [];
   return {
     workspace,
     kpis: workspace?.metrics || [],
-    queue: (workspace?.queue || []).map((item) => normalizeAgreementList({
-      ...item,
-      reference_number: item.reference_number,
-      partner: { name: item.partner },
-      owner: {},
-      agreement_type: item.agreement_type || "—",
-      department: item.department || "—",
-      effective_date: null,
-      expiry_date: null,
-      legal_review_days: null,
-      created_at: item.updated_at || new Date().toISOString(),
-      updated_at: item.updated_at || new Date().toISOString()
+    queue: (workspace?.queue || []).map((item) => ({
+      id: Number(item.id),
+      title: item.title,
+      partner_name: item.partner,
+      department: item.department,
+      status: item.status,
+      researcher_name: item.researcher || null,
+      updated_at: item.updated_at || null,
+      returned_by_legal: Boolean(item.returned_by_legal)
     })),
-    by_stage: stats?.by_stage || [],
-    by_type: byType,
-    by_risk: stats?.by_risk || [],
-    trend: (stats?.monthly_pipeline || []).map((item) => ({ month: item.month, requests: item.count })),
-    recent: (stats?.recent_agreements || []).map((item) => normalizeAgreementList({
+    byStatus: stats?.by_status || [],
+    monthlyCreated: (stats?.monthly_created || []).map((item) => ({
       ...item,
-      reference_number: item.reference_number,
-      partner: { name: item.partner },
-      owner: {},
-      agreement_type: item.agreement_type || "—",
-      department: item.department || "—",
-      effective_date: null,
-      expiry_date: null,
-      created_at: item.updated_at,
-      updated_at: item.updated_at
+      label: new Date(`${item.month}-01T00:00:00`).toLocaleDateString(undefined, { month: "short" })
     })),
-    totals: {
-      total_partnerships: Number(stats?.kpis?.total_partnerships ?? byType.reduce((sum, item) => sum + Number(item.value || 0), 0)),
-      active_agreements: Number(stats?.kpis?.active_partnerships || 0),
-      pipeline: Number(stats?.kpis?.pipeline_volume || 0),
-      at_risk: Number(stats?.kpis?.at_risk || 0),
-      value_by_currency: stats?.kpis?.value_by_currency || []
-    }
+    kpiTotals: stats?.kpis || {}
   };
 }
 

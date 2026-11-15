@@ -1,11 +1,7 @@
-import {
-  AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, FileCheck2, FileLock2,
-  FileText, History, Paperclip, RefreshCw, ShieldCheck, UploadCloud
-} from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import DocumentRepository from "../components/DocumentRepository.jsx";
-import EmptyState from "../components/EmptyState.jsx";
 import ErrorState from "../components/ErrorState.jsx";
 import LegalReviewPanel from "../components/LegalReviewPanel.jsx";
 import LoadingState from "../components/LoadingState.jsx";
@@ -15,119 +11,112 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
 import WorkflowTimeline from "../components/WorkflowTimeline.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import {
-  createDeliverable,
-  getAgreement,
-  transitionAgreement,
-  updateAgreement,
-  uploadAgreementDocument
-} from "../lib/backend.js";
-import { formatCurrency, formatDate, formatDateTime, humanize } from "../lib/format.js";
-import { calculateAgreementScore } from "../lib/normalize.js";
-import { getAvailableActions, stageLabel } from "../lib/workflow.js";
+import { createProgressUpdate, getAgreement, getDriveAccessStatus, reconcileDriveAccess, transitionAgreement } from "../lib/backend.js";
+import { formatDate, formatDateTime, humanize } from "../lib/format.js";
 
-const tabs = [
+const ALL_TABS = [
   ["overview", "Overview"], ["workflow", "Workflow"], ["documents", "Documents"],
-  ["template", "Draft & template"], ["corrections", "Reviews & corrections"],
-  ["signing", "Signing"], ["monitoring", "M&E"], ["history", "Activity history"]
+  ["corrections", "Review"], ["monitoring", "Progress"], ["history", "Status history"]
 ];
+
+// Researchers only need to see where their agreement stands (Workflow
+// already shows that) and submit progress updates — the internal
+// Linkages/Legal back-and-forth and the raw status-transition log aren't
+// theirs to see.
+function tabsForRole(role) {
+  if (role === "researcher") return ALL_TABS.filter(([key]) => !["corrections", "history"].includes(key));
+  return ALL_TABS;
+}
+
+// Each role lands on the tab that matches what they're there to do, instead
+// of a generic "overview" everyone has to click past. An explicit
+// `defaultTab` prop (e.g. Legal's dedicated /legal/:id route) always wins.
+// Linkages is the one role that acts from two different tabs depending on
+// where the agreement currently is, so their default depends on status too.
+function roleDefaultTab(role, status) {
+  if (role === "linkages") return status === "awaiting_signatures" ? "documents" : "corrections";
+  return { legal: "corrections", me: "monitoring", researcher: "overview" }[role] || "overview";
+}
+
+const ACTION_LABELS = {
+  submit: "Submit to Linkages",
+  send_to_legal: "Send to Legal",
+  return_to_researcher: "Return to Researcher",
+  return_to_linkages: "Return to Linkages",
+  resubmit: "Resubmit to Linkages",
+  approve: "Approve",
+  start_signing: "Start signing"
+};
+
+// What each action does, shown in its confirm box so nobody has to guess.
+const ACTION_HELP = {
+  send_to_legal: "Legal gets edit access to the Google Doc and is notified. You keep your access.",
+  return_to_researcher: "The Researcher can edit the Google Doc again and is notified. Say what needs fixing in the note, or comment in the Doc.",
+  return_to_linkages: "Legal's access to the Google Doc is removed and Linkages is notified.",
+  approve: "Legal's access to the Google Doc is removed and Linkages is told the agreement is ready for signing.",
+  resubmit: "Sends the agreement back to Linkages for review."
+};
+
+// The one thing each role is here to do at each status: open the Doc, then
+// press one clear button. Shown as a focused panel; everything else is
+// tucked under "More details". Buttons come from the server's
+// available_actions, this only decides the wording and which ones to feature.
+function focusFor(role, status) {
+  if (role === "linkages" && status === "linkages_review") return { title: "Review this agreement", text: "Open the Google Doc, make your edits, then come back and choose what happens next.", actions: ["send_to_legal", "return_to_researcher"] };
+  if (role === "legal" && status === "legal_review") return { title: "Legal review", text: "Open the Google Doc and comment or edit as needed, then come back and approve it or return it to Linkages.", actions: ["approve", "return_to_linkages"] };
+  if (role === "researcher" && status === "returned_to_researcher") return { title: "Changes requested", text: "Open the Google Doc, address the comments, then resubmit it to Linkages.", actions: ["resubmit"] };
+  if (role === "linkages" && status === "approved_for_signing") return { title: "Approved by Legal", text: "Legal has approved this agreement. Open the Doc if you want a last look, then start the signing process.", actions: ["start_signing"] };
+  return null;
+}
 
 function InfoItem({ label, children }) {
   return <div className="info-item"><span>{label}</span><strong>{children || "—"}</strong></div>;
 }
 
-function latestEvent(record, action) {
-  return [...(record.workflow_events || [])].reverse().find((event) => event.action === action);
-}
-
-export default function AgreementDetail({ defaultTab = "overview" }) {
+export default function AgreementDetail({ defaultTab }) {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [record, setRecord] = useState(null);
+  const [driveAccess, setDriveAccess] = useState(null);
+  const [repairingDriveAccess, setRepairingDriveAccess] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [action, setAction] = useState(null);
-  const emptyActionForm = { reason: "", exact_item: "", requested_change: "", effective_date: "", expiry_date: "", partner_liaison: "", initial_deliverable: "", document: null };
-  const [actionForm, setActionForm] = useState(emptyActionForm);
+  const [reason, setReason] = useState("");
+  const [fieldsConfirmed, setFieldsConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [progressForm, setProgressForm] = useState({ quarter: "", notes: "" });
   const navigate = useNavigate();
-  const tab = searchParams.get("tab") || defaultTab;
+  const tabs = tabsForRole(user.role);
+  const requestedTab = searchParams.get("tab") || defaultTab || roleDefaultTab(user.role, record?.status);
+  const tab = tabs.some(([key]) => key === requestedTab) ? requestedTab : tabs[0][0];
 
   const load = useCallback(() => {
     setError("");
     getAgreement(id).then(setRecord).catch((requestError) => setError(requestError.message));
+    getDriveAccessStatus(id).then(setDriveAccess).catch(() => setDriveAccess(null));
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
 
-  const availableActions = useMemo(() => getAvailableActions(record, user.role), [record, user.role]);
-  const score = useMemo(() => calculateAgreementScore(record), [record]);
-
-  function buildComment() {
-    const parts = [actionForm.reason.trim()];
-    if (actionForm.exact_item.trim()) parts.push(`Exact item: ${actionForm.exact_item.trim()}`);
-    if (actionForm.requested_change.trim()) parts.push(`Requested change: ${actionForm.requested_change.trim()}`);
-    return parts.filter(Boolean).join("\n");
-  }
+  const availableActions = useMemo(
+    () => (record?.available_actions || []).map((key) => ({ key, label: ACTION_LABELS[key] || humanize(key), variant: key === "archive" ? "danger" : "primary" })),
+    [record]
+  );
 
   async function performAction() {
     if (!action) return;
-    const requiresReason = action.requiresReason || ["return_correction", "return_dvc", "reject", "close"].includes(action.key);
-    if (requiresReason && !actionForm.reason.trim()) {
-      setError("A detailed reason is required for this decision.");
-      return;
-    }
-    if (["return_correction", "return_dvc"].includes(action.key) && (!actionForm.exact_item.trim() || !actionForm.requested_change.trim())) {
-      setError("Identify the exact field, document or clause and state the requested change.");
-      return;
-    }
-    if (action.key === "upload_official_signed" && !actionForm.document) {
-      setError("Choose the fully signed PDF before continuing.");
-      return;
-    }
-    if (action.key === "activate" && (!actionForm.effective_date || !actionForm.expiry_date || !actionForm.partner_liaison.trim() || (!record.deliverables.length && !actionForm.initial_deliverable.trim()))) {
-      setError("Activation requires effective and expiry dates, a partner liaison and at least one deliverable target.");
-      return;
-    }
-
     setSubmitting(true);
     setError("");
     try {
-      let updated;
-      if (action.key === "upload_official_signed") {
-        await uploadAgreementDocument(record.id, {
-          file: actionForm.document,
-          documentType: "signed",
-          version: "1.0",
-          confidentiality: "internal",
-          isOfficial: true
-        });
-        updated = await getAgreement(record.id);
-      } else if (action.key === "activate") {
-        updated = await updateAgreement(record.id, {
-          effective_date: actionForm.effective_date,
-          expiry_date: actionForm.expiry_date,
-          partner_liaison: actionForm.partner_liaison.trim()
-        });
-        if (!updated.deliverables.length && actionForm.initial_deliverable.trim()) {
-          await createDeliverable(record.id, {
-            deliverable_type: actionForm.initial_deliverable.trim(),
-            target_value: 1,
-            actual_value: 0,
-            reporting_period: "Activation baseline",
-            notes: "Initial deliverable created during agreement activation.",
-            evidence_document_id: null
-          });
-        }
-        updated = await transitionAgreement(record.id, "activate", "Activation checklist completed in the Accord360 frontend.");
-      } else {
-        updated = await transitionAgreement(record.id, action.key, buildComment() || null, ["return_correction", "return_dvc"].includes(action.key) ? { exact_item: actionForm.exact_item.trim(), requested_change: actionForm.requested_change.trim() } : {});
-      }
+      const updated = await transitionAgreement(record.id, action.key, reason.trim() || null);
       setRecord(updated);
       setMessage(`${action.label} completed.`);
       setAction(null);
-      setActionForm(emptyActionForm);
+      setReason("");
+      setFieldsConfirmed(false);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -135,24 +124,46 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
     }
   }
 
+  async function submitProgressUpdate(event) {
+    event.preventDefault();
+    if (!progressForm.quarter.trim() || !progressForm.notes.trim()) return setError("Quarter and progress notes are required.");
+    setSubmitting(true);
+    try {
+      await createProgressUpdate(record.id, { quarter: progressForm.quarter.trim(), notes: progressForm.notes.trim() });
+      setProgressForm({ quarter: "", notes: "" });
+      setMessage("Quarterly progress update submitted.");
+      load();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function repairDriveAccess() {
+    setRepairingDriveAccess(true);
+    setError("");
+    try {
+      const result = await reconcileDriveAccess(record.id);
+      setDriveAccess(result);
+      setMessage(result.changed ? "Google Drive access repaired." : "Google Drive access is already synchronized.");
+    } catch (requestError) {
+      setError(requestError.message);
+      getDriveAccessStatus(record.id).then(setDriveAccess).catch(() => {});
+    } finally {
+      setRepairingDriveAccess(false);
+    }
+  }
+
   if (error && !record) return <><PageHeader eyebrow="Agreement workspace" title="Unable to open agreement" /><ErrorState message={error} onRetry={load} /></>;
   if (!record) return <LoadingState label="Loading agreement workspace" />;
 
-  const signing = record.signing || {};
-  const officialSignedDocument = record.documents.find((item) => item.type === "signed" && item.is_official);
-  const activationChecks = [
-    ["Legal approval complete", Boolean(latestEvent(record, "approve_legal"))],
-    ["DVC RPE endorsement complete", Boolean(latestEvent(record, "approve_dvc"))],
-    ["VC package submitted", Boolean(latestEvent(record, "submit_vc"))],
-    ["VC signature recorded", signing.vc_signed],
-    ["Partner signature complete", signing.partner_signed],
-    ["Official signed PDF uploaded", Boolean(officialSignedDocument)],
-    ["Effective date entered", Boolean(record.effective_date)],
-    ["Expiry date entered", Boolean(record.expiry_date)],
-    ["Champion assigned", Boolean(record.champion_name)],
-    ["Partner liaison assigned", Boolean(record.partner_liaison_name)],
-    ["M&E deliverable created", Boolean(record.deliverables.length)]
-  ];
+  const focus = focusFor(user.role, record.status);
+  const focusActions = focus ? availableActions.filter((item) => focus.actions.includes(item.key)) : [];
+  const headerActions = availableActions.filter((item) => !focusActions.includes(item));
+  const showTabs = !focus || showDetails;
+  const activeTab = showTabs ? tab : null;
+  const canSubmitProgress = user.role === "researcher" && ["fully_executed", "expired"].includes(record.status);
 
   return (
     <>
@@ -161,62 +172,126 @@ export default function AgreementDetail({ defaultTab = "overview" }) {
       <PageHeader
         eyebrow="Agreement workspace"
         title={record.title}
-        description={`${record.reference} · ${record.partner_name}`}
-        actions={<><button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>{availableActions.slice(0, 2).map((item) => <button className={item.variant === "primary" ? "primary-button" : item.variant === "danger" ? "danger-button" : "secondary-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</>}
-        meta={<div className="header-badges"><StatusBadge tone="blue">{record.agreement_type}</StatusBadge><StatusBadge status={record.status} /><StatusBadge status={record.risk} risk /></div>}
+        description={record.partner_name}
+        actions={<><button className="secondary-button" onClick={() => navigate(-1)}><ArrowLeft size={17} /> Back</button>{headerActions.map((item) => <button className={item.variant === "primary" ? "primary-button" : "danger-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</>}
+        meta={<div className="header-badges"><StatusBadge status={record.status} /></div>}
       />
 
       <section className="agreement-sticky-summary panel">
-        <InfoItem label="Current stage">{stageLabel(record.stage)}</InfoItem>
-        <InfoItem label="Backend stage">{humanize(record.backend_stage)}</InfoItem>
-        <InfoItem label="Responsible office">{record.next_office}</InfoItem>
-        <InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem>
-        <InfoItem label="Effective date">{formatDate(record.effective_date)}</InfoItem>
-        <InfoItem label="Expiry date">{formatDate(record.expiry_date)}</InfoItem>
-        <div className="next-action-box"><span>Required next action</span><strong>{record.current_action}</strong></div>
+        <InfoItem label="Current status">{humanize(record.status)}</InfoItem>
+        <InfoItem label="Department">{record.department}</InfoItem>
+        <InfoItem label="Researcher">{record.researcher_name || "Not assigned"}</InfoItem>
+        <InfoItem label="Start date">{formatDate(record.start_date)}</InfoItem>
+        <InfoItem label="End date">{formatDate(record.end_date)}</InfoItem>
+        {record.expiry_alert_date && <InfoItem label="Expiry alert date">{formatDate(record.expiry_alert_date)}</InfoItem>}
       </section>
 
-      {availableActions.length > 2 && <section className="action-strip"><span>Available actions</span>{availableActions.map((item) => <button className={item.variant === "danger" ? "danger-button compact-button" : item.variant === "primary" ? "primary-button compact-button" : "secondary-button compact-button"} key={item.key} onClick={() => setAction(item)}>{item.label}</button>)}</section>}
+      {record.status === "approved_for_signing" && record.approved_at && (
+        <div className={`inline-alert ${record.doc_modified_after_approval ? "warning" : "success"}`}>
+          <CheckCircle2 size={18} />
+          <div>
+            <strong>Approved by Legal{record.approved_by_name ? ` — ${record.approved_by_name}` : ""} on {formatDateTime(record.approved_at)}</strong>
+            <p>{record.doc_modified_after_approval
+              ? "The Google Doc was modified after this approval. Review the Doc's version history before starting signing."
+              : user.role === "linkages" ? "This agreement is ready for you to start signing." : "This agreement is ready for signing."}</p>
+          </div>
+        </div>
+      )}
 
-      <nav className="tabs" aria-label="Agreement sections">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setSearchParams({ tab: key })}>{label}</button>)}</nav>
+      {user.role === "linkages" && driveAccess && <section className="panel drive-access-panel">
+        <div className="panel-head"><div><h2><ShieldCheck size={17} /> Google Drive access</h2><p>The document stays in one folder; workflow status controls direct access.</p></div>
+          {driveAccess.needs_repair && <button className="secondary-button" onClick={repairDriveAccess} disabled={repairingDriveAccess}><RefreshCw size={15} className={repairingDriveAccess ? "spin" : ""} /> {repairingDriveAccess ? "Repairing…" : "Repair access"}</button>}
+        </div>
+        <div className="drive-access-summary"><StatusBadge tone={driveAccess.needs_repair ? "orange" : "green"}>{driveAccess.needs_repair ? "Needs repair" : "Synchronized"}</StatusBadge>{driveAccess.inherited_permissions_present && <span className="helper-note">Inherited permissions are present and cannot be changed here.</span>}</div>
+      </section>}
 
-      {tab === "overview" && <div className="detail-grid">
-        <section className="panel detail-main-card">
-          <div className="panel-head"><div><h2>Agreement overview</h2><p>Fields returned by AgreementDetailOut</p></div></div>
-          <div className="info-grid"><InfoItem label="Partner institution">{record.partner_name}</InfoItem><InfoItem label="Agreement type">{record.agreement_type}</InfoItem><InfoItem label="Department">{record.department}</InfoItem><InfoItem label="Owner">{record.initiator_name}</InfoItem><InfoItem label="Champion">{record.champion_name || "Not assigned"}</InfoItem><InfoItem label="Confidentiality">{humanize(record.confidentiality)}</InfoItem><InfoItem label="Date sent to VC">{formatDate(record.date_sent_vc)}</InfoItem><InfoItem label="Date sent to partner">{formatDate(record.date_sent_partner)}</InfoItem></div>
-          <hr /><h3>Purpose</h3><p className="long-copy">{record.purpose}</p><h3>Strategic alignment</h3><p className="long-copy">{record.strategic_alignment}</p>
+      {focus && (
+        <section className="panel focus-panel">
+          <h2>{focus.title}</h2>
+          <p>{focus.text}</p>
+          <div className="focus-steps">
+            {record.template_copy_url
+              ? <div><a className="primary-button focus-doc-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={18} /> Open Google Doc</a></div>
+              : <p className="helper-note">No Google Doc is linked to this agreement.</p>}
+            {focusActions.length > 0 && <div className="focus-actions">{focusActions.map((item) => <button key={item.key} className={item.key === focusActions[0].key ? "primary-button" : "secondary-button"} onClick={() => setAction(item)}>{item.label}</button>)}</div>}
+          </div>
         </section>
-        <aside className="panel detail-side-card"><div className="panel-head"><div><h2>Expected outcomes</h2><p>Recorded agreement outcomes</p></div></div>{record.expected_outcomes.length ? <ul className="outcome-list">{record.expected_outcomes.map((item) => <li key={item}><CheckCircle2 size={17} />{item}</li>)}</ul> : <EmptyState title="No expected outcomes recorded" text="The backend response did not include expected outcomes for this record." />}</aside>
+      )}
+      {focus && <div className="focus-more"><button className="secondary-button compact-button" onClick={() => setShowDetails((value) => !value)}>{showDetails ? "Hide details" : "More details"}</button></div>}
+
+      {showTabs && <nav className="tabs" aria-label="Agreement sections">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setSearchParams({ tab: key })}>{label}</button>)}</nav>}
+
+      {activeTab === "overview" && <div className="detail-grid">
+        <section className="panel detail-main-card">
+          <div className="panel-head"><div><h2>Agreement overview</h2></div></div>
+          <div className="info-grid">
+            <InfoItem label="Partner institution">{record.partner_name}</InfoItem>
+            <InfoItem label="Department">{record.department}</InfoItem>
+            <InfoItem label="Researcher">{record.researcher_name || "Not assigned"}</InfoItem>
+            <InfoItem label="Status">{humanize(record.status)}</InfoItem>
+            <InfoItem label="Start date">{formatDate(record.start_date)}</InfoItem>
+            <InfoItem label="End date">{formatDate(record.end_date)}</InfoItem>
+            <InfoItem label="Days to expiry">{record.days_to_expiry ?? "—"}</InfoItem>
+            <InfoItem label="Archived">{record.archived ? "Yes" : "No"}</InfoItem>
+          </div>
+          {record.template_copy_url && <div className="inline-alert info">
+            <div><strong>Drafting document</strong><p><a href={record.template_copy_url} target="_blank" rel="noreferrer">Open in Google Docs</a> — the live copy for this drafting cycle. See the Documents tab for details.</p></div>
+          </div>}
+        </section>
+        <aside className="panel detail-side-card">
+          <div className="panel-head"><div><h2>Expiry</h2></div></div>
+          {record.expiry_alert_date
+            ? <div className="inline-alert info"><CalendarClock size={18} /><div><strong>{formatDate(record.expiry_alert_date)}</strong><p>M&E is notified once, on this date, six months before the end date.</p></div></div>
+            : <p className="empty-state">The expiry alert date is set once this agreement is fully executed.</p>}
+        </aside>
       </div>}
 
-      {tab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Canonical lifecycle</h2><p>The 17-stage presentation is mapped to the implemented backend workflow stages and events.</p></div></div><WorkflowTimeline agreement={record} /></section>}
+      {activeTab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Lifecycle</h2><p>The nine-status Accord 360 workflow.</p></div></div><WorkflowTimeline agreement={record} /></section>}
 
-      {tab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+      {activeTab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
-      {tab === "template" && <div className="detail-grid">
-        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Draft and template evidence</h2><p>The current backend does not expose template-library endpoints.</p></div><StatusBadge tone="yellow">Backend persistence pending</StatusBadge></div><div className="version-list">{record.documents.filter((item) => ["working_draft", "legal_approved", "partner_amendment", "supporting"].includes(item.type)).map((document) => <article key={document.id}><span>{humanize(document.type)}</span><strong>{document.name}</strong><small>Version {document.version} · {document.is_official ? "Official" : "Working"}</small></article>)}</div>{!record.documents.length && <EmptyState title="No draft documents" text="Upload a working draft or supporting document from the Documents tab." />}</section>
-        <aside className="panel detail-side-card"><h2>Version controls</h2><ul className="plain-check-list"><li><ShieldCheck /> File versions are stored by the backend.</li><li><FileLock2 /> Official status distinguishes approved documents.</li><li><History /> Workflow events provide the audit history.</li><li><Paperclip /> Downloads require agreement and document permission.</li></ul></aside>
+      {activeTab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+
+      {activeTab === "monitoring" && <div className="detail-grid">
+        <section className="panel detail-main-card">
+          <div className="panel-head"><div><h2>Quarterly progress updates</h2><p>Submitted by the Researcher once this agreement is fully executed or expired.</p></div></div>
+          <div className="activity-timeline">
+            {(record.progress_updates || []).map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{item.quarter}</strong><p>{item.notes}</p><small>{item.submitted_by?.full_name || "Researcher"} · {formatDateTime(item.created_at)}</small></div></article>)}
+            {!(record.progress_updates || []).length && <p className="empty-state">No progress updates have been submitted yet.</p>}
+          </div>
+        </section>
+        {canSubmitProgress && <aside className="panel detail-side-card">
+          <div className="panel-head"><div><h2>Submit an update</h2></div></div>
+          <form className="form-grid single-column" onSubmit={submitProgressUpdate}>
+            <label className="form-field"><span>Quarter *</span><input value={progressForm.quarter} onChange={(event) => setProgressForm({ ...progressForm, quarter: event.target.value })} placeholder="2026-Q1" /></label>
+            <label className="form-field"><span>Notes *</span><textarea rows="4" value={progressForm.notes} onChange={(event) => setProgressForm({ ...progressForm, notes: event.target.value })} /></label>
+            <button className="primary-button" disabled={submitting} type="submit">{submitting ? "Submitting…" : "Submit progress update"}</button>
+          </form>
+        </aside>}
+        {user.role === "researcher" && !canSubmitProgress && <aside className="panel detail-side-card">
+          <div className="panel-head"><div><h2>Submit an update</h2></div></div>
+          <p className="helper-note"><CalendarClock size={14} /> You can submit a quarterly progress update once this agreement is fully executed. It's currently {humanize(record.status)}.</p>
+        </aside>}
       </div>}
 
-      {tab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+      {activeTab === "history" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Status history</h2><p>Every status change this agreement has been through, and who made it.</p></div></div><div className="activity-timeline">{[...(record.workflow_events || [])].reverse().map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{humanize(item.action)}</strong><p>{humanize(item.from_stage || "Created")} → {humanize(item.to_stage)} · {item.actor?.full_name || "System"}</p>{item.comment && <p>{item.comment}</p>}<small>{formatDateTime(item.created_at)}</small></div></article>)}</div></section>}
 
-      {tab === "signing" && <div className="detail-grid">
-        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Signing and execution</h2><p>Signing milestones are derived from workflow status and events.</p></div><StatusBadge status={record.status} /></div><div className="signing-tracks"><article className={signing.vc_signed ? "complete" : ""}><span className="signing-icon"><ShieldCheck /></span><div><h3>JKUAT signatory</h3><p>Vice Chancellor</p><strong>{signing.vc_signed ? `Recorded ${formatDate(signing.vc_signed_at)}` : "Awaiting signature"}</strong></div></article><article className={signing.partner_signed ? "complete" : ""}><span className="signing-icon"><FileCheck2 /></span><div><h3>Partner signatory</h3><p>Authorized partner officer</p><strong>{signing.partner_signed ? `Recorded ${formatDate(signing.partner_signed_at)}` : "Awaiting signature"}</strong></div></article><article className={officialSignedDocument ? "complete" : ""}><span className="signing-icon"><UploadCloud /></span><div><h3>Executed document</h3><p>Official signed PDF</p><strong>{officialSignedDocument ? officialSignedDocument.name : "Not uploaded"}</strong></div></article></div></section>
-        <aside className="panel detail-side-card"><h2>Activation checklist</h2><div className="activation-list">{activationChecks.map(([label, complete]) => <span className={complete ? "complete" : ""} key={label}>{complete ? <CheckCircle2 /> : <span className="empty-check" />}{label}</span>)}</div><p className="helper-note">The backend validates this checklist again before activation.</p></aside>
-      </div>}
-
-      {tab === "monitoring" && <div className="detail-grid">
-        <section className="panel detail-main-card"><div className="panel-head"><div><h2>Monitoring and evaluation</h2><p>Deliverables and value records returned with the agreement</p></div><Link to={`/monitoring/reports/${record.id}`} className="text-link">Open M&E update</Link></div>{record.deliverables.length ? <div className="document-list">{record.deliverables.map((item) => <article className="document-row" key={item.id}><RefreshCw /><div><strong>{item.deliverable_type}</strong><span>{item.actual_value} actual / {item.target_value} target · {item.reporting_period || "No period"}</span><small>{item.notes || "No notes"}</small></div><StatusBadge tone={Number(item.actual_value) >= Number(item.target_value) ? "green" : "orange"}>{Number(item.actual_value) >= Number(item.target_value) ? "Target met" : "In progress"}</StatusBadge></article>)}</div> : <EmptyState title="No deliverables recorded" text="Create the first target from the M&E update screen." />}</section>
-        <aside className="panel detail-side-card"><h2>Current calculated score</h2><div className="score-preview"><strong>{score.overall}</strong><span>Client-calculated from backend deliverables</span><StatusBadge tone={score.overall >= 80 ? "green" : score.overall >= 60 ? "blue" : "orange"}>{score.category}</StatusBadge></div><div className="metric-preview">{record.values.map((item) => <article key={item.id}><span>{item.value_type}</span><strong>{formatCurrency(item.amount, item.currency)}</strong></article>)}</div><p className="helper-note">Score persistence requires a future backend scorecard endpoint. No unsupported endpoint is called.</p></aside>
-      </div>}
-
-      {tab === "history" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Agreement activity history</h2><p>Read-only workflow events from AgreementDetailOut.</p></div></div><div className="activity-timeline">{[...(record.workflow_events || [])].reverse().map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{humanize(item.action)}</strong><p>{humanize(item.from_stage || "Created")} → {humanize(item.to_stage)} · {item.actor?.full_name || "System"}</p>{item.comment && <p>{item.comment}</p>}<small>{formatDateTime(item.created_at)}</small></div></article>)}</div></section>}
-
-      <Modal open={Boolean(action)} onClose={() => setAction(null)} title={action?.label || "Confirm action"} description={`Agreement ${record.reference} · ${humanize(record.backend_stage)}`} footer={<><button className="secondary-button" onClick={() => setAction(null)}>Cancel</button><button className={action?.variant === "danger" ? "danger-button" : "primary-button"} disabled={submitting} onClick={performAction}>{submitting ? "Processing…" : `Confirm ${action?.label || "action"}`}</button></>}>
-        <div className="decision-summary"><AlertTriangle size={20} /><p>This action uses the implemented agreement transition, update, document or M&E endpoints and creates the backend audit event where supported.</p></div>
-        {(action?.requiresReason || ["return_correction", "return_dvc", "reject", "close"].includes(action?.key)) && <div className="form-grid single-column"><label className="form-field"><span>Decision reason *</span><textarea rows="4" value={actionForm.reason} onChange={(event) => setActionForm({ ...actionForm, reason: event.target.value })} placeholder="Provide a clear, specific and auditable reason." /></label>{["return_correction", "return_dvc"].includes(action?.key) && <><label className="form-field"><span>Exact field, document or clause *</span><input value={actionForm.exact_item} onChange={(event) => setActionForm({ ...actionForm, exact_item: event.target.value })} /></label><label className="form-field"><span>Requested change *</span><textarea rows="3" value={actionForm.requested_change} onChange={(event) => setActionForm({ ...actionForm, requested_change: event.target.value })} /></label></>}</div>}
-        {action?.key === "upload_official_signed" && <label className="upload-zone compact-upload"><UploadCloud /><strong>{actionForm.document?.name || "Choose fully signed PDF"}</strong><span>Uploaded as document_type=signed and is_official=true.</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setActionForm({ ...actionForm, document: event.target.files?.[0] || null })} /></label>}
-        {action?.key === "activate" && <div className="form-grid"><label className="form-field"><span>Effective date *</span><input type="date" value={actionForm.effective_date} onChange={(event) => setActionForm({ ...actionForm, effective_date: event.target.value })} /></label><label className="form-field"><span>Expiry date *</span><input type="date" value={actionForm.expiry_date} onChange={(event) => setActionForm({ ...actionForm, expiry_date: event.target.value })} /></label><label className="form-field"><span>Partner liaison *</span><input value={actionForm.partner_liaison} onChange={(event) => setActionForm({ ...actionForm, partner_liaison: event.target.value })} /></label>{!record.deliverables.length && <label className="form-field"><span>Initial deliverable *</span><input value={actionForm.initial_deliverable} onChange={(event) => setActionForm({ ...actionForm, initial_deliverable: event.target.value })} /></label>}</div>}
+      <Modal
+        open={Boolean(action)}
+        onClose={() => { setAction(null); setFieldsConfirmed(false); }}
+        title={action?.label || "Confirm action"}
+        description={`${record.title} · ${humanize(record.status)}`}
+        footer={<><button className="secondary-button" onClick={() => { setAction(null); setFieldsConfirmed(false); }}>Cancel</button><button className={action?.variant === "danger" ? "danger-button" : "primary-button"} disabled={submitting || (action?.key === "submit" && !fieldsConfirmed)} onClick={performAction}>{submitting ? "Processing…" : `Confirm ${action?.label || "action"}`}</button></>}
+      >
+        {ACTION_HELP[action?.key] && <p className="helper-note">{ACTION_HELP[action.key]}</p>}
+        {action?.key === "submit" && <>
+          <p className="helper-note">Submitting cuts off the external partner&apos;s access to the Google Doc and hands review to Linkages. Legal receives access later when Linkages chooses &quot;Send to Legal.&quot; Make sure the partner is done editing first.</p>
+          <label className="form-field checkbox-field">
+            <input type="checkbox" checked={fieldsConfirmed} onChange={(event) => setFieldsConfirmed(event.target.checked)} />
+            <span>I confirm all required fields in the document have been filled in.</span>
+          </label>
+        </>}
+        <label className="form-field"><span>Comment (optional)</span><textarea rows="4" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Add context for this decision." /></label>
       </Modal>
     </>
   );

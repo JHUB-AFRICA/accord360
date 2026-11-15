@@ -70,7 +70,7 @@ export default function WorkflowQueue({ mode }) {
     { key: "partner_name", label: "Partner" },
     { key: "agreement_type", label: "Type", render: (item) => <StatusBadge tone="blue">{item.agreement_type}</StatusBadge> },
     { key: "department", label: "Department" },
-    { key: "initiator_name", label: "Owner / Champion" },
+    { key: "initiator_name", label: "Owner / Researcher" },
     { key: "days_in_stage", label: "Days waiting", render: (item) => <div className="stacked-cell"><strong>{item.days_in_stage} days</strong><span>{item.days_in_stage > (mode === "legal" ? 21 : 7) ? "SLA attention" : "Within target"}</span></div> },
     { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status}>{humanize(item.status)}</StatusBadge> },
     { key: "action", label: "Action", render: (item) => <Link className="text-link" to={config.route(item.id)}>Open review <ArrowRight size={15} /></Link> }

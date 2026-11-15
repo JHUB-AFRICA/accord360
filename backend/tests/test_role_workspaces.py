@@ -1,3 +1,16 @@
+import os
+from pathlib import Path
+
+# Never touch the developer's real database: tests always run on their own
+# throwaway SQLite file (set before app.main is imported).
+_TEST_DB = Path("test_role_workspaces.db")
+if _TEST_DB.exists():
+    _TEST_DB.unlink()
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
+os.environ["UPLOAD_DIR"] = "test_uploads"
+os.environ["ENVIRONMENT"] = "test"
+os.environ["SEED_DEMO_DATA"] = "true"
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -5,7 +18,7 @@ from app.main import app
 client = TestClient(app)
 
 ACCOUNTS = {
-    "researcher": ("researcher@accord360.app", "Research@123", "JKUAT Champion"),
+    "researcher": ("researcher@accord360.app", "Research@123", "JKUAT Researcher"),
     "approver": ("approver@accord360.app", "Approver@123", "Department / Faculty Approver"),
     "linkages": ("linkages@accord360.app", "Linkages@123", "Linkages Officer"),
     "director_linkages": ("director.linkages@accord360.app", "Director@123", "Director, Linkages"),

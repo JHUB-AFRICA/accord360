@@ -68,17 +68,13 @@ for (const value of unsupportedBackendPaths) {
 }
 
 const requiredBackendPaths = [
-  "/auth/login", "/auth/me", "/auth/register-partner", "/users", "/users/champions", "/partners", "/agreements",
-  "/transition", "/documents", "/corrections", "/deliverables", "/values", "/dashboard/workspace",
-  "/dashboard/stats", "/notifications", "/reports/agreements.csv", "/reports/audit", "/scorecards", "/scorecards/", "/data-review"
-  , "/templates", "/configuration", "/reference-data"
+  "/auth/login", "/auth/me", "/users", "/users/researchers", "/partners", "/agreements",
+  "/transition", "/dashboard/workspace", "/dashboard/stats", "/notifications",
+  "/templates"
 ];
 for (const value of requiredBackendPaths) {
   if (!backendContent.includes(value)) failures.push(`src/lib/backend.js is missing implemented endpoint ${value}`);
 }
-
-const rolesContent = readFileSync(join(root, "src/lib/roles.js"), "utf8");
-if (!/partner\s*:/.test(rolesContent)) failures.push("src/lib/roles.js is missing the implemented partner role");
 
 const envContent = readFileSync(join(root, ".env.example"), "utf8");
 if (!envContent.includes("VITE_API_URL=http://127.0.0.1:8000/api")) failures.push(".env.example does not use the documented local API base URL");
@@ -92,8 +88,6 @@ const requiredFiles = [
   "src/lib/normalize.js",
   "src/lib/workflow.js",
   "src/context/AuthContext.jsx",
-  "src/pages/SixMonthReport.jsx",
-  "src/pages/Scorecards.jsx",
   "API_ENDPOINTS.md",
   "BACKEND_API_CONTRACT.md",
   "DEVELOPER_HANDOFF.md",

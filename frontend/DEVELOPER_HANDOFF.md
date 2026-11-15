@@ -12,7 +12,7 @@ All production calls belong in `src/lib/backend.js`. Add normalization in `src/l
 
 - Login: `/auth/login`, `/auth/me`
 - Dashboard: `/dashboard/workspace`, `/dashboard/stats`
-- Users: `/users`, `/users/champions`, `/users/{id}`
+- Users: `/users`, `/users/researchers`, `/users/{id}`
 - Partners: `/partners`, `/partners/{id}` via client list lookup and `PUT`
 - Agreements: `/agreements`, `/agreements/{id}`, `/agreements/{id}/transition`
 - Documents: agreement document upload/list/download

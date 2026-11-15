@@ -1,94 +1,43 @@
-import { AlertTriangle, CheckCircle2, MessageSquarePlus, Scale } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { transitionAgreement } from "../lib/backend.js";
+import { ExternalLink } from "lucide-react";
 import { formatDateTime, humanize } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
-import Modal from "./Modal.jsx";
-import StatusBadge from "./StatusBadge.jsx";
 
-export default function LegalReviewPanel({ record, user, onRecordChange, onError, onMessage }) {
-  const [commentOpen, setCommentOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ exactItem: "", requestedChange: "", details: "" });
-  const reviewEvents = (record.workflow_events || []).filter((event) => event.comment || ["send_legal", "approve_legal", "return_correction", "return_dvc"].includes(event.action));
-  const canReturn = user.role === "legal" && record.backend_stage === "legal_review";
+// Linkages <-> Legal review stage. The review itself happens natively in the
+// Google Doc (comments and edits) — Accord 360 doesn't mirror comment text.
+// This panel links out to the Doc and shows the hand-off history. The
+// actions (send to Legal, return, approve) are the server-derived
+// available_actions buttons in the page header, not a duplicated matrix.
+const HANDOFF_ACTIONS = new Set(["submit", "send_to_legal", "return_to_researcher", "return_to_linkages", "resubmit", "approve"]);
 
-  async function requestAmendment() {
-    if (!form.exactItem.trim() || !form.requestedChange.trim()) {
-      onError("Identify the exact clause, field or document and the requested change.");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const comment = [
-        `LEGAL CORRECTION`,
-        `Exact item: ${form.exactItem.trim()}`,
-        `Requested change: ${form.requestedChange.trim()}`,
-        form.details.trim() ? `Additional context: ${form.details.trim()}` : null
-      ].filter(Boolean).join("\n");
-      const updated = await transitionAgreement(record.id, "return_correction", comment, { exact_item: form.exactItem.trim(), requested_change: form.requestedChange.trim(), details: form.details.trim() || null });
-      onRecordChange(updated);
-      onMessage("The agreement was returned for correction using the supported workflow transition endpoint.");
-      setForm({ exactItem: "", requestedChange: "", details: "" });
-      setCommentOpen(false);
-    } catch (error) {
-      onError(error.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
+export default function ReviewPanel({ record }) {
+  const handoffs = (record.workflow_events || []).filter((event) => HANDOFF_ACTIONS.has(event.action)).slice().reverse();
 
   return (
     <>
       <section className="panel legal-comparison-panel">
         <div className="panel-head">
-          <div><h2>Legal review record</h2><p>Legal feedback is stored as a structured correction linked to the workflow return event.</p></div>
-          {canReturn && <button className="secondary-button compact-button" onClick={() => setCommentOpen(true)}><MessageSquarePlus size={16} /> Request amendment</button>}
-        </div>
-        <div className="comparison-table" role="table" aria-label="Legal review evidence">
-          <div className="comparison-header" role="row"><strong role="columnheader">Evidence</strong><strong role="columnheader">Current backend value</strong><strong role="columnheader">Review status</strong></div>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Agreement draft</strong></div><p role="cell">{record.documents.find((item) => item.type === "working_draft")?.name || "No working draft document classified"}</p><p role="cell"><StatusBadge status={record.status} /></p></article>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Legal-approved document</strong></div><p role="cell">{record.documents.find((item) => item.type === "legal_approved" && item.is_official)?.name || "Not yet uploaded as an official Legal-approved document"}</p><p role="cell"><StatusBadge tone={record.status === "legal_approved" ? "green" : "yellow"}>{record.status === "legal_approved" ? "Approved" : "Pending"}</StatusBadge></p></article>
-          <article className="comparison-row" role="row"><div role="cell"><strong>Confidentiality</strong></div><p role="cell">{humanize(record.confidentiality)}</p><p role="cell"><StatusBadge tone="blue">Backend controlled</StatusBadge></p></article>
+          <div><h2>Review</h2><p>Linkages and Legal review and comment directly in the Google Doc. Accord 360 only tracks who has it and the hand-offs below — not the comment text.</p></div>
+          {record.template_copy_url && <a className="secondary-button compact-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in Google Docs</a>}
         </div>
       </section>
 
-      <div className="detail-grid">
-        <section className="panel detail-main-card">
-          <div className="panel-head"><div><h2>Review comments and events</h2><p>Workflow history remains visible alongside structured correction records.</p></div></div>
-          <div className="comment-list">
-            {reviewEvents.map((event) => (
-              <article key={event.id} className={["return_correction", "return_dvc"].includes(event.action) ? "blocking" : ""}>
-                <div className="comment-head"><div><strong>{humanize(event.action)}</strong><span>{event.actor?.full_name || "Accord360 user"} · {formatDateTime(event.created_at)}</span></div><StatusBadge tone={["return_correction", "return_dvc"].includes(event.action) ? "orange" : "blue"}>{humanize(event.to_stage)}</StatusBadge></div>
-                <p>{event.comment || "No comment was recorded for this workflow event."}</p>
-                {["return_correction", "return_dvc"].includes(event.action) && <div className="comment-footer"><span className="blocking-label"><AlertTriangle size={14} /> Requires correction and resubmission</span></div>}
-              </article>
-            ))}
-            {!reviewEvents.length && <EmptyState title="No review comments recorded" text="Workflow comments will appear here after a review action is completed." />}
-          </div>
-        </section>
-
-        <aside className="panel detail-side-card">
-          <div className="panel-head"><div><h2>Correction response</h2><p>Structured corrections are linked to the agreement workflow and available in the correction register.</p></div></div>
-          {record.status === "correction_required" || record.status === "dvc_returned" ? <Link className="quick-link-card" to="/corrections"><span className="list-icon orange"><AlertTriangle /></span><div><strong>Open correction workspace</strong><span>Review the structured return record and submit a response.</span></div></Link> : <div className="inline-empty"><CheckCircle2 /> No active correction is recorded.</div>}
-          <div className="helper-note"><Scale size={16} /> Correction requests now retain the exact item, requested change, response and resolution state in the backend.</div>
-        </aside>
-      </div>
-
-      <Modal
-        open={commentOpen}
-        onClose={() => setCommentOpen(false)}
-        title="Return agreement for Legal correction"
-        description="This performs the return_correction transition and creates a structured correction record for the responsible user."
-        footer={<><button className="secondary-button" onClick={() => setCommentOpen(false)}>Cancel</button><button className="primary-button" disabled={submitting} onClick={requestAmendment}>{submitting ? "Returning…" : "Return for correction"}</button></>}
-      >
-        <div className="form-grid single-column">
-          <label className="form-field"><span>Exact clause, field or document *</span><input value={form.exactItem} onChange={(event) => setForm({ ...form, exactItem: event.target.value })} placeholder="Clause 7.2 — Intellectual Property" /></label>
-          <label className="form-field"><span>Requested change *</span><textarea rows="4" value={form.requestedChange} onChange={(event) => setForm({ ...form, requestedChange: event.target.value })} /></label>
-          <label className="form-field"><span>Additional context</span><textarea rows="3" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /></label>
-        </div>
-      </Modal>
+      <section className="panel legal-comparison-panel">
+        <div className="panel-head"><div><h2>Hand-off history</h2><p>Each time this agreement moved between the Researcher, Linkages and Legal, with any note that was left.</p></div></div>
+        {handoffs.length
+          ? <div className="activity-timeline">
+              {handoffs.map((event) => (
+                <article key={event.id}>
+                  <span className="timeline-dot" />
+                  <div>
+                    <strong>{humanize(event.action)} · {event.actor?.full_name || "System"}</strong>
+                    <p>{event.comment || "No note was left."}</p>
+                    <small>{formatDateTime(event.created_at)}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          : <EmptyState title="No hand-offs yet" text="Hand-offs between the Researcher, Linkages and Legal will appear here." />}
+      </section>
     </>
   );
 }

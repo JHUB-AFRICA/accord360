@@ -6,8 +6,9 @@ backend/venv/
 backend/accord360.db
 accord360.db
 backend/demo_accord360.db
-backend/test_accord360.db
+backend/*.db
 backend/test_uploads/
+backend/test_*_uploads/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
@@ -23,3 +24,12 @@ backend/.env.docker
 .vscode/
 .idea/
 .DS_Store
+
+# Local dev launcher (personal, not shared)
+run-dev.sh
+LOCAL_DEV.md
+
+# Google service-account keys
+backend/*.json
+!backend/package.json
+!backend/package-lock.json

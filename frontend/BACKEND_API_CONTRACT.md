@@ -12,10 +12,10 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 |---|---|
 | Workspace dashboard | `GET /dashboard/workspace` |
 | Portfolio statistics | `GET /dashboard/stats` |
-| Champion directory | `GET /users/champions` |
+| Researcher directory | `GET /users/researchers` |
 | Update partner | `PUT /partners/{partner_id}` |
 | Review partner | `POST /partners/{partner_id}/review` and `GET /partners/{partner_id}/reviews` |
-| Template library | `GET/POST /templates`, `PATCH /templates/{template_id}`, `GET /templates/{template_id}/download` |
+| Template library | `GET /templates`, `GET /templates/fields`, `POST /templates`, `POST /templates/{template_id}/activate`, `POST /templates/{template_id}/deactivate`, `GET /templates/{template_id}/download` |
 | Configuration | `GET/POST /configuration`, `PATCH /configuration/{key}` |
 | Reference data | `GET /reference-data`, `POST/PATCH /reference-data` |
 | Perform workflow action | `POST /agreements/{agreement_id}/transition` with `{ action, comment }` |
@@ -24,7 +24,14 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 | Audit report | `GET /reports/audit` |
 | Agreement export | `GET /reports/agreements.csv` |
 | Portfolio report | `GET /reports/portfolio` |
+| Researcher progress update | `POST /agreements/{agreement_id}/progress-updates` |
+| M&E progress read view | `GET /progress-updates` |
 | Generated reports | `GET /reports/export.pdf`, `GET /reports/export.xlsx`, `POST /reports/ai-summary` |
+| Google Drive access health | `GET /agreements/{id}/drive-access` |
+| Google Drive access repair | `POST /agreements/{id}/drive-access/reconcile` (Linkages only) |
+| Notification timeline | `GET /notifications` with cursor, unread, and category filters |
+| Notification unread count | `GET /notifications/unread-count` |
+| Notification read state | `POST /notifications/{id}/read`, `POST /notifications/{id}/unread`, `POST /notifications/read-all` |
 
 ## Agreement type values
 
@@ -36,6 +43,21 @@ The current backend accepts only:
 - `Other`
 
 The frontend does not submit `MoA` until the backend schema is changed.
+
+## Role-scoped Phase 4 UI
+
+The authenticated UI exposes four workspaces only: `researcher`, `linkages`,
+`legal`, and `me`.
+
+- Researcher: own agreements, dynamic FieldDefinition-driven intake, and
+  quarterly progress notes for fully executed or expired agreements. No file
+  upload controls are rendered.
+- Linkages: all agreements, template management, placeholder validation,
+  authoring guide, corrected drafts, and signing workflow.
+- Legal: all agreements and version-scoped comments. No file upload controls
+  are rendered or authorized.
+- M&E: portfolio progress/expiry view and Update/Archive actions only for
+  expired agreements.
 
 ## Workflow actions
 
@@ -62,7 +84,13 @@ The frontend applies role and state visibility for usability. The backend remain
 
 ## Multipart document uploads
 
-The frontend sends `FormData` to `POST /agreements/{agreement_id}/documents` with:
+The general agreement-version upload flow is restricted by the backend status
+matrix. Legal is never an upload role. Linkages handles legal draft, corrected
+draft and final signed uploads through the version endpoint; the Researcher
+intake form does not accept files.
+
+Where a legacy document endpoint remains available, the frontend sends
+`FormData` with:
 
 - `file`
 - `document_type`
@@ -72,32 +100,29 @@ The frontend sends `FormData` to `POST /agreements/{agreement_id}/documents` wit
 
 It does not set `Content-Type` manually, allowing the browser to supply the multipart boundary.
 
-## Implemented scorecard routes
+## Physical signing flow
 
-Scorecard pages use persisted, role-scoped snapshots through `GET /scorecards`,
-`POST /scorecards/{agreement_id}/recalculate`, and
-`GET /scorecards/{agreement_id}/history`. Administrators can inspect and publish
-versioned definitions through `GET/POST /scorecards/definitions`.
+After Legal approval, Linkages may download the unchanged signing copy with:
 
-Agreement responses include both `owner` (the assigned Champion) and
-`initiator` (the user who created the request). Personal Champion views are
-backend-scoped to agreements where either field identifies the current user;
-Linkages office roles retain their authorized office-wide scope.
+- `GET /agreements/{agreement_id}/signing-copy?format=pdf`
+- `GET /agreements/{agreement_id}/signing-copy?format=docx`
 
-Historical records are reviewed through the protected `/data-review` routes.
-The UI preserves the original source fields, saves Linkages corrections, and
-requires a Champion assignment before marking a record verified.
+The authenticated backend verifies the Google Doc has not changed since Legal's
+approval. Linkages uploads the physically signed file through
+`POST /agreements/{agreement_id}/versions`; only PDF and DOCX files up to 25 MiB
+are accepted. The resulting immutable version is downloaded through
+`GET /agreements/{agreement_id}/versions/{version_id}/download` by Linkages,
+Legal, M&E, and the owning Researcher.
 
 ## Unsupported backend capabilities
 
 No production request is sent to:
 
 - `/dashboard`
-- `/directory/champions`
+- `/directory/researchers`
 - `/auth/forgot-password`
 - `/auth/register-partner`
 - `/me/reports`
-- notification resend routes
 - `/agreements/{id}/actions/{action}`
 
 Correction records are implemented through `GET /corrections`,

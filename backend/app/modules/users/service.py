@@ -15,7 +15,7 @@ __all__ = [
     "hash_password",
     "authenticate_user",
     "list_users",
-    "list_champions",
+    "list_researchers",
     "create_user",
     "update_user",
 ]
@@ -33,7 +33,7 @@ def list_users(db: Session) -> list[User]:
     return db.scalars(select(User).order_by(User.full_name)).all()
 
 
-def list_champions(db: Session) -> list[User]:
+def list_researchers(db: Session) -> list[User]:
     return db.scalars(
         select(User).where(User.role == "researcher", User.is_active.is_(True)).order_by(User.full_name)
     ).all()

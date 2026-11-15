@@ -44,29 +44,37 @@ Mock mode mirrors the same implemented endpoint names and response shapes; it is
 - `POST /auth/login`
 - `GET /auth/me`
 - `GET/POST/PATCH /users`
-- `GET /users/champions`
+- `GET /users/researchers`
 - `GET/POST /partners`
 - `PUT /partners/{id}`
 - `GET/POST/PATCH /agreements`
 - `POST /agreements/{id}/transition`
-- Agreement document list, upload and bearer-token download
+- Agreement document list and bearer-token download; uploads are role/status
+  controlled and Legal/Researcher do not receive upload controls
 - Deliverable create/update and value creation
 - `GET /dashboard/workspace`
 - `GET /dashboard/stats`
 - Notification list and mark-read
 - Scoped agreement CSV export
 - Authorized audit report
+- Researcher quarterly progress updates and M&E portfolio progress reads
+- Linkages template upload, placeholder validation, activation/deactivation,
+  and FieldDefinition authoring guide
 
 ## Features represented without unsupported calls
 
-The current backend does not implement persisted templates, configuration, dedicated correction records, public partner accounts, password reset, scorecards, AI report generation, PDF export or Excel export.
+The current backend does not implement public partner accounts, password reset,
+AI report generation, PDF export or Excel export. Persisted templates,
+configuration, comments, progress updates and expiry automation are implemented
+for the rebuilt four-role workflow.
 
 The frontend handles these gaps as follows:
 
 - Corrections are derived from agreement workflow transition comments.
 - Scorecards are transparent client calculations from backend-visible deliverables, evidence, risk and value data.
 - Six-month reporting writes deliverables, evidence documents and value records.
-- Configuration and template pages are capability/readiness views and send no network requests.
+- Configuration and template pages use the authenticated Linkages template and
+  configuration routes; the template authoring guide reads FieldDefinition rows.
 - AI narrative is a deterministic local preview clearly labeled for human review.
 - PDF and Excel buttons are disabled until corresponding backend routes exist.
 - Public partner registration is a completed UI form but does not claim to submit data.
@@ -74,9 +82,9 @@ The frontend handles these gaps as follows:
 
 ## Role values
 
-The frontend uses the backend role names exactly:
+The frontend uses exactly these backend role names:
 
-`admin`, `researcher`, `approver`, `linkages`, `director_linkages`, `legal`, `dvc`, `vc_office`, `executive`, `me`, `auditor`.
+`researcher`, `linkages`, `legal`, `me`.
 
 There is no authenticated `partner` role in the current backend contract.
 

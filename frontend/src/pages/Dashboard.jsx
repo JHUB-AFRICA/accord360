@@ -1,21 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Gauge } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getDashboard } from "../lib/backend.js";
 import { roleConfig } from "../lib/roles.js";
-import { stageLabel } from "../lib/workflow.js";
 import DataTable from "../components/DataTable.jsx";
 import ErrorState from "../components/ErrorState.jsx";
 import KpiCard from "../components/KpiCard.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { humanize } from "../lib/format.js";
 
 const kpiIcons = [Gauge, ClipboardCheck, AlertTriangle, CheckCircle2];
-const pieColors = ["#1b5e3b", "#7bc67e", "#1976d2", "#e5a100", "#6f42c1"];
 
+// Linkages' queue is split by what they have to do next, so a new submission
+// can't be missed among returns and signing items. Other roles get one list.
+const QUEUE_GROUPS = {
+  linkages: [
+    { key: "new", title: "New — needs your review", empty: "No new submissions.", match: (item) => item.status === "linkages_review" && !item.returned_by_legal },
+    { key: "returned", title: "Returned by Legal", empty: "Nothing returned by Legal.", match: (item) => item.status === "linkages_review" && item.returned_by_legal },
+    { key: "approved", title: "Approved by Legal — start signing", empty: "Nothing waiting to start signing.", match: (item) => item.status === "approved_for_signing" },
+    { key: "signing", title: "Awaiting signatures", empty: "Nothing awaiting signatures.", match: (item) => item.status === "awaiting_signatures" }
+  ]
+};
+
+function waitingLabel(value) {
+  if (!value) return "—";
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
+  if (days <= 0) return "Today";
+  return days === 1 ? "1 day" : `${days} days`;
+}
+
+// A small, role-scoped landing dashboard: real KPIs, two quick-glance charts
+// (status breakdown and a 6-month creation trend, both from real
+// /dashboard/stats data), and a priority queue of agreements needing this
+// role's action (REBUILD_BRIEF.md Section 5.1).
 export default function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
@@ -32,19 +53,18 @@ export default function Dashboard() {
   useEffect(() => { load(); }, [load]);
 
   const queueColumns = useMemo(() => [
-    { key: "reference", label: "Reference", render: (item) => <div className="stacked-cell"><strong>{item.reference}</strong><span>{item.title}</span></div> },
-    { key: "partner_name", label: "Partner" },
-    { key: "stage", label: "Stage", render: (item) => <div className="stacked-cell"><strong>{stageLabel(item.stage)}</strong><span>{item.backend_stage_label}</span></div> },
-    { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status} /> },
-    { key: "current_action", label: "Next action" }
+    { key: "title", label: "Agreement", render: (item) => <div className="stacked-cell"><strong>{item.title}</strong><span>{item.partner_name}</span></div> },
+    { key: "researcher_name", label: "Researcher" },
+    { key: "waiting", label: "Waiting", render: (item) => waitingLabel(item.updated_at) },
+    { key: "status", label: "Status", render: (item) => <StatusBadge status={item.status}>{humanize(item.status)}</StatusBadge> }
   ], []);
 
   if (error) return <><PageHeader eyebrow={config.label} title={config.workspace} description={config.shortDescription} /><ErrorState message={error} onRetry={load} /></>;
-  if (!data) return <LoadingState label="Loading your role-specific workspace" />;
+  if (!data) return <LoadingState label="Loading your workspace" />;
 
   const workspace = data.workspace || {};
-  const total = data.totals.total_partnerships;
   const primaryAction = workspace.primary_action;
+  const totalCreatedRecently = data.monthlyCreated.reduce((sum, item) => sum + item.count, 0);
 
   return (
     <>
@@ -57,50 +77,58 @@ export default function Dashboard() {
 
       <section className="kpi-grid">
         {(data.kpis || []).map((item, index) => (
-          <KpiCard key={item.label} label={item.label} value={item.value} helper={item.note} tone={item.tone || "blue"} icon={kpiIcons[index % kpiIcons.length]} />
+          <KpiCard
+            key={item.label}
+            label={item.label}
+            value={item.value}
+            helper={item.note}
+            tone={item.tone || "blue"}
+            icon={kpiIcons[index % kpiIcons.length]}
+            to={item.statuses?.length ? `/agreements?status=${item.statuses.join(",")}` : "/agreements"}
+          />
         ))}
       </section>
 
+      {QUEUE_GROUPS[user.role] && <div className="queue-groups">
+        {QUEUE_GROUPS[user.role].map((group) => {
+            const rows = (data.queue || []).filter(group.match);
+            return (
+              <section className="panel data-panel" key={group.key}>
+                <div className="panel-head"><div><h2>{group.title} <span className="queue-count">{rows.length}</span></h2></div>{group.key === "new" && <Link to="/agreements" className="text-link">View all agreements <ArrowRight size={15} /></Link>}</div>
+                <DataTable
+                  columns={queueColumns}
+                  rows={rows}
+                  onRowClick={(item) => navigate(`/agreements/${item.id}`)}
+                  emptyTitle={group.empty}
+                  emptyText=""
+                />
+              </section>
+            );
+          })}
+      </div>}
+
       <section className="dashboard-grid">
         <article className="panel chart-panel span-2">
-          <div className="panel-head"><div><h2>Agreements by stage</h2><p>Counts are scoped by the authenticated role on the backend.</p></div><Link to="/agreements">View all <ArrowRight size={15} /></Link></div>
-          <div className="chart-height"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.by_stage}><CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e5ecea" /><XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-12} textAnchor="end" height={70} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="value" fill="#1b5e3b" radius={[7, 7, 0, 0]} /></BarChart></ResponsiveContainer></div>
+          <div className="panel-head"><div><h2>Agreements by status</h2><p>Where every visible agreement currently stands.</p></div></div>
+          <div className="chart-height"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.byStatus}><CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e5ecea" /><XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={60} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="value" fill="#1b5e3b" radius={[7, 7, 0, 0]} /></BarChart></ResponsiveContainer></div>
         </article>
 
         <article className="panel chart-panel">
-          <div className="panel-head"><div><h2>Agreement mix</h2><p>Count by backend agreement type</p></div></div>
-          <div className="donut-wrap"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data.by_type} dataKey="value" nameKey="name" innerRadius={58} outerRadius={82} paddingAngle={3}>{data.by_type.map((entry, index) => <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="donut-center"><strong>{total}</strong><span>records</span></div></div>
-          <div className="legend-list">{data.by_type.map((entry, index) => <span key={entry.name}><i style={{ background: pieColors[index % pieColors.length] }} />{entry.name}<b>{entry.value}</b></span>)}</div>
+          <div className="panel-head"><div><h2>New agreements</h2><p>Last 6 months · {totalCreatedRecently} total</p></div></div>
+          <div className="chart-height"><ResponsiveContainer width="100%" height="100%"><LineChart data={data.monthlyCreated}><CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e5ecea" /><XAxis dataKey="label" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} /><Tooltip /><Line type="monotone" dataKey="count" stroke="#1b5e3b" strokeWidth={2.5} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
         </article>
       </section>
 
-      <section className="dashboard-grid">
-        <article className="panel chart-panel span-2">
-          <div className="panel-head"><div><h2>Monthly pipeline</h2><p>Created agreements during the last six months</p></div></div>
-          <div className="chart-height"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.trend}><defs><linearGradient id="requestFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1b5e3b" stopOpacity={0.28} /><stop offset="95%" stopColor="#1b5e3b" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e5ecea" /><XAxis dataKey="month" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Area type="monotone" dataKey="requests" stroke="#1b5e3b" fill="url(#requestFill)" strokeWidth={2.5} /></AreaChart></ResponsiveContainer></div>
-        </article>
-
-        <article className="panel detail-side-card">
-          <div className="panel-head"><div><h2>Portfolio snapshot</h2><p>Backend-calculated metrics</p></div></div>
-          <div className="metric-preview">
-            <article><span>Active partnerships</span><strong>{data.totals.active_agreements}</strong></article>
-            <article><span>Pipeline volume</span><strong>{data.totals.pipeline}</strong></article>
-            <article><span>At risk</span><strong>{data.totals.at_risk}</strong></article>
-            {(data.totals.value_by_currency || []).map((item) => <article key={item.currency}><span>Approved value ({item.currency})</span><strong>{Number(item.amount).toLocaleString()}</strong></article>)}
-          </div>
-        </article>
-      </section>
-
-      <section className="panel data-panel">
-        <div className="panel-head"><div><h2>{workspace.queue_title || "My priority queue"}</h2><p>{workspace.queue_description || "Records that currently require attention."}</p></div></div>
-        <DataTable
-          columns={queueColumns}
-          rows={data.queue || []}
-          onRowClick={(item) => navigate(`/agreements/${item.id}`)}
-          emptyTitle="No records require action"
-          emptyText="Your backend-scoped queue is currently clear."
-        />
-      </section>
+      {!QUEUE_GROUPS[user.role] && <section className="panel data-panel">
+          <div className="panel-head"><div><h2>{workspace.queue_title || "My priority queue"}</h2><p>{workspace.queue_description || "Agreements that currently need your action."}</p></div><Link to="/agreements" className="text-link">View all agreements <ArrowRight size={15} /></Link></div>
+          <DataTable
+            columns={queueColumns}
+            rows={data.queue || []}
+            onRowClick={(item) => navigate(`/agreements/${item.id}`)}
+            emptyTitle="Nothing needs your attention"
+            emptyText="Your queue is clear right now."
+          />
+        </section>}
     </>
   );
 }

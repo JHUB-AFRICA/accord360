@@ -1,9 +1,8 @@
 from .dashboard import router as dashboard_router
-from .corrections import router as corrections_router
-from .documents import router as documents_router
-from .me import router as me_router
 from .notifications import router as notifications_router
 from .reports import router as reports_router
-from .scorecards import router as scorecards_router
 
-__all__ = ["corrections_router", "dashboard_router", "documents_router", "me_router", "notifications_router", "reports_router", "scorecards_router"]
+# NOTE(rebuild-phase1): the old documents_router (Document model) was removed
+# per REBUILD_BRIEF.md Section 2 — AgreementVersion upload/download endpoints
+# are Phase 2/3 work (document generation engine, Section 3/4).
+__all__ = ["dashboard_router", "notifications_router", "reports_router"]

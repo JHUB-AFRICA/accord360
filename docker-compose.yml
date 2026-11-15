@@ -22,7 +22,7 @@ services:
       DATABASE_URL: postgresql+psycopg://accord360:accord360_change_me@database:5432/accord360
       UPLOAD_DIR: /app/uploads
       CORS_ORIGINS: http://localhost:8080
-      SEED_DEMO_DATA: "true"
+      SEED_DEMO_DATA: "false"
     volumes:
       - accord360_uploads:/app/uploads
     depends_on:

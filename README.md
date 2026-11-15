@@ -42,12 +42,11 @@ Open `http://localhost:5173`.
 
 ## Database configuration and migrations
 
-The backend loads database configuration from `backend/.env`. SQLite works by
-default. To use Neon, copy `backend/.env.example` to `backend/.env` and replace
-`DATABASE_URL` with the SQLAlchemy-compatible connection string from Neon:
+The backend loads database configuration from `backend/.env` and uses the local
+SQLite database by default:
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/DBNAME?sslmode=require
+DATABASE_URL=sqlite:///./accord360.db
 ```
 
 Keep `.env` private; it is excluded from Git. Apply all schema migrations before

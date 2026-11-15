@@ -93,7 +93,7 @@ services:
       SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com/emails}
-      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:

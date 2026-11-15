@@ -8,6 +8,7 @@ temporary database assignment until Linkages confirms the real Champion.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -15,7 +16,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models import Agreement, AuditLog, Partner, User, WorkflowEvent
+from app.models import Agreement, AuditLog, Deliverable, Partner, User, WorkflowEvent
 from app.timeutils import utc_now
 
 
@@ -40,6 +41,16 @@ def as_date(value):
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def as_decimal(value) -> Decimal:
+    value = text(value).replace(",", "")
+    if not value:
+        return Decimal("0")
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        return Decimal("0")
 
 
 def import_workbook(path: Path, owner_email: str, commit: bool) -> dict[str, int]:
@@ -83,7 +94,8 @@ def import_workbook(path: Path, owner_email: str, commit: bool) -> dict[str, int
 
         rows = list(workbook["agreements_import"].iter_rows(values_only=True))
         headers = [text(value) for value in rows[0]]
-        existing = {item.reference_number for item in db.scalars(select(Agreement)).all()}
+        agreements_by_reference = {item.reference_number: item for item in db.scalars(select(Agreement)).all()}
+        existing = set(agreements_by_reference)
         imported = skipped = 0
         for values in rows[1:]:
             row = dict(zip(headers, values))
@@ -99,6 +111,7 @@ def import_workbook(path: Path, owner_email: str, commit: bool) -> dict[str, int
                 continue
             partner = partners.get(normalized_key(partner_name))
             if not partner:
+                notes = text(row.get("data_quality_note"))
                 partner = Partner(name=partner_name, sector="Not recorded", partner_type="Institution", country="Not recorded", status="under_review")
                 db.add(partner)
                 db.flush()
@@ -144,16 +157,54 @@ def import_workbook(path: Path, owner_email: str, commit: bool) -> dict[str, int
             )
             db.add(agreement)
             db.flush()
+            agreements_by_reference[reference] = agreement
             db.add(WorkflowEvent(agreement_id=agreement.id, from_stage=None, to_stage=agreement.stage, action="historical_import", comment="Imported from the JKUAT collaboration workbook; pending Linkages review.", actor_id=owner.id))
             db.add(AuditLog(actor_id=owner.id, action="import_agreement", object_type="agreement", object_id=str(agreement.id), new_value=reference, created_at=utc_now()))
             existing.add(reference)
             imported += 1
 
+        imported_deliverables = skipped_deliverables = 0
+        existing_deliverables = {
+            (item.agreement_id, item.deliverable_type, item.reporting_period)
+            for item in db.scalars(select(Deliverable)).all()
+        }
+        if "deliverables_import" in workbook.sheetnames:
+            deliverable_rows = list(workbook["deliverables_import"].iter_rows(values_only=True))
+            deliverable_headers = [text(value) for value in deliverable_rows[0]]
+            for values in deliverable_rows[1:]:
+                row = dict(zip(deliverable_headers, values))
+                agreement = agreements_by_reference.get(text(row.get("agreement_reference")))
+                deliverable_type = text(row.get("deliverable_type"))
+                if not agreement or not deliverable_type:
+                    skipped_deliverables += 1
+                    continue
+                key = (agreement.id, deliverable_type, text(row.get("reporting_period")) or None)
+                if key in existing_deliverables:
+                    skipped_deliverables += 1
+                    continue
+                db.add(Deliverable(
+                    agreement_id=agreement.id,
+                    deliverable_type=deliverable_type,
+                    target_value=as_decimal(row.get("target_value")),
+                    actual_value=as_decimal(row.get("actual_value")),
+                    reporting_period=text(row.get("reporting_period")) or None,
+                    notes=text(row.get("notes")) or None,
+                ))
+                existing_deliverables.add(key)
+                imported_deliverables += 1
+
         if commit:
             db.commit()
         else:
             db.rollback()
-        return {"imported": imported, "skipped": skipped, "partners_seen": len(partners), "committed": int(commit)}
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "partners_seen": len(partners),
+            "deliverables_imported": imported_deliverables,
+            "deliverables_skipped": skipped_deliverables,
+            "committed": int(commit),
+        }
     finally:
         db.close()
 

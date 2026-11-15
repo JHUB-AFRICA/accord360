@@ -88,20 +88,13 @@ temporary chat session and returns `204 No Content`.
 
 ## 3. Roles
 
-The backend recognizes these role values:
+The backend recognizes exactly these role values:
 
 ```text
-admin
 researcher
-approver
 linkages
-director_linkages
 legal
-dvc
-vc_office
-executive
 me
-auditor
 ```
 
 Frontend route guards are not security controls. The backend applies
@@ -172,10 +165,10 @@ Requires a valid token. Returns the authenticated `user` object shown above.
 
 Requires `admin`. Returns `UserOut[]`.
 
-### `GET /users/champions`
+### `GET /users/researchers`
 
 Requires `admin`, `linkages`, or `director_linkages`. Returns active researcher
-accounts eligible to be assigned as Champions. The response uses `UserOut[]`.
+accounts eligible to be assigned as Researchers. The response uses `UserOut[]`.
 
 ### `POST /users`
 
@@ -269,19 +262,23 @@ Requires `linkages` or `director_linkages`. Uses the same request body as
 
 ### `GET /templates`
 
-Requires authentication. Returns active versioned templates. Filter with
-`agreement_type`; `include_archived=true` includes archived records.
+Requires authentication. Returns template rows with `document_type`, active
+state, placeholder validation (`present`, `missing_required`,
+`unknown_tokens`) and uploader metadata. Only Linkages can manage templates.
+`GET /templates/fields` returns the configured `FieldDefinition` rows used by
+both the Researcher form and template validation.
 
 ### `POST /templates`
 
-Requires `admin`, `linkages`, or `director_linkages`. Uses multipart form data
-for `name`, `agreement_type`, `version`, optional `description`, and an optional
-DOC, DOCX, ODT or PDF file up to 25 MB.
+Requires `linkages`. Uses multipart form data with `document_type` and a
+required `.docx` file up to 25 MB. Upload validation is returned in the
+response; a template must contain all required FieldDefinition placeholders
+before activation.
 
-### `PATCH /templates/{template_id}`
+### `POST /templates/{template_id}/activate` and `/deactivate`
 
-Requires `admin`, `linkages`, or `director_linkages`. Updates template metadata
-or status (`active`/`archived`).
+Requires `linkages`. Activation atomically deactivates any other active
+template for the same document type. Templates are never hard-deleted.
 
 ### `GET /templates/{template_id}/download`
 
@@ -289,8 +286,8 @@ Requires authentication and returns the authorized template file.
 
 ### `GET/POST /configuration` and `PATCH /configuration/{key}`
 
-Configuration reads and writes require `admin`. Values are audited and only
-editable values can be changed.
+Configuration reads and writes are Linkages-scoped in the rebuilt four-role
+workflow. Values are audited and only editable values can be changed.
 
 ### `GET /reference-data`
 
@@ -364,9 +361,9 @@ Request:
   "strategic_alignment": "Strategic alignment",
   "department": "Computing",
   "partner_id": 1,
-  "champion_user_id": 2,
+  "researcher_user_id": 2,
   "confidentiality": "internal",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01"
@@ -375,7 +372,7 @@ Request:
 
 `agreement_type` must be `MoU`, `CRA`, `CA`, or `Other`. `purpose` must be at
 least 10 characters. Linkages roles must provide an active researcher
-`champion_user_id`; researchers become the owner automatically.
+`researcher_user_id`; researchers become the owner automatically.
 
 Returns `AgreementDetailOut` with status `201`.
 
@@ -395,7 +392,7 @@ Requires a valid token and edit permission. Send only fields being changed:
   "strategic_alignment": "Updated alignment",
   "department": "Computing",
   "confidentiality": "confidential",
-  "internal_champion": "Jane Muthoni",
+  "internal_researcher": "Jane Muthoni",
   "partner_liaison": "Partner Contact",
   "effective_date": "2026-01-01",
   "expiry_date": "2028-01-01",
@@ -488,7 +485,57 @@ Requires permission to download the specific document. Returns the file as a
 download response. The frontend should send the bearer token when requesting
 this URL.
 
+### `GET /agreements/{agreement_id}/drive-access`
+
+Requires Linkages access to the agreement. Performs a read-only health check
+of the live Google Doc permissions and returns whether direct managed access
+is synchronized, whether inherited permissions are present, and any missing,
+stale, or incorrectly-roled managed users.
+
+### `POST /agreements/{agreement_id}/drive-access/reconcile`
+
+Requires Linkages access. Reconciles direct Google Drive permissions against
+the agreement's current workflow status. Required users are added before
+stale managed users are removed, so the operation is safe to retry after a
+transient Drive failure. Inherited or unrelated permissions are preserved.
+
+### Physical signing endpoints
+
+After Legal approval, Linkages can download an unchanged signing copy with
+`GET /agreements/{agreement_id}/signing-copy?format=pdf` or
+`GET /agreements/{agreement_id}/signing-copy?format=docx`. The backend compares
+the Google Doc's current modification time with the Legal approval snapshot and
+returns `409` if the document changed.
+
+Linkages uploads the physically signed agreement with
+`POST /agreements/{agreement_id}/versions`. Only valid PDF and DOCX files up to
+25 MiB are accepted. The resulting immutable version is downloaded with
+`GET /agreements/{agreement_id}/versions/{version_id}/download` by Linkages,
+Legal, M&E, and the owning Researcher.
+
 ## 9. Monitoring and evaluation
+
+### `POST /agreements/{agreement_id}/progress-updates`
+
+Requires the authenticated user to be the agreement's Researcher. The
+agreement must be `fully_executed` or `expired`.
+
+Request:
+
+```json
+{
+  "quarter": "2026-Q1",
+  "notes": "Progress update notes"
+}
+```
+
+Returns `ProgressUpdateOut` with status `201`. Other roles and agreements in
+earlier workflow statuses receive `400` or `403`.
+
+### `GET /progress-updates`
+
+Requires the `me` role and returns all progress updates, optionally filtered by
+`agreement_id`. Researchers do not use this portfolio read endpoint.
 
 ### `POST /agreements/{agreement_id}/deliverables`
 
@@ -591,13 +638,29 @@ and/or `/dashboard/stats`, and map their response fields correctly.
 
 ### `GET /notifications`
 
-Requires a valid token. Returns the authenticated user’s latest 50
-notifications as `NotificationOut[]`.
+Requires a valid token. Returns the authenticated user’s notifications in a
+cursor-paginated `{ items, next_cursor }` envelope. Optional query parameters
+are `limit` (1–100, default 50), `cursor`, `unread_only=true`, and `category`.
 
 ### `POST /notifications/{notification_id}/read`
 
 Requires ownership of the notification. Marks it as read and returns the
 updated `NotificationOut`.
+
+### `GET /notifications/unread-count`
+
+Requires a valid token. Returns `{ "count": number }` for the authenticated
+user.
+
+### `POST /notifications/{notification_id}/unread`
+
+Requires ownership of the notification. Marks it unread and returns the
+updated `NotificationOut`.
+
+### `POST /notifications/read-all`
+
+Requires a valid token. Marks all of the authenticated user’s notifications
+read and returns `{ "updated": number }`.
 
 ## 12. Reports and audit
 
@@ -660,8 +723,8 @@ internal agreement routes reject the partner role.
 
 ## Agreement ownership and personal visibility
 
-Each agreement records `owner_id` for the assigned Champion and `initiator_id`
-for the user who created the request. Champion/researcher accounts can only
+Each agreement records `owner_id` for the assigned Researcher and `initiator_id`
+for the user who created the request. Researcher/researcher accounts can only
 list and open agreements where they are the owner or initiator. Linkages and
 Director of Linkages accounts retain the office-wide operational view. This
 scope is enforced by the backend query and detail authorization checks, not
@@ -728,7 +791,7 @@ The following paths are present in some frontend code/contracts but are not
 currently exposed by this backend:
 
 ```text
-GET /directory/champions
+GET /directory/researchers
 GET /corrections
 GET /corrections/{id}
 POST /corrections/{id}/respond
@@ -748,7 +811,7 @@ Use these backend names exactly:
 | Frontend assumption | Backend implementation |
 |---|---|
 | `GET /dashboard` | `GET /dashboard/workspace` and `GET /dashboard/stats` |
-| `GET /directory/champions` | `GET /users/champions` |
+| `GET /directory/researchers` | `GET /users/researchers` |
 | `PATCH /partners/{id}` | `PUT /partners/{id}` |
 | `POST /agreements/{id}/actions/{action}` | `POST /agreements/{id}/transition` with `{ "action": "...", "comment": "..." }` |
 | `agreement_type` query value named `type` | `agreement_type` |

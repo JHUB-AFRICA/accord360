@@ -42,6 +42,20 @@ class Settings:
     smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
     resend_api_key: str | None = os.getenv("RESEND_API_KEY") or None
     resend_api_url: str = os.getenv("RESEND_API_URL", "https://api.resend.com/emails")
+    google_drive_enabled: bool = env_bool("GOOGLE_DRIVE_ENABLED", False)
+    google_service_account_json: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or None
+    # Optional Drive folder (shared with the service account as Editor) that
+    # template copies are created in.
+    google_drive_folder_id: str | None = os.getenv("GOOGLE_DRIVE_FOLDER_ID") or None
+    # Demo-only trade-off: a bare service account has no Drive storage quota
+    # of its own, so files.copy fails until a real Shared Drive is available
+    # (see GOOGLE_DOCS_DRAFTING_BRIEF.md's open items). Until then, set this
+    # to a Doc the service account already has Editor on (a hand-made copy of
+    # the master, NOT the master itself) and copy_template() reuses it instead
+    # of calling files.copy. grant_permission/revoke_permission still hit the
+    # real Drive API, so sharing/removal behavior is genuinely exercised.
+    # Remove this once a Shared Drive is set up and real copying works.
+    google_drive_demo_doc_id: str | None = os.getenv("GOOGLE_DRIVE_DEMO_DOC_ID") or None
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
@@ -80,6 +94,10 @@ class Settings:
             raise RuntimeError("RESEND_API_KEY is required when EMAIL_PROVIDER=resend")
         if self.email_enabled and self.email_provider == "smtp" and self.smtp_use_tls and self.smtp_use_ssl:
             raise RuntimeError("SMTP_USE_TLS and SMTP_USE_SSL cannot both be true")
+        if self.google_drive_enabled and not self.google_service_account_json:
+            raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is required when Google Drive integration is enabled")
+        if self.google_drive_demo_doc_id and self.is_production:
+            raise RuntimeError("GOOGLE_DRIVE_DEMO_DOC_ID must not be set in production")
 
 
 settings = Settings()
@@ -91,4 +109,10 @@ def sqlalchemy_database_url(url: str) -> str:
         return url.replace("postgres://", "postgresql+psycopg://", 1)
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+        relative_path = url.removeprefix("sqlite:///")
+        if relative_path.startswith("./"):
+            relative_path = relative_path[2:]
+        backend_root = Path(__file__).resolve().parents[2]
+        return f"sqlite:///{(backend_root / relative_path).resolve()}"
     return url
