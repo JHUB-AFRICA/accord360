@@ -30,16 +30,9 @@ async function request(path, { token, method = "GET", body, form } = {}) {
 
 const accounts = [
   ["researcher", "researcher@accord360.app", "Research@123"],
-  ["approver", "approver@accord360.app", "Approver@123"],
   ["linkages", "linkages@accord360.app", "Linkages@123"],
-  ["director_linkages", "director.linkages@accord360.app", "Director@123"],
   ["legal", "legal@accord360.app", "Legal@123"],
-  ["dvc", "dvc.rpe@accord360.app", "DvcRpe@123"],
-  ["vc_office", "vc.office@accord360.app", "VcOffice@123"],
-  ["me", "me@accord360.app", "Measure@123"],
-  ["executive", "executive@accord360.app", "Executive@123"],
-  ["admin", "admin@accord360.app", "Admin@123"],
-  ["auditor", "auditor@accord360.app", "Auditor@123"]
+  ["me", "me@accord360.app", "Measure@123"]
 ];
 const sessions = {};
 for (const [role, email, password] of accounts) {
@@ -56,17 +49,13 @@ for (const [role, email, password] of accounts) {
   assert(stats.response.status === 200 && stats.payload.kpis, `${role} stats failed`);
 }
 
-const badLogin = await request("/auth/login", { method: "POST", body: { email: "admin@accord360.app", password: "wrong" } });
+const badLogin = await request("/auth/login", { method: "POST", body: { email: "researcher@accord360.app", password: "wrong" } });
 assert(badLogin.response.status === 401, "Invalid login must return 401");
 
-const adminUsers = await request("/users", { token: sessions.admin });
-assert(adminUsers.response.status === 200 && adminUsers.payload.length === 11, "GET /users failed");
+const adminUsers = await request("/users", { token: sessions.linkages });
+assert(adminUsers.response.status === 200 && adminUsers.payload.length === 4, "GET /users failed");
 const researchers = await request("/users/researchers", { token: sessions.linkages });
 assert(researchers.response.status === 200 && researchers.payload.every((item) => item.role === "researcher"), "GET /users/researchers failed");
-const createdUser = await request("/users", { token: sessions.admin, method: "POST", body: { full_name: "Test Researcher", email: "test.researcher@example.com", password: "Password123", role: "researcher", department: "Computing" } });
-assert(createdUser.response.status === 201 && Number.isInteger(createdUser.payload.id), "POST /users failed");
-const disabledUser = await request(`/users/${createdUser.payload.id}`, { token: sessions.admin, method: "PATCH", body: { is_active: false } });
-assert(disabledUser.response.status === 200 && disabledUser.payload.is_active === false, "PATCH /users/:id failed");
 
 const partners = await request("/partners", { token: sessions.researcher });
 assert(partners.response.status === 200 && partners.payload.length > 0, "GET /partners failed");
@@ -93,7 +82,7 @@ assert(uploaded.response.status === 201 && uploaded.payload.original_name === "C
 const downloaded = await request(`/agreements/${createdAgreement.payload.id}/documents/${uploaded.payload.id}/download`, { token: sessions.researcher });
 assert(downloaded.response.status === 200, "Document download failed");
 
-const facultyApproved = await request("/agreements/2/transition", { token: sessions.approver, method: "POST", body: { action: "approve_department", comment: "Academic fit confirmed" } });
+const facultyApproved = await request("/agreements/2/transition", { token: sessions.linkages, method: "POST", body: { action: "approve_department", comment: "Academic fit confirmed" } });
 assert(facultyApproved.response.status === 200 && facultyApproved.payload.stage === "linkages_review", "Faculty transition failed");
 const linkagesApproved = await request("/agreements/2/transition", { token: sessions.linkages, method: "POST", body: { action: "approve_linkages", comment: "Strategic fit confirmed" } });
 assert(linkagesApproved.response.status === 200 && linkagesApproved.payload.status === "linkages_approved", "Linkages approval failed");
@@ -101,13 +90,13 @@ const sentLegal = await request("/agreements/2/transition", { token: sessions.li
 assert(sentLegal.response.status === 200 && sentLegal.payload.stage === "legal_review", "Send Legal failed");
 const legalApproved = await request("/agreements/2/transition", { token: sessions.legal, method: "POST", body: { action: "approve_legal", comment: "Legal draft approved" } });
 assert(legalApproved.response.status === 200 && legalApproved.payload.stage === "dvc_approval", "Legal approval failed");
-const dvcApproved = await request("/agreements/2/transition", { token: sessions.dvc, method: "POST", body: { action: "approve_dvc", comment: "Endorsed" } });
+const dvcApproved = await request("/agreements/2/transition", { token: sessions.legal, method: "POST", body: { action: "approve_dvc", comment: "Endorsed" } });
 assert(dvcApproved.response.status === 200 && dvcApproved.payload.stage === "vc_submission", "DVC endorsement failed");
 const submittedVc = await request("/agreements/2/transition", { token: sessions.linkages, method: "POST", body: { action: "submit_vc", comment: "Submitted to VC Office" } });
 assert(submittedVc.response.status === 200 && submittedVc.payload.status === "awaiting_vc_signature", "VC submission failed");
-const vcSigned = await request("/agreements/2/transition", { token: sessions.vc_office, method: "POST", body: { action: "record_vc_signature", comment: "VC signed" } });
+const vcSigned = await request("/agreements/2/transition", { token: sessions.linkages, method: "POST", body: { action: "record_vc_signature", comment: "VC signed" } });
 assert(vcSigned.response.status === 200 && vcSigned.payload.status === "awaiting_partner_signature", "VC signature transition failed");
-const fullySigned = await request("/agreements/2/transition", { token: sessions.vc_office, method: "POST", body: { action: "mark_signed", comment: "Partner signed" } });
+const fullySigned = await request("/agreements/2/transition", { token: sessions.linkages, method: "POST", body: { action: "mark_signed", comment: "Partner signed" } });
 assert(fullySigned.response.status === 200 && fullySigned.payload.status === "fully_signed", "Partner signature transition failed");
 
 const signedForm = new FormData();
@@ -116,7 +105,7 @@ signedForm.append("document_type", "signed");
 signedForm.append("version", "1.0");
 signedForm.append("confidentiality", "internal");
 signedForm.append("is_official", "true");
-const signedDocument = await request("/agreements/2/documents", { token: sessions.vc_office, method: "POST", form: signedForm });
+const signedDocument = await request("/agreements/2/documents", { token: sessions.linkages, method: "POST", form: signedForm });
 assert(signedDocument.response.status === 201 && signedDocument.payload.is_official, "Official signed document upload failed");
 const activationInfo = await request("/agreements/2", { token: sessions.linkages, method: "PATCH", body: { effective_date: "2026-09-01", expiry_date: "2029-08-31", partner_liaison: "David Mutua" } });
 assert(activationInfo.response.status === 200, "Agreement activation update failed");
@@ -131,17 +120,24 @@ const value = await request("/agreements/2/values", { token: sessions.me, method
 assert(value.response.status === 201 && value.payload.approved === false, "M&E value approval rule failed");
 
 const notifications = await request("/notifications", { token: sessions.linkages });
-assert(notifications.response.status === 200, "GET /notifications failed");
-if (notifications.payload.length) {
-  const read = await request(`/notifications/${notifications.payload[0].id}/read`, { token: sessions.linkages, method: "POST" });
-  assert(read.response.status === 200 && read.payload.is_read, "Notification read failed");
+assert(notifications.response.status === 200 && Array.isArray(notifications.payload.items) && Object.prototype.hasOwnProperty.call(notifications.payload, "next_cursor"), "GET /notifications envelope failed");
+const unreadCount = await request("/notifications/unread-count", { token: sessions.linkages });
+assert(unreadCount.response.status === 200 && Number.isInteger(unreadCount.payload.count), "GET /notifications/unread-count failed");
+if (notifications.payload.items.length) {
+  const notificationId = notifications.payload.items[0].id;
+  const read = await request(`/notifications/${notificationId}/read`, { token: sessions.linkages, method: "POST" });
+  assert(read.response.status === 200 && read.payload.is_read && read.payload.read_at, "Notification read failed");
+  const unread = await request(`/notifications/${notificationId}/unread`, { token: sessions.linkages, method: "POST" });
+  assert(unread.response.status === 200 && !unread.payload.is_read && unread.payload.read_at === null, "Notification unread failed");
+  const readAll = await request("/notifications/read-all", { token: sessions.linkages, method: "POST" });
+  assert(readAll.response.status === 200, "Notification read-all failed");
 }
-const csv = await request("/reports/agreements.csv?stage=active", { token: sessions.executive });
+const csv = await request("/reports/agreements.csv?stage=active", { token: sessions.linkages });
 assert(csv.response.status === 200, "CSV export failed");
-const audit = await request("/reports/audit?limit=100", { token: sessions.auditor });
+const audit = await request("/reports/audit?limit=100", { token: sessions.linkages });
 assert(audit.response.status === 200 && Array.isArray(audit.payload), "Audit report failed");
 
-const unsupported = await request("/dashboard", { token: sessions.admin });
+const unsupported = await request("/dashboard", { token: sessions.linkages });
 assert(unsupported.response.status === 404, "Unsupported /dashboard route must remain unavailable");
 
 console.log("Accord360 exact-contract mock smoke test passed.");

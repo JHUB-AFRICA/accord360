@@ -43,12 +43,32 @@ class TransitionRequest(BaseModel):
 
 class NotificationOut(ORMModel):
     id: int
+    event_type: str
+    category: Literal["action_required", "status_update", "deadline", "system"]
+    severity: Literal["info", "success", "warning", "critical"]
+    level: str
     title: str
     message: str
-    level: str
+    actor_id: int | None
+    actor_name: str
     is_read: bool
+    read_at: datetime | None
+    resolved_at: datetime | None
     agreement_id: int | None
+    agreement_title: str | None
+    action_url: str | None
+    requires_action: bool
+    dedupe_key: str | None
     created_at: datetime
+
+
+class NotificationTimeline(ORMModel):
+    items: list[NotificationOut]
+    next_cursor: str | None = None
+
+
+class UnreadCount(ORMModel):
+    count: int
 
 class AuditLogOut(ORMModel):
     id: int

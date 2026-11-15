@@ -151,7 +151,10 @@ def test_corrections_are_a_plain_transition_and_final_upload_locks_and_notifies(
         linkages = db.get(User, linkages_id)
         agreement.status = "awaiting_signatures"
         db.commit()
-        final = upload_final_signed_document(db, linkages, agreement_id, b"signed", "signed.pdf", None)
+        final = upload_final_signed_document(
+            db, linkages, agreement_id, b"%PDF-1.7\n%%EOF\n", "signed.pdf", None,
+            content_type="application/pdf",
+        )
         assert final.status == "fully_executed"
         assert final.versions[-1].is_final is True
         assert final.expiry_alert_date == agreement.end_date - relativedelta(months=6)
@@ -219,7 +222,7 @@ def test_expiry_check_notifies_once_and_expires_stored_dates():
         db.commit()
 
         result = run_daily_expiry_check(db, today=run_date)
-        assert result == {"ran": True, "approaching": 1, "expired": 1}
+        assert result == {"ran": True, "approaching": 0, "expired": 1}
         assert db.get(Agreement, agreement.id).status == "expired"
         assert db.scalar(select(Notification).where(Notification.agreement_id == agreement.id, Notification.user_id == me.id))
         assert run_daily_expiry_check(db, today=run_date)["ran"] is False
@@ -237,11 +240,11 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
         _mock_drive(monkeypatch)
         monkeypatch.setattr(agreement_service.google_drive, "revoke_permission", lambda doc, pid: revoked.append(pid))
         monkeypatch.setattr(agreement_service.google_drive, "get_modified_time", lambda doc: "2026-11-11T10:00:00.000Z")
-        emails = []
+        grants = []
         inner_grant = agreement_service.google_drive.grant_permission
 
         def recording_grant(doc_id, email, role="writer", notify=True, message=None):
-            emails.append((email, message))
+            grants.append((email, notify, message))
             return inner_grant(doc_id, email, role=role, notify=notify, message=message)
 
         monkeypatch.setattr(agreement_service.google_drive, "grant_permission", recording_grant)
@@ -264,10 +267,10 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
             return transition_agreement(db, user, aid, TransitionRequest(action=action), None)
 
         def emailed(email):
-            return [m for e, m in emails if e == email]
+            return [m for e, notify, m in grants if e == email and notify]
 
         assert act(researcher, "submit").status == "linkages_review"
-        assert any("submitted" in m for m in emailed(linkages.email))
+        assert not emailed(linkages.email)
         assert not emailed(legal.email)
         assert "legal" not in active_roles() and "linkages" in active_roles()
 
@@ -279,16 +282,16 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
 
         assert act(linkages, "send_to_legal").status == "legal_review"
         assert "legal" in active_roles()
-        assert any("legal review" in m for m in emailed(legal.email))
+        assert not emailed(legal.email)
 
         before = len(emailed(linkages.email))
         assert act(legal, "return_to_linkages").status == "linkages_review"
         assert "legal" not in active_roles() and "linkages" in active_roles()
-        # Linkages already had access, yet is re-emailed because the Doc came back.
-        assert len(emailed(linkages.email)) == before + 1 and "returned" in emailed(linkages.email)[-1]
+        # Internal handoffs never re-send Google Drive emails.
+        assert len(emailed(linkages.email)) == before
 
         assert act(linkages, "return_to_researcher").status == "returned_to_researcher"
-        assert any("returned" in m for m in emailed(researcher.email))
+        assert not emailed(researcher.email)
         with pytest.raises(HTTPException):
             act(linkages, "send_to_legal")
         assert act(researcher, "resubmit").status == "linkages_review"
@@ -296,7 +299,7 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
         act(linkages, "send_to_legal")
         approved = act(legal, "approve")
         assert approved.status == "approved_for_signing"
-        assert "APPROVED" in emailed(linkages.email)[-1]
+        assert not emailed(linkages.email)
         assert "legal" not in active_roles()
         assert approved.approved_by_name == legal.full_name and approved.approved_at is not None
         assert "start_signing" in agreement_service.available_actions(linkages, db.get(Agreement, aid))

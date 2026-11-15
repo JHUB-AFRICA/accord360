@@ -27,6 +27,11 @@ All real backend calls are implemented in `src/lib/backend.js`. UI pages import 
 | Researcher progress update | `POST /agreements/{agreement_id}/progress-updates` |
 | M&E progress read view | `GET /progress-updates` |
 | Generated reports | `GET /reports/export.pdf`, `GET /reports/export.xlsx`, `POST /reports/ai-summary` |
+| Google Drive access health | `GET /agreements/{id}/drive-access` |
+| Google Drive access repair | `POST /agreements/{id}/drive-access/reconcile` (Linkages only) |
+| Notification timeline | `GET /notifications` with cursor, unread, and category filters |
+| Notification unread count | `GET /notifications/unread-count` |
+| Notification read state | `POST /notifications/{id}/read`, `POST /notifications/{id}/unread`, `POST /notifications/read-all` |
 
 ## Agreement type values
 
@@ -95,6 +100,20 @@ Where a legacy document endpoint remains available, the frontend sends
 
 It does not set `Content-Type` manually, allowing the browser to supply the multipart boundary.
 
+## Physical signing flow
+
+After Legal approval, Linkages may download the unchanged signing copy with:
+
+- `GET /agreements/{agreement_id}/signing-copy?format=pdf`
+- `GET /agreements/{agreement_id}/signing-copy?format=docx`
+
+The authenticated backend verifies the Google Doc has not changed since Legal's
+approval. Linkages uploads the physically signed file through
+`POST /agreements/{agreement_id}/versions`; only PDF and DOCX files up to 25 MiB
+are accepted. The resulting immutable version is downloaded through
+`GET /agreements/{agreement_id}/versions/{version_id}/download` by Linkages,
+Legal, M&E, and the owning Researcher.
+
 ## Unsupported backend capabilities
 
 No production request is sent to:
@@ -104,7 +123,6 @@ No production request is sent to:
 - `/auth/forgot-password`
 - `/auth/register-partner`
 - `/me/reports`
-- notification resend routes
 - `/agreements/{id}/actions/{action}`
 
 Correction records are implemented through `GET /corrections`,

@@ -485,6 +485,34 @@ Requires permission to download the specific document. Returns the file as a
 download response. The frontend should send the bearer token when requesting
 this URL.
 
+### `GET /agreements/{agreement_id}/drive-access`
+
+Requires Linkages access to the agreement. Performs a read-only health check
+of the live Google Doc permissions and returns whether direct managed access
+is synchronized, whether inherited permissions are present, and any missing,
+stale, or incorrectly-roled managed users.
+
+### `POST /agreements/{agreement_id}/drive-access/reconcile`
+
+Requires Linkages access. Reconciles direct Google Drive permissions against
+the agreement's current workflow status. Required users are added before
+stale managed users are removed, so the operation is safe to retry after a
+transient Drive failure. Inherited or unrelated permissions are preserved.
+
+### Physical signing endpoints
+
+After Legal approval, Linkages can download an unchanged signing copy with
+`GET /agreements/{agreement_id}/signing-copy?format=pdf` or
+`GET /agreements/{agreement_id}/signing-copy?format=docx`. The backend compares
+the Google Doc's current modification time with the Legal approval snapshot and
+returns `409` if the document changed.
+
+Linkages uploads the physically signed agreement with
+`POST /agreements/{agreement_id}/versions`. Only valid PDF and DOCX files up to
+25 MiB are accepted. The resulting immutable version is downloaded with
+`GET /agreements/{agreement_id}/versions/{version_id}/download` by Linkages,
+Legal, M&E, and the owning Researcher.
+
 ## 9. Monitoring and evaluation
 
 ### `POST /agreements/{agreement_id}/progress-updates`
@@ -610,13 +638,29 @@ and/or `/dashboard/stats`, and map their response fields correctly.
 
 ### `GET /notifications`
 
-Requires a valid token. Returns the authenticated user’s latest 50
-notifications as `NotificationOut[]`.
+Requires a valid token. Returns the authenticated user’s notifications in a
+cursor-paginated `{ items, next_cursor }` envelope. Optional query parameters
+are `limit` (1–100, default 50), `cursor`, `unread_only=true`, and `category`.
 
 ### `POST /notifications/{notification_id}/read`
 
 Requires ownership of the notification. Marks it as read and returns the
 updated `NotificationOut`.
+
+### `GET /notifications/unread-count`
+
+Requires a valid token. Returns `{ "count": number }` for the authenticated
+user.
+
+### `POST /notifications/{notification_id}/unread`
+
+Requires ownership of the notification. Marks it unread and returns the
+updated `NotificationOut`.
+
+### `POST /notifications/read-all`
+
+Requires a valid token. Marks all of the authenticated user’s notifications
+read and returns `{ "updated": number }`.
 
 ## 12. Reports and audit
 

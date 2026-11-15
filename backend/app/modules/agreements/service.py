@@ -14,8 +14,12 @@ generation engine are Phase 2/3 work and are intentionally not built here.
 from __future__ import annotations
 
 from pathlib import Path
+from io import BytesIO
+import re
+import zipfile
 from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 from uuid import uuid4
 from dateutil.relativedelta import relativedelta
@@ -31,6 +35,7 @@ from ...timeutils import utc_now
 from .models import Agreement, AgreementDrivePermission, AgreementVersion, ProgressUpdate
 from app.integrations import google_drive
 from app.integrations.google_drive import DriveError
+from app.utils import storage
 from app.modules.partners.models import Partner
 from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
@@ -38,7 +43,7 @@ from app.modules.templates import service as template_service
 from app.modules.templates.models import Template
 from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, ProgressUpdateCreate
 from app.modules.workflows.schemas import TransitionRequest
-from ..workflows.service import notify_roles, notify_user
+from ..workflows.service import notify_roles, notify_user, resolve_notifications
 
 __all__ = [
     "notify_roles",
@@ -51,10 +56,19 @@ __all__ = [
     "transition_agreement",
     "add_agreement_version",
     "upload_final_signed_document",
+    "export_signing_copy",
     "available_actions",
     "create_progress_update",
     "list_progress_updates",
+    "desired_drive_access",
+    "inspect_drive_access",
+    "reconcile_drive_access",
 ]
+
+MAX_SIGNED_FILE_SIZE = 25 * 1024 * 1024
+PDF_MIME = "application/pdf"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+SIGNING_EXPORTS = {"pdf": (PDF_MIME, ".pdf"), "docx": (DOCX_MIME, ".docx")}
 
 LOAD_OPTIONS = (
     selectinload(Agreement.partner),
@@ -142,14 +156,17 @@ def _grant_drive_access(
     """Grant Drive access and record it — GOOGLE_DOCS_DRAFTING_BRIEF.md
     Section 4. Every grant MUST be recorded here so revocation (below) can
     go through the stored permission_id instead of a permissions.list call.
-    Idempotent: an existing active grant for the same role and email is kept
-    (and, when a message is given, the person is just re-emailed).
+    Idempotent: an existing active grant for the same role and email is kept.
+    Only the initial external-partner grant sends Google's sharing email;
+    internal workflow handoffs are delivered by in-app notifications.
     """
     if any(g.email.lower() == email.lower() for g in _active_grants(db, agreement, role=role)):
-        if message:
-            google_drive.send_notification(agreement.template_copy_doc_id, email, message, role=drive_role)
         return
-    permission_id = google_drive.grant_permission(agreement.template_copy_doc_id, email, role=drive_role, message=message)
+    notify = role == "partner"
+    permission_id = google_drive.grant_permission(
+        agreement.template_copy_doc_id, email, role=drive_role,
+        notify=notify, message=message if notify else None,
+    )
     db.add(
         AgreementDrivePermission(
             agreement_id=agreement.id,
@@ -194,48 +211,241 @@ def _grant_staff(db: Session, agreement: Agreement, role: str, message: str | No
         _grant_drive_access(db, agreement, role=role, email=email, message=message)
 
 
-def _email_via_drive(agreement: Agreement, emails: list[str], message: str) -> None:
-    """Hand-off email through Google's own share notification (best-effort)."""
+def desired_drive_access(db: Session, agreement: Agreement, status: str | None = None) -> list[dict[str, str]]:
+    """Return the direct Drive access required for an agreement status.
+
+    This is the single policy used by reconciliation.  A person's email is
+    normalized for comparison, while the original casing is retained for a
+    newly-created permission.  Multiple roles may intentionally resolve to the
+    same email; Drive receives one permission and local records retain the
+    role-specific reason for that access.
+    """
+    status = status or agreement.status
+    rows: list[dict[str, str]] = []
+    drive_role = "reader" if status in {"awaiting_signatures", "fully_executed", "expired", "archived"} else "writer"
+
+    researcher = agreement.researcher or db.get(User, agreement.researcher_id)
+    if researcher and researcher.email:
+        rows.append({"role": "researcher", "email": researcher.email, "drive_role": drive_role})
+
+    partner = agreement.partner or db.get(Partner, agreement.partner_id)
+    if status == "draft_generated" and partner and partner.contact_email:
+        rows.append({"role": "partner", "email": partner.contact_email, "drive_role": drive_role})
+
+    if status in {"linkages_review", "legal_review", "returned_to_researcher", "approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"}:
+        rows.extend({"role": "linkages", "email": email, "drive_role": drive_role} for email in _staff_emails(db, "linkages"))
+    if status == "legal_review":
+        rows.extend({"role": "legal", "email": email, "drive_role": drive_role} for email in _staff_emails(db, "legal"))
+    return rows
+
+
+def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str | None = None) -> dict:
+    """Make direct Drive permissions match the status-driven access policy.
+
+    The operation is safe to retry: it adopts matching permissions already in
+    Drive, adds missing access before revoking stale access, and records the
+    permission IDs returned by Drive.  Unrelated and inherited permissions are
+    preserved.  Drive errors are allowed to propagate so callers can leave the
+    workflow status unchanged and return a retryable 502 response.
+    """
     if not agreement.template_copy_doc_id:
-        return
-    for email in emails:
-        google_drive.send_notification(agreement.template_copy_doc_id, email, message)
+        raise DriveError("Agreement has no Google Drive document to reconcile")
+    target_status = target_status or agreement.status
+    desired = desired_drive_access(db, agreement, target_status)
+    desired_by_key = {(item["role"], item["email"].strip().lower()): item for item in desired}
+    desired_emails = {item["email"].strip().lower() for item in desired}
+    try:
+        current = google_drive.list_permissions(agreement.template_copy_doc_id)
+    except DriveError:
+        # Unit tests and local prototype mode often use the in-memory Drive
+        # grant stubs with Drive disabled. Production always lists live Drive
+        # permissions; this fallback keeps the local workflow usable while
+        # still surfacing errors when the integration is enabled.
+        if settings.google_drive_enabled and settings.environment != "test":
+            raise
+        current = [
+            {"id": grant.permission_id, "type": "user", "emailAddress": grant.email, "role": "writer"}
+            for grant in _active_grants(db, agreement, role="researcher")
+            + _active_grants(db, agreement, role="partner")
+            + _active_grants(db, agreement, role="linkages")
+            + _active_grants(db, agreement, role="legal")
+        ]
+
+    def is_inherited(permission: dict | None) -> bool:
+        if not permission:
+            return False
+        details = permission.get("permissionDetails") or []
+        return any(detail.get("inherited") or detail.get("inheritedFrom") for detail in details)
+
+    def direct_for_email(email: str) -> dict | None:
+        normalized = email.strip().lower()
+        for permission in current:
+            if permission.get("type") != "user" or not permission.get("emailAddress"):
+                continue
+            if permission["emailAddress"].strip().lower() != normalized:
+                continue
+            details = permission.get("permissionDetails") or []
+            if any(detail.get("inherited") or detail.get("inheritedFrom") for detail in details):
+                continue
+            return permission
+        return None
+
+    result = {
+        "status": target_status,
+        "added": [],
+        "adopted": [],
+        "upgraded": [],
+        "removed": [],
+        "unchanged": [],
+        "inherited_permissions_present": any(
+            any(detail.get("inherited") or detail.get("inheritedFrom") for detail in (permission.get("permissionDetails") or []))
+            for permission in current
+        ),
+        "needs_repair": False,
+    }
+
+    # Add/adopt first.  This ordering guarantees that a failed hand-off never
+    # removes the only active participant who can continue the workflow.
+    for item in desired:
+        role = item["role"]
+        email = item["email"].strip()
+        key = (role, email.lower())
+        permission = direct_for_email(email)
+        if permission is None:
+            permission_id = google_drive.grant_permission(
+                agreement.template_copy_doc_id,
+                email,
+                role=item.get("drive_role", "writer"),
+                notify=role == "partner",
+            )
+            permission = {"id": permission_id, "type": "user", "emailAddress": email, "role": item.get("drive_role", "writer")}
+            current.append(permission)
+            result["added"].append(email)
+        else:
+            permission_id = permission.get("id")
+            expected_drive_role = item.get("drive_role", "writer")
+            if permission.get("role") != expected_drive_role and permission_id:
+                google_drive.update_permission(
+                    agreement.template_copy_doc_id,
+                    permission_id,
+                    role=expected_drive_role,
+                )
+                permission["role"] = expected_drive_role
+                result["upgraded"].append(email)
+            existing_keys = {
+                (grant.role, grant.email.strip().lower())
+                for grant in _active_grants(db, agreement, role=role)
+            }
+            if key in existing_keys:
+                result["unchanged"].append(email)
+            else:
+                result["adopted"].append(email)
+
+        active = _active_grants(db, agreement, role=role)
+        matching = [grant for grant in active if grant.email.strip().lower() == email.lower()]
+        if matching:
+            matching[0].permission_id = permission_id
+            for duplicate in matching[1:]:
+                duplicate.revoked_at = utc_now()
+        else:
+            db.add(AgreementDrivePermission(agreement_id=agreement.id, role=role, email=email, permission_id=permission_id))
+        db.flush()
+
+    # Remove stale managed grants only after every required grant exists.  A
+    # shared email that still has another desired role keeps its Drive access.
+    active_all = list(db.scalars(select(AgreementDrivePermission).where(
+        AgreementDrivePermission.agreement_id == agreement.id,
+        AgreementDrivePermission.revoked_at.is_(None),
+    )).all())
+    for grant in active_all:
+        key = (grant.role, grant.email.strip().lower())
+        if key in desired_by_key:
+            continue
+        grant.revoked_at = utc_now()
+        if grant.email.strip().lower() in desired_emails:
+            # Same person remains needed for another role; retain Drive access.
+            db.flush()
+            continue
+        permission = next((item for item in current if item.get("id") == grant.permission_id), None)
+        inherited = is_inherited(permission)
+        if permission and not inherited:
+            google_drive.revoke_permission(agreement.template_copy_doc_id, grant.permission_id)
+            result["removed"].append(grant.email)
+        elif permission is None:
+            # Drive already converged; the local row was stale.
+            result["removed"].append(grant.email)
+        db.flush()
+
+    result["changed"] = bool(result["added"] or result["removed"] or result["adopted"] or result["upgraded"])
+    # A successful reconciliation has already repaired any discrepancy.  The
+    # flags describe the post-operation state, not whether work was performed.
+    result["needs_repair"] = False
+    result["synchronized"] = True
+    result["checked_at"] = utc_now().isoformat()
+    return result
 
 
-def _handoff_message(agreement: Agreement, text: str, actor: User, comment: str | None) -> str:
-    message = f"Accord 360 — {agreement.title}\n{text}"
-    if comment:
-        message += f"\nNote from {actor.full_name}: {comment}"
-    return message
+def inspect_drive_access(db: Session, agreement: Agreement) -> dict:
+    """Read-only access health check used by the Linkages repair UI."""
+    if not agreement.template_copy_doc_id:
+        raise DriveError("Agreement has no Google Drive document to inspect")
+    desired = desired_drive_access(db, agreement)
+    desired_emails = {item["email"].strip().lower() for item in desired}
+    desired_keys = {(item["role"], item["email"].strip().lower()) for item in desired}
+    current = google_drive.list_permissions(agreement.template_copy_doc_id)
+    direct = {
+        (item.get("emailAddress") or "").strip().lower(): item
+        for item in current
+        if item.get("type") == "user"
+        and item.get("emailAddress")
+        and not any(detail.get("inherited") for detail in (item.get("permissionDetails") or []))
+    }
+    missing = sorted(email for email in desired_emails if email not in direct)
+    expected_role = "reader" if agreement.status in {"awaiting_signatures", "fully_executed", "expired", "archived"} else "writer"
+    wrong_role = sorted(email for email in desired_emails if email in direct and direct[email].get("role") != expected_role)
+    active = list(db.scalars(select(AgreementDrivePermission).where(
+        AgreementDrivePermission.agreement_id == agreement.id,
+        AgreementDrivePermission.revoked_at.is_(None),
+    )).all())
+    managed_keys = {(grant.role, grant.email.strip().lower()) for grant in active}
+    stale = sorted({grant.email.strip().lower() for grant in active if (grant.role, grant.email.strip().lower()) not in desired_keys})
+    unrecorded = sorted(email for email in desired_emails if email in direct and not any(
+        (item["role"], email) in managed_keys for item in desired if item["email"].strip().lower() == email
+    ))
+    inherited = any(
+        any(detail.get("inherited") for detail in (item.get("permissionDetails") or []))
+        for item in current
+    )
+    return {
+        "status": agreement.status,
+        "synchronized": not (missing or wrong_role or stale),
+        "needs_repair": bool(missing or wrong_role or stale or unrecorded),
+        "inherited_permissions_present": inherited,
+        "missing": missing,
+        "wrong_role": wrong_role,
+        "stale": stale,
+        "unrecorded": unrecorded,
+        "checked_at": utc_now().isoformat(),
+    }
 
 
 def _apply_drive_side_effects(db: Session, agreement: Agreement, action: str, actor: User, comment: str | None = None) -> None:
-    """Drive access changes and hand-off emails for a transition. The
-    researcher keeps edit access throughout. Hand-off emails are Google's
-    share notification with a custom message, sent to whoever the Doc just
-    came to — see google_drive.send_notification.
-    """
-
-    def msg(text: str) -> str:
-        return _handoff_message(agreement, text, actor, comment)
+    """Apply Drive permission changes only; workflow handoffs are in-app."""
 
     try:
         if action == "submit":
             # Cut the external partner off immediately, then bring in Linkages.
             _revoke_drive_access(db, agreement, role="partner")
-            _grant_staff(db, agreement, "linkages", msg(f"{actor.full_name} submitted this agreement for your review."))
+            _grant_staff(db, agreement, "linkages")
         elif action == "send_to_legal":
-            _grant_staff(db, agreement, "legal", msg("Linkages sent you this agreement for legal review. Comment or edit in the Doc."))
+            _grant_staff(db, agreement, "legal")
         elif action == "return_to_linkages":
             _revoke_drive_access(db, agreement, role="legal")
-            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg("Legal returned this agreement to Linkages. See the comments in the Doc."))
         elif action == "approve":
             _revoke_drive_access(db, agreement, role="legal")
-            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg("APPROVED by Legal — this agreement is ready to start signing."))
-        elif action == "return_to_researcher":
-            _email_via_drive(agreement, [agreement.researcher.email], msg("Linkages returned this agreement to you. See the comments in the Doc, then resubmit."))
-        elif action == "resubmit":
-            _email_via_drive(agreement, _staff_emails(db, "linkages"), msg(f"{actor.full_name} resubmitted this agreement after making changes."))
+        elif action in {"return_to_researcher", "resubmit"}:
+            # No Drive permission change; the workflow handoff is in-app.
+            pass
     except DriveError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -337,13 +547,20 @@ def create_agreement(db: Session, user: User, payload: AgreementCreate, request:
     # researcher + the external partner writer access on the copy. No
     # AgreementVersion is created here — drafting-stage content lives only in
     # the live Google Doc; Accord 360 stores just the access grants below.
+    doc_id: str | None = None
     try:
         doc_id = google_drive.copy_template(template.master_doc_id, name=f"{payload.title} — {partner.name}")
         agreement.template_copy_doc_id = doc_id
         agreement.template_copy_url = google_drive.doc_url(doc_id)
-        _grant_drive_access(db, agreement, role="researcher", email=user.email)
-        _grant_drive_access(db, agreement, role="partner", email=partner.contact_email)
+        reconcile_drive_access(db, agreement, target_status="draft_generated")
     except DriveError as exc:
+        if doc_id:
+            try:
+                google_drive.trash_file(doc_id)
+            except DriveError:
+                # Preserve the original error; the cleanup failure is logged
+                # by the wrapper so an operator can remove the orphaned copy.
+                pass
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     audit(db, user, "create_agreement", "agreement", agreement.id, request, new_value=agreement.title)
@@ -367,7 +584,7 @@ def get_agreement_detail(db: Session, user: User, agreement_id: int) -> Agreemen
         raise HTTPException(status_code=404, detail="Agreement not found")
     result = AgreementDetailOut.model_validate(agreement)
     result.available_actions = available_actions(user, agreement)
-    if agreement.status == "approved_for_signing" and agreement.approved_doc_modified_at and agreement.template_copy_doc_id:
+    if agreement.status in {"approved_for_signing", "awaiting_signatures"} and agreement.approved_doc_modified_at and agreement.template_copy_doc_id:
         current = google_drive.get_modified_time(agreement.template_copy_doc_id)
         if current:
             result.doc_modified_after_approval = current > agreement.approved_doc_modified_at
@@ -400,7 +617,10 @@ def update_agreement(db: Session, user: User, agreement_id: int, payload: Agreem
 
 
 def transition_agreement(db: Session, user: User, agreement_id: int, payload: TransitionRequest, request: Request) -> AgreementDetailOut:
-    agreement = db.get(Agreement, agreement_id)
+    # Serialize workflow mutations for the same agreement on databases that
+    # support row-level locks. SQLite (used by the prototype/tests) safely
+    # degrades this to its normal transaction locking.
+    agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).with_for_update())
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
     ensure_can_view_agreement(user, agreement)
@@ -420,8 +640,17 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     if payload.action in {"submit", "resubmit"} and agreement.researcher_id != user.id:
         raise HTTPException(status_code=403, detail="Only the agreement's Researcher can submit it")
 
+    if payload.action == "start_signing" and agreement.template_copy_doc_id:
+        _ensure_signing_copy_unchanged(agreement)
+
     from_status = agreement.status
-    _apply_drive_side_effects(db, agreement, payload.action, user, (payload.comment or "").strip() or None)
+    # Reconcile Drive before changing local status. If Drive fails, the
+    # exception leaves the status untouched and the action can be retried.
+    if agreement.template_copy_doc_id:
+        try:
+            reconcile_drive_access(db, agreement, target_status=to_status)
+        except DriveError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.action == "approve":
         agreement.approved_at = utc_now()
         agreement.approved_by_name = user.full_name
@@ -444,28 +673,59 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     )
     audit(db, user, f"transition_{payload.action}", "agreement", agreement.id, request, old_value=from_status, new_value=to_status)
 
-    if to_status == "returned_to_researcher":
-        notify_user(
-            db,
-            agreement.researcher,
-            "Returned to you",
-            f"{agreement.title}: Linkages returned the agreement to you. See the comments in the Google Doc.",
-            agreement.id,
-        )
-    notify_roles(
-        db,
-        _transition_recipient_roles(to_status),
-        "Approved by Legal" if payload.action == "approve" else "Workflow update",
-        (
-            f"{agreement.title}: Legal approved this agreement ({user.full_name}). It is ready to start signing."
-            if payload.action == "approve"
-            else f"{agreement.title}: {payload.action.replace('_', ' ')} by {user.full_name}."
-        ),
-        agreement.id,
-        level="success" if payload.action == "approve" else "info",
+    event_by_action = {
+        "submit": ("agreement.submitted", "Agreement submitted for Linkages review", "action_required", "info", True, {"linkages"}),
+        "send_to_legal": ("agreement.sent_to_legal", "Legal review required", "action_required", "info", True, {"legal"}),
+        "return_to_linkages": ("agreement.returned_to_linkages", "Agreement returned to Linkages", "action_required", "warning", True, {"linkages"}),
+        "return_to_researcher": ("agreement.returned_to_researcher", "Agreement returned for corrections", "action_required", "warning", True, set()),
+        "resubmit": ("agreement.resubmitted", "Agreement resubmitted for Linkages review", "action_required", "info", True, {"linkages"}),
+        "approve": ("agreement.approved", "Agreement approved — begin signing", "action_required", "success", True, {"linkages"}),
+        "start_signing": ("agreement.signing_started", "Signing has started", "status_update", "info", False, set()),
+        "renew": ("agreement.renewed", "Agreement renewed", "status_update", "success", False, {"linkages"}),
+        "archive": ("agreement.archived", "Agreement archived", "status_update", "info", False, {"me"}),
+    }
+    event_type, title, category, severity, requires_action, roles = event_by_action[payload.action]
+    message = f"{agreement.title}: {user.full_name} completed '{payload.action.replace('_', ' ')}'."
+    if requires_action:
+        message += " Open the agreement and complete the next review step."
+    if payload.action == "return_to_researcher":
+        notify_user(db, agreement.researcher, title, message, agreement.id, severity,
+                    event_type=event_type, category=category, severity=severity, actor=user,
+                    requires_action=True, dedupe_key=f"{event_type}:{agreement.id}")
+    elif payload.action == "start_signing":
+        notify_user(db, agreement.researcher, title, message, agreement.id, severity,
+                    event_type=event_type, category=category, severity=severity, actor=user,
+                    requires_action=False, dedupe_key=f"{event_type}:{agreement.id}")
+    elif payload.action == "archive":
+        for recipient in db.scalars(select(User).where(User.role == "me", User.is_active.is_(True), User.id != user.id)).all():
+            notify_user(db, recipient, title, message, agreement.id, severity,
+                        event_type=event_type, category=category, severity=severity, actor=user,
+                        requires_action=False, dedupe_key=f"{event_type}:{agreement.id}:{recipient.id}")
+    else:
+        notify_roles(db, roles, title, message, agreement.id, severity,
+                     event_type=event_type, category=category, severity=severity, actor=user,
+                     requires_action=requires_action, dedupe_key=f"{event_type}:{agreement.id}")
+    # Completing a transition resolves the prior open task for this agreement.
+    resolve_notifications(
+        db, agreement_id=agreement.id,
+        event_types={
+            "agreement.submitted", "agreement.sent_to_legal", "agreement.returned_to_linkages",
+            "agreement.returned_to_researcher", "agreement.resubmitted", "agreement.approved",
+        } - {event_type},
     )
     db.commit()
     return get_agreement_detail(db, user, agreement.id)
+
+
+def _ensure_signing_copy_unchanged(agreement: Agreement) -> None:
+    """Require a readable Drive approval snapshot before signing can begin."""
+    if not agreement.approved_doc_modified_at:
+        raise HTTPException(status_code=409, detail="Legal approval timestamp is unavailable; send this agreement through Legal review again before signing.")
+    current = google_drive.get_modified_time(agreement.template_copy_doc_id)
+    if not current:
+        raise HTTPException(status_code=502, detail="Could not verify the Google Doc after Legal approval. Please retry.")
+    if current > agreement.approved_doc_modified_at:
+        raise HTTPException(status_code=409, detail="The Google Doc changed after Legal approval. Send it through Legal review again before signing.")
 
 
 def add_agreement_version(
@@ -475,6 +735,9 @@ def add_agreement_version(
     file: str,
     uploaded_by: User,
     is_final: bool = False,
+    original_filename: str | None = None,
+    content_type: str | None = None,
+    file_size: int | None = None,
 ) -> AgreementVersion:
     """Create a new AgreementVersion, enforcing the two Section 2.6 invariants:
 
@@ -494,6 +757,9 @@ def add_agreement_version(
     version = AgreementVersion(
         agreement_id=agreement.id,
         file=file,
+        original_filename=original_filename,
+        content_type=content_type,
+        file_size=file_size,
         uploaded_by_id=uploaded_by.id,
         status_at_time=agreement.status,
         is_final=is_final,
@@ -510,6 +776,7 @@ def upload_final_signed_document(
     content: bytes,
     original_name: str | None,
     request: Request,
+    content_type: str | None = None,
 ) -> AgreementDetailOut:
     """Store the physically-signed scan Linkages uploads after signing.
 
@@ -530,23 +797,72 @@ def upload_final_signed_document(
         raise HTTPException(status_code=409, detail="This agreement is not awaiting a signed document upload")
     if not content:
         raise HTTPException(status_code=400, detail="The signed agreement file is required")
+    if len(content) > MAX_SIGNED_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="The signed agreement file must be 25 MiB or smaller")
 
-    suffix = (Path(original_name or "signed-agreement.pdf").suffix or ".pdf").lower()
+    safe_original = Path(original_name or "").name.strip() or "signed-agreement.pdf"
+    suffix = Path(safe_original).suffix.lower()
+    if suffix not in {".pdf", ".docx"}:
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX signed agreements are accepted")
+    if suffix == ".pdf":
+        if not content.startswith(b"%PDF-"):
+            raise HTTPException(status_code=400, detail="The uploaded PDF is not a valid PDF file")
+        expected_type = PDF_MIME
+    else:
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                names = set(archive.namelist())
+                if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                    raise ValueError
+        except (zipfile.BadZipFile, ValueError):
+            raise HTTPException(status_code=400, detail="The uploaded DOCX is not a valid Word document") from None
+        expected_type = DOCX_MIME
+    supplied_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if supplied_type and supplied_type not in {expected_type, "application/octet-stream", "binary/octet-stream"}:
+        raise HTTPException(status_code=400, detail="The uploaded file type does not match its extension")
+
     stored_name = f"agreement-versions/{uuid4().hex}{suffix}"
     target = settings.upload_path / stored_name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(content)
+    try:
+        if settings.storage_enabled:
+            storage.upload_file(BytesIO(content), stored_name, expected_type)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not store the signed agreement file; please retry") from exc
 
     from_status = agreement.status
-    add_agreement_version(db, agreement, file=stored_name, uploaded_by=user, is_final=True)
+    try:
+        add_agreement_version(
+            db, agreement, file=stored_name, uploaded_by=user, is_final=True,
+            original_filename=safe_original[:255], content_type=expected_type, file_size=len(content),
+        )
+    except ValueError:
+        db.rollback()
+        try:
+            if settings.storage_enabled:
+                storage.delete_file(stored_name)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            pass
+        raise HTTPException(status_code=409, detail="This agreement already has a final signed document")
+    except SQLAlchemyError as exc:
+        db.rollback()
+        try:
+            if settings.storage_enabled:
+                storage.delete_file(stored_name)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="The signed agreement could not be recorded") from exc
     agreement.status = "fully_executed"
     # This is the only runtime write site for expiry_alert_date. Renewal
     # semantics remain the explicit Phase 1 TODO and are not inferred here.
     agreement.expiry_alert_date = agreement.end_date - relativedelta(months=6)
     agreement.expiry_notified = False
-    notification_roles = {"legal", "me"}
-    notification_title = "Agreement fully executed"
-    notification_message = f"{agreement.title} has been fully executed."
     db.add(
         WorkflowEvent(
             agreement_id=agreement.id,
@@ -558,14 +874,57 @@ def upload_final_signed_document(
         )
     )
     audit(db, user, "upload_final_signed_document", "agreement", agreement.id, request, old_value=from_status, new_value=agreement.status)
-    notify_roles(db, notification_roles, notification_title, notification_message, agreement.id)
+    notification_title = "Agreement fully executed"
+    notification_message = f"{agreement.title}: {user.full_name} uploaded the final signed scan."
+    notify_roles(
+        db, {"legal", "me"}, notification_title, notification_message, agreement.id, "success",
+        event_type="agreement.fully_executed", category="status_update", severity="success", actor=user,
+        requires_action=False, dedupe_key=f"agreement.fully_executed:{agreement.id}",
+    )
     researcher = db.get(User, agreement.researcher_id)
     if researcher:
-        from ..workflows.service import notify_user
-
-        notify_user(db, researcher, notification_title, notification_message, agreement.id)
-    db.commit()
+        notify_user(db, researcher, notification_title, notification_message, agreement.id, "success",
+                    event_type="agreement.fully_executed", category="status_update", severity="success", actor=user,
+                    requires_action=False, dedupe_key=f"agreement.fully_executed:{agreement.id}:researcher")
+    resolve_notifications(db, agreement_id=agreement.id, event_types={"agreement.signing_started", "agreement.approved"})
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        try:
+            if settings.storage_enabled:
+                storage.delete_file(stored_name)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="The signed agreement could not be recorded") from exc
     return get_agreement_detail(db, user, agreement.id)
+
+
+def export_signing_copy(db: Session, user: User, agreement_id: int, output_format: str) -> tuple[bytes, str, str]:
+    """Export the unchanged, Legal-approved Google Doc for physical signing."""
+    agreement = db.get(Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    ensure_can_view_agreement(user, agreement)
+    if user.role != "linkages":
+        raise HTTPException(status_code=403, detail="Only Linkages can export the signing copy")
+    if agreement.status not in {"approved_for_signing", "awaiting_signatures"}:
+        raise HTTPException(status_code=409, detail="A signing copy is only available after Legal approval")
+    if not agreement.template_copy_doc_id:
+        raise HTTPException(status_code=409, detail="This agreement has no linked Google Doc")
+    _ensure_signing_copy_unchanged(agreement)
+    export_spec = SIGNING_EXPORTS.get(output_format.lower())
+    if not export_spec:
+        raise HTTPException(status_code=400, detail="format must be pdf or docx")
+    mime_type, suffix = export_spec
+    try:
+        payload = google_drive.export_file(agreement.template_copy_doc_id, mime_type)
+    except DriveError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", agreement.title).strip("-._") or "agreement"
+    return payload, mime_type, f"{name}-signing-copy{suffix}"
 
 
 

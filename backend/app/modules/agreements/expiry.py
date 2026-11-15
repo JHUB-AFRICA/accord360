@@ -12,7 +12,7 @@ from app.db.session import SessionLocal
 from app.deps import audit
 from app.modules.configuration.models import ConfigurationValue
 from app.modules.agreements.models import Agreement
-from app.modules.workflows.service import notify_roles
+from app.modules.workflows.service import notify_roles, resolve_notifications
 
 logger = logging.getLogger("accord360.expiry")
 LOCK_KEY = "system.expiry_scheduler.last_run"
@@ -49,11 +49,18 @@ def run_daily_expiry_check(db: Session | None = None, *, today: date | None = No
             select(Agreement).where(
                 Agreement.expiry_alert_date.is_not(None),
                 Agreement.expiry_alert_date <= run_date,
+                Agreement.end_date >= run_date,
+                Agreement.status == "fully_executed",
                 Agreement.expiry_notified.is_(False),
             )
         ).all()
         for agreement in approaching:
-            notify_roles(session, {"me"}, "Agreement approaching expiry", f"{agreement.title} is approaching its expiry date.", agreement.id)
+            notify_roles(
+                session, {"me"}, "Agreement approaching expiry",
+                f"{agreement.title}: System reports that this agreement is approaching expiry. Review renewal options.", agreement.id,
+                "warning", event_type="agreement.expiry_approaching", category="deadline", severity="warning",
+                requires_action=True, dedupe_key=f"agreement.expiry_approaching:{agreement.id}",
+            )
             agreement.expiry_notified = True
 
         expired = session.scalars(
@@ -66,7 +73,13 @@ def run_daily_expiry_check(db: Session | None = None, *, today: date | None = No
             old_status = agreement.status
             agreement.status = "expired"
             audit(session, None, "expire_agreement", "agreement", agreement.id, old_value=old_status, new_value=agreement.status)
-            notify_roles(session, {"me"}, "Agreement expired", f"{agreement.title} has expired.", agreement.id)
+            notify_roles(
+                session, {"me"}, "Agreement expired",
+                f"{agreement.title}: System reports that this agreement has expired. Renew or archive it.", agreement.id,
+                "critical", event_type="agreement.expired", category="deadline", severity="critical",
+                requires_action=True, dedupe_key=f"agreement.expired:{agreement.id}",
+            )
+            resolve_notifications(session, agreement_id=agreement.id, event_types={"agreement.expiry_approaching"})
 
         session.commit()
         logger.info("expiry_check_complete date=%s approaching=%s expired=%s", run_date.isoformat(), len(approaching), len(expired))

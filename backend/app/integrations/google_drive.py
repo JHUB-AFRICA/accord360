@@ -140,6 +140,71 @@ def revoke_permission(doc_id: str, permission_id: str) -> None:
         raise DriveError(f"Could not revoke permission {permission_id!r} on {doc_id!r}: {exc}") from exc
 
 
+def trash_file(doc_id: str) -> None:
+    """Move a newly-created copy to Drive trash during failed creation cleanup."""
+    try:
+        _client().files().update(
+            fileId=doc_id,
+            body={"trashed": True},
+            supportsAllDrives=True,
+            fields="id,trashed",
+        ).execute()
+    except Exception as exc:
+        raise DriveError(f"Could not clean up failed document copy {doc_id!r}: {exc}") from exc
+
+
+def update_permission(doc_id: str, permission_id: str, *, role: str = "writer") -> None:
+    """Upgrade an existing direct permission without creating a duplicate."""
+    try:
+        (
+            _client()
+            .permissions()
+            .update(
+                fileId=doc_id,
+                permissionId=permission_id,
+                body={"role": role},
+                supportsAllDrives=True,
+                fields="id,role",
+            )
+            .execute()
+        )
+    except Exception as exc:
+        raise DriveError(f"Could not update permission {permission_id!r} on {doc_id!r}: {exc}") from exc
+
+
+def list_permissions(doc_id: str) -> list[dict]:
+    """Return the current Drive permissions for ``doc_id``.
+
+    The reconciliation layer deliberately reads permissions from Drive before
+    changing them.  This makes retries safe when a previous request completed
+    in Drive but failed before its local transaction committed.  Permission
+    details are included so inherited access can be reported without trying to
+    remove it (Drive only allows inherited access to be changed on the parent).
+    """
+    permissions: list[dict] = []
+    page_token: str | None = None
+    try:
+        while True:
+            response = (
+                _client()
+                .permissions()
+                .list(
+                    fileId=doc_id,
+                    supportsAllDrives=True,
+                    fields="nextPageToken,permissions(id,type,emailAddress,role,permissionDetails(inherited,inheritedFrom))",
+                    pageSize=100,
+                    **({"pageToken": page_token} if page_token else {}),
+                )
+                .execute()
+            )
+            permissions.extend(response.get("permissions") or [])
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                return permissions
+    except Exception as exc:
+        raise DriveError(f"Could not list permissions on {doc_id!r}: {exc}") from exc
+
+
 def doc_url(doc_id: str) -> str:
     return f"https://docs.google.com/document/d/{doc_id}/edit"
 
@@ -154,3 +219,17 @@ def get_modified_time(doc_id: str) -> str | None:
     except Exception:
         return None
     return response.get("modifiedTime") or None
+
+
+def export_file(doc_id: str, mime_type: str) -> bytes:
+    """Export a native Google Workspace document in the requested format."""
+    try:
+        payload = _client().files().export(fileId=doc_id, mimeType=mime_type).execute()
+    except Exception as exc:
+        message = str(exc)
+        if "10 MB" in message or "exportSizeLimitExceeded" in message:
+            raise DriveError("Google Drive cannot export this signing copy because it exceeds the 10 MiB export limit") from exc
+        raise DriveError("Could not export Google document from Drive") from exc
+    if not isinstance(payload, (bytes, bytearray)) or not payload:
+        raise DriveError("Google Drive returned an empty signing-copy export")
+    return bytes(payload)

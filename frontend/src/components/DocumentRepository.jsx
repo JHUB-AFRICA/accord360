@@ -1,6 +1,6 @@
 import { Download, ExternalLink, FileCheck2, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { downloadAgreementVersion, uploadAgreementDraft } from "../lib/backend.js";
+import { downloadAgreementVersion, downloadSigningCopy, uploadAgreementDraft } from "../lib/backend.js";
 import { formatDateTime } from "../lib/format.js";
 import EmptyState from "./EmptyState.jsx";
 import StatusBadge from "./StatusBadge.jsx";
@@ -18,16 +18,36 @@ const DRAFTING_STATUSES = new Set([
   "approved_for_signing",
   "awaiting_signatures"
 ]);
+const SIGNING_COPY_STATUSES = new Set(["approved_for_signing", "awaiting_signatures"]);
+const MAX_SIGNED_FILE_BYTES = 25 * 1024 * 1024;
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return "Size not recorded";
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileType(version) {
+  const name = version.original_filename || version.name || "";
+  if (version.content_type === "application/pdf" || name.toLowerCase().endsWith(".pdf")) return "PDF";
+  if (version.content_type?.includes("wordprocessingml") || name.toLowerCase().endsWith(".docx")) return "DOCX";
+  return "Signed document";
+}
 
 export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [exporting, setExporting] = useState("");
   const isDrafting = DRAFTING_STATUSES.has(record.status);
+  const canDownloadSigningCopy = user.role === "linkages" && SIGNING_COPY_STATUSES.has(record.status);
   const canUpload = user.role === "linkages" && record.status === "awaiting_signatures";
   const versions = [...(record.versions || [])].reverse();
 
   async function upload() {
     if (!file) return onError("Choose the signed file to upload.");
+    if (!isAllowedFile(file)) return onError("Only PDF or DOCX files up to 25 MB are allowed.");
+    if (!window.confirm("This file will become the official signed agreement and cannot be replaced. Continue?")) return;
     setSubmitting(true);
     try {
       const updated = await uploadAgreementDraft(record.id, file);
@@ -41,6 +61,33 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
     }
   }
 
+  function isAllowedFile(candidate) {
+    const extension = candidate?.name?.toLowerCase().split(".").pop();
+    return ["pdf", "docx"].includes(extension) && candidate.size <= MAX_SIGNED_FILE_BYTES;
+  }
+
+  function chooseFile(event) {
+    const candidate = event.target.files?.[0] || null;
+    if (candidate && !isAllowedFile(candidate)) {
+      event.target.value = "";
+      setFile(null);
+      onError("Only PDF or DOCX files up to 25 MB are allowed.");
+      return;
+    }
+    setFile(candidate);
+  }
+
+  async function downloadCopy(format) {
+    setExporting(format);
+    try {
+      await downloadSigningCopy(record.id, format);
+    } catch (error) {
+      onError(error.message);
+    } finally {
+      setExporting("");
+    }
+  }
+
   return (
     <section className="panel data-panel">
       {isDrafting && <div className="panel inset-panel">
@@ -48,6 +95,11 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
         {record.template_copy_url
           ? <a className="primary-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in Google Docs</a>
           : <p className="empty-state">No drafting document is linked to this agreement.</p>}
+        {canDownloadSigningCopy && <div className="signing-copy-actions" aria-label="Download Legal-approved signing copy">
+          <span>Legal-approved signing copy — download this file for physical signing:</span>
+          <button className="secondary-button compact-button" disabled={Boolean(exporting)} onClick={() => downloadCopy("docx")}><Download size={15} /> {exporting === "docx" ? "Preparing Word…" : "Download Word"}</button>
+          <button className="secondary-button compact-button" disabled={Boolean(exporting)} onClick={() => downloadCopy("pdf")}><Download size={15} /> {exporting === "pdf" ? "Preparing PDF…" : "Download PDF"}</button>
+        </div>}
       </div>}
 
       <div className="panel-head">
@@ -58,20 +110,21 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
           <article className="document-row" key={version.id}>
             <span className="document-icon"><FileCheck2 /></span>
             <div>
-              <strong>Final signed document</strong>
-              <span>Uploaded by {version.uploaded_by?.full_name || "Accord360"}</span>
+              <strong>Official signed agreement</strong>
+              <span>{version.original_filename || version.name} · {fileType(version)} · {formatBytes(version.byte_size)}</span>
+              <span>Uploaded by {version.uploaded_by || "Accord360"}</span>
               <small>{formatDateTime(version.timestamp)}</small>
             </div>
             <StatusBadge tone="green">Final, locked</StatusBadge>
-            <button className="icon-button" onClick={() => downloadAgreementVersion(record.id, version.id, `agreement-${record.id}-signed`).catch((error) => onError(error.message))} aria-label="Download the signed document"><Download size={18} /></button>
+            <button className="secondary-button compact-button" onClick={() => downloadAgreementVersion(record.id, version.id, version.original_filename || `agreement-${record.id}-signed` ).catch((error) => onError(error.message))} aria-label="Download the official signed agreement"><Download size={15} /> Download</button>
           </article>
         ))}
         {!versions.length && <EmptyState title="Not signed yet" text="The final signed document appears here once Linkages uploads it after physical signing." />}
       </div>
 
       {canUpload && <div className="panel inset-panel">
-        <div className="panel-head"><div><h2>Upload final signed scan</h2><p>Once fully signed, upload the executed document. This locks the agreement.</p></div></div>
-        <label className="upload-zone compact-upload"><UploadCloud /><strong>{file?.name || "Choose the signed file"}</strong><span>Only Linkages can upload at this stage.</span><input type="file" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
+        <div className="panel-head"><div><h2>Upload final signed agreement</h2><p>Upload the physically signed copy. It becomes the official immutable agreement and cannot be replaced.</p></div></div>
+        <label className="upload-zone compact-upload"><UploadCloud /><strong>{file?.name || "Choose the signed file"}</strong><span>Only Linkages can upload at this stage. PDF or DOCX, maximum 25 MB.</span><input type="file" accept=".pdf,.docx" onChange={chooseFile} /></label>
         <button className="primary-button" disabled={submitting || !file} onClick={upload}>{submitting ? "Uploading…" : "Upload"}</button>
       </div>}
     </section>

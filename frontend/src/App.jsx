@@ -23,6 +23,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import PublicLayout from "./components/PublicLayout.jsx";
 import RoleHomeRedirect from "./components/RoleHomeRedirect.jsx";
 import RoleRoute from "./components/RoleRoute.jsx";
+import { NotificationProvider } from "./context/NotificationContext.jsx";
 import { ALL_ROLES, INTERNAL_ROLES } from "./lib/roles.js";
 
 
@@ -44,7 +45,7 @@ export default function App() {
       <Route path="/suspended" element={<AccountState type="suspended" />} />
       <Route path="/password-reset-success" element={<AccountState type="password-reset-success" />} />
 
-      <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+      <Route element={<ProtectedRoute><NotificationProvider><Layout /></NotificationProvider></ProtectedRoute>}>
         <Route path="/workspace" element={<RoleHomeRedirect />} />
         <Route path="/access-denied" element={<AccountState type="access-denied" />} />
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3, Bell, BookOpen, Building2, ClipboardCheck, ClipboardList,
@@ -7,7 +7,7 @@ import {
   Users, X
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { listNotifications, markNotificationRead } from "../lib/backend.js";
+import { useNotifications } from "../context/NotificationContext.jsx";
 import { initials } from "../lib/format";
 import { roleConfig } from "../lib/roles";
 import StatusBadge from "./StatusBadge";
@@ -78,30 +78,26 @@ const SEARCH_VISIBLE_PATHS = ["/researcher", "/linkages", "/legal", "/monitoring
 
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const { user, logout, isMockMode } = useAuth();
+  const { items: notifications, unreadCount: unread, error: notificationError, markRead, markAllRead } = useNotifications();
+  const notificationButtonRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
   const config = roleConfig(user?.role);
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
-  useEffect(() => {
-    let active = true;
-    listNotifications().then((items) => { if (active) setNotifications(items); }).catch(() => {});
-    return () => { active = false; };
-  }, [location.pathname]);
-
   const nav = useMemo(() => (navigation[user?.role] || []).map(([key, label, to]) => ({ key, label, to, icon: iconMap[key] || FileText })), [user?.role]);
-  const unread = notifications.filter((item) => !item.is_read).length;
+  const recent = notifications.slice(0, 5);
 
-  async function markRead(item) {
-    if (!item.is_read) {
-      await markNotificationRead(item.id);
-      setNotifications((current) => current.map((notification) => notification.id === item.id ? { ...notification, is_read: true } : notification));
-    }
-  }
+  useEffect(() => {
+    if (!showNotifications) return undefined;
+    const onKey = (event) => { if (event.key === "Escape") { setShowNotifications(false); notificationButtonRef.current?.focus(); } };
+    const onPointer = (event) => { if (!event.target.closest(".notification-wrap")) setShowNotifications(false); };
+    window.addEventListener("keydown", onKey); window.addEventListener("pointerdown", onPointer);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("pointerdown", onPointer); };
+  }, [showNotifications]);
 
   return (
     <div className="app-shell">
@@ -149,19 +145,20 @@ export default function Layout() {
           <div className="topbar-actions">
             {isMockMode && <StatusBadge tone="blue">Demo mode</StatusBadge>}
             <div className="notification-wrap">
-              <button className="icon-button notification-button" onClick={() => setShowNotifications((value) => !value)} aria-expanded={showNotifications} aria-label={`${unread} unread notifications`}><Bell size={20} />{unread > 0 && <span>{unread}</span>}</button>
+              <button ref={notificationButtonRef} className="icon-button notification-button" onClick={() => setShowNotifications((value) => !value)} aria-expanded={showNotifications} aria-controls="notification-popover" aria-haspopup="dialog" aria-label={`${unread} unread notifications`}><Bell size={20} />{unread > 0 && <span>{unread > 99 ? "99+" : unread}</span>}</button>
               {showNotifications && (
-                <div className="notification-popover">
-                  <div className="popover-head"><div><strong>Notifications</strong><span>{unread} unread</span></div><Link to="/notifications" onClick={() => setShowNotifications(false)}>View all</Link></div>
+                <div id="notification-popover" className="notification-popover" role="dialog" aria-label="Notifications">
+                  <div className="popover-head"><div><strong>Notifications</strong><span>{unread} unread</span></div><div className="popover-head-actions"><button className="text-button" onClick={() => void markAllRead().catch(() => {})}>Mark all read</button><Link to="/notifications" onClick={() => setShowNotifications(false)}>View all</Link></div></div>
                   <div className="popover-list">
-                    {notifications.filter((item) => !item.is_read).slice(0, 5).map((item) => (
-                      <Link key={item.id} to={item.link || "/notifications"} className="popover-notification" onClick={() => { markRead(item); setShowNotifications(false); }}>
-                        <span className={`priority-dot priority-${item.priority}`} />
-                        <div><strong>{item.title}</strong><span>{item.record_reference}</span><small>{item.required_action}</small></div>
+                    {recent.map((item) => (
+                      <Link key={item.id} to={item.action_url || "/notifications"} className={`popover-notification ${item.is_read ? "read" : "unread"}`} onClick={() => { if (!item.is_read) void markRead(item.id).catch(() => {}); setShowNotifications(false); }}>
+                        <span aria-hidden="true" className={`priority-dot priority-${item.priority}`} />
+                        <div><strong>{item.title}</strong><span>{item.agreement_title || item.category.replace("_", " ")}</span><small>{item.actor_name} · {item.requires_action ? item.message : "Informational update"}</small></div>
                       </Link>
                     ))}
-                    {!unread && <div className="popover-empty">{notifications.length ? "You're all caught up." : "No notifications yet."}</div>}
+                    {!recent.length && <div className="popover-empty">No notifications yet.</div>}
                   </div>
+                  {notificationError && <div className="notification-inline-error" role="alert">{notificationError}</div>}
                 </div>
               )}
             </div>

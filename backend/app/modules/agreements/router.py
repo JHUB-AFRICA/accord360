@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from pathlib import Path
+import re
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from sqlalchemy.orm import Session
 
 from ...db.session import get_db
 from ...core.config import settings
+from ...utils import storage
 from ...deps import get_current_user
 from ...deps import require_roles
 from app.modules.users.models import User
@@ -82,6 +85,52 @@ def transition_agreement(
     return service.transition_agreement(db, user, agreement_id, payload, request)
 
 
+@router.post("/{agreement_id}/drive-access/reconcile")
+def reconcile_drive_access(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("linkages")),
+):
+    """Repair the agreement's direct Google Drive permissions.
+
+    Linkages is the operational owner of document hand-offs.  The reconciler
+    is idempotent and computes access from the agreement's current status, so
+    this endpoint is safe to retry after a transient Drive failure.
+    """
+    agreement = db.get(service.Agreement, agreement_id)
+    if not agreement:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    from ...access import ensure_can_view_agreement
+    ensure_can_view_agreement(user, agreement)
+    try:
+        result = service.reconcile_drive_access(db, agreement)
+    except service.DriveError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
+@router.get("/{agreement_id}/drive-access")
+def inspect_drive_access(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("linkages")),
+):
+    agreement = db.get(service.Agreement, agreement_id)
+    if not agreement:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    from ...access import ensure_can_view_agreement
+    ensure_can_view_agreement(user, agreement)
+    try:
+        return service.inspect_drive_access(db, agreement)
+    except service.DriveError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post("/{agreement_id}/versions", response_model=AgreementDetailOut)
 async def upload_final_signed_document(
     agreement_id: int,
@@ -90,8 +139,25 @@ async def upload_final_signed_document(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("linkages")),
 ):
-    content = await file.read()
-    return service.upload_final_signed_document(db, user, agreement_id, content, file.filename, request)
+    content = await file.read(service.MAX_SIGNED_FILE_SIZE + 1)
+    return service.upload_final_signed_document(
+        db, user, agreement_id, content, file.filename, request, content_type=file.content_type
+    )
+
+
+@router.get("/{agreement_id}/signing-copy")
+def export_signing_copy(
+    agreement_id: int,
+    format: str = Query(..., pattern="^(pdf|docx)$"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("linkages")),
+):
+    payload, content_type, filename = service.export_signing_copy(db, user, agreement_id, format)
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{agreement_id}/versions/{version_id}/download")
@@ -102,11 +168,19 @@ def download_version(
     user: User = Depends(get_current_user),
 ):
     agreement = service.get_agreement_for_version(db, user, agreement_id, version_id)
+    filename = agreement.original_filename or Path(agreement.file).name
+    filename = re.sub(r"[^A-Za-z0-9._ -]+", "-", Path(filename).name).strip() or "signed-agreement"
+    media_type = agreement.content_type or "application/octet-stream"
+    if settings.storage_enabled:
+        try:
+            return StreamingResponse(storage.download_file(agreement.file), media_type=media_type,
+                                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        except storage.StorageError as exc:
+            raise HTTPException(status_code=404, detail="Agreement version file is unavailable") from exc
     path = settings.upload_path / agreement.file
     if not path.is_file():
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Agreement version file is unavailable")
-    return FileResponse(path, filename=path.name)
+    return FileResponse(path, filename=filename, media_type=media_type)
 
 
 @progress_router.post("/agreements/{agreement_id}/progress-updates", response_model=ProgressUpdateOut, status_code=status.HTTP_201_CREATED)

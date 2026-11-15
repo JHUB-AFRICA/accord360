@@ -100,6 +100,9 @@ class AgreementVersion(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agreement_id: Mapped[int] = mapped_column(ForeignKey("agreements.id"), nullable=False, index=True)
     file: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(127), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
     # Historical snapshot of Agreement.status at creation time — not a live join.

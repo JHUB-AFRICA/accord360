@@ -152,17 +152,32 @@ export function normalizeAgreementDetail(item) {
     started_at: [...(item.workflow_events || [])].reverse().find((event) => event.to_stage === item.stage)?.created_at || item.updated_at
   };
   const lifecycleHistory = [...workflowEvents, currentStageEntry];
-  const agreementVersions = (item.versions || []).map((version) => ({
+  const rawVersions = item.versions?.length ? item.versions : (item.documents || []).filter((document) => document.document_type === "signed" && document.is_official).map((document) => ({
+    id: document.id,
+    original_filename: document.original_name,
+    content_type: document.mime_type,
+    byte_size: document.size_bytes,
+    file: document.file,
+    is_final: true,
+    status_at_time: "fully_executed",
+    timestamp: document.created_at,
+    uploaded_by: document.uploaded_by
+  }));
+  const agreementVersions = rawVersions.map((version) => ({
     id: Number(version.id),
     version_id: Number(version.id),
-    name: version.file?.split("/").pop() || `Agreement version ${version.id}`,
+    name: version.original_filename || version.file?.split("/").pop() || `Agreement version ${version.id}`,
+    original_filename: version.original_filename || null,
+    content_type: version.content_type || null,
+    byte_size: Number(version.byte_size ?? version.file_size ?? 0) || 0,
     file: version.file,
     type: version.is_final ? "final_signed" : "agreement_draft",
     version: version.status_at_time,
     status: version.is_final ? "final_signed" : "uploaded",
     is_final: version.is_final,
     uploaded_at: version.timestamp,
-    uploaded_by: version.uploaded_by?.full_name || "Accord360",
+    timestamp: version.timestamp || version.uploaded_at,
+    uploaded_by: version.uploaded_by?.full_name || version.uploaded_by || "Accord360",
     source: "agreement_version"
   }));
   const documents = agreementVersions.length
@@ -223,17 +238,19 @@ export function normalizeAgreementDetail(item) {
 
 export function normalizeNotification(item) {
   if (!item) return null;
-  const priority = item.level === "red" ? "critical" : item.level === "orange" ? "high" : item.level === "yellow" ? "normal" : "low";
+  const severity = item.severity || (item.level === "red" ? "critical" : item.level === "orange" ? "warning" : item.level === "yellow" ? "warning" : "info");
   return {
     ...item,
     id: Number(item.id),
-    record_reference: item.agreement_id ? `Agreement #${item.agreement_id}` : "System",
-    required_action: item.message,
-    sender: "Accord360",
-    link: item.agreement_id ? `/agreements/${item.agreement_id}` : "/notifications",
-    priority,
-    escalation_level: item.level === "red" ? 2 : item.level === "orange" ? 1 : 0,
-    email_status: "not_exposed"
+    severity,
+    category: item.category || "system",
+    actor_name: item.actor_name || "System",
+    agreement_title: item.agreement_title || null,
+    action_url: item.action_url || (item.agreement_id ? `/agreements/${item.agreement_id}` : "/notifications"),
+    requires_action: Boolean(item.requires_action),
+    record_reference: item.agreement_title || (item.agreement_id ? `Agreement #${item.agreement_id}` : "System"),
+    required_action: item.requires_action ? item.message : null,
+    priority: severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "success" ? "normal" : "low"
   };
 }
 

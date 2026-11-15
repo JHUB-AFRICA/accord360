@@ -150,6 +150,14 @@ export async function getAgreement(id) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}`));
 }
 
+export async function getDriveAccessStatus(agreementId) {
+  return api(`/agreements/${Number(agreementId)}/drive-access`);
+}
+
+export async function reconcileDriveAccess(agreementId) {
+  return api(`/agreements/${Number(agreementId)}/drive-access/reconcile`, { method: "POST" });
+}
+
 export async function listScorecardHistory(agreementId) {
   return api(`/scorecards/${Number(agreementId)}/history`);
 }
@@ -199,6 +207,12 @@ export async function uploadAgreementDraft(id, file) {
   return normalizeAgreementDetail(await api(`/agreements/${Number(id)}/versions`, { method: "POST", body: formData }));
 }
 
+export async function downloadSigningCopy(agreementId, format) {
+  const normalizedFormat = String(format).toLowerCase();
+  if (!["pdf", "docx"].includes(normalizedFormat)) throw new Error("Signing copy format must be PDF or Word.");
+  return downloadFile(`/agreements/${Number(agreementId)}/signing-copy?format=${normalizedFormat}`, `agreement-${Number(agreementId)}-signing-copy.${normalizedFormat}`);
+}
+
 export async function downloadAgreementVersion(agreementId, versionId, fallbackName = "agreement-version.docx") {
   return downloadFile(`/agreements/${Number(agreementId)}/versions/${Number(versionId)}/download`, fallbackName);
 }
@@ -215,12 +229,32 @@ export async function updateVersionComment(commentId, status) {
   return api(`/comments/${Number(commentId)}`, { method: "PATCH", body: JSON.stringify({ status }) });
 }
 
-export async function listNotifications() {
-  return (await api("/notifications")).map(normalizeNotification);
+export async function listNotifications({ limit = 20, cursor, unreadOnly = false, category } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  if (unreadOnly) params.set("unread_only", "true");
+  if (category) params.set("category", category);
+  const payload = await api(`/notifications?${params.toString()}`);
+  // Keep a small compatibility bridge while mock mode catches up to the envelope.
+  const items = Array.isArray(payload) ? payload : (payload?.items || []);
+  return { items: items.map(normalizeNotification), next_cursor: Array.isArray(payload) ? null : (payload?.next_cursor || null) };
+}
+
+export async function getUnreadNotificationCount() {
+  const payload = await api("/notifications/unread-count");
+  return Number(payload?.count || 0);
 }
 
 export async function markNotificationRead(id) {
   return normalizeNotification(await api(`/notifications/${Number(id)}/read`, { method: "POST" }));
+}
+
+export async function markNotificationUnread(id) {
+  return normalizeNotification(await api(`/notifications/${Number(id)}/unread`, { method: "POST" }));
+}
+
+export async function markAllNotificationsRead() {
+  return api("/notifications/read-all", { method: "POST" });
 }
 
 export async function exportAgreementsCsv(filters = {}) {

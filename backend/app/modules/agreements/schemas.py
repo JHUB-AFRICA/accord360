@@ -44,6 +44,9 @@ class AgreementVersionOut(ORMModel):
     id: int
     agreement_id: int
     file: str
+    original_filename: str | None = None
+    content_type: str | None = None
+    file_size: int | None = None
     uploaded_by: UserOut
     timestamp: datetime
     status_at_time: str

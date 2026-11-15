@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import DocumentRepository from "../components/DocumentRepository.jsx";
@@ -11,7 +11,7 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
 import WorkflowTimeline from "../components/WorkflowTimeline.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { createProgressUpdate, getAgreement, transitionAgreement } from "../lib/backend.js";
+import { createProgressUpdate, getAgreement, getDriveAccessStatus, reconcileDriveAccess, transitionAgreement } from "../lib/backend.js";
 import { formatDate, formatDateTime, humanize } from "../lib/format.js";
 
 const ALL_TABS = [
@@ -78,6 +78,8 @@ export default function AgreementDetail({ defaultTab }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [record, setRecord] = useState(null);
+  const [driveAccess, setDriveAccess] = useState(null);
+  const [repairingDriveAccess, setRepairingDriveAccess] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [action, setAction] = useState(null);
@@ -94,6 +96,7 @@ export default function AgreementDetail({ defaultTab }) {
   const load = useCallback(() => {
     setError("");
     getAgreement(id).then(setRecord).catch((requestError) => setError(requestError.message));
+    getDriveAccessStatus(id).then(setDriveAccess).catch(() => setDriveAccess(null));
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -134,6 +137,21 @@ export default function AgreementDetail({ defaultTab }) {
       setError(requestError.message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function repairDriveAccess() {
+    setRepairingDriveAccess(true);
+    setError("");
+    try {
+      const result = await reconcileDriveAccess(record.id);
+      setDriveAccess(result);
+      setMessage(result.changed ? "Google Drive access repaired." : "Google Drive access is already synchronized.");
+    } catch (requestError) {
+      setError(requestError.message);
+      getDriveAccessStatus(record.id).then(setDriveAccess).catch(() => {});
+    } finally {
+      setRepairingDriveAccess(false);
     }
   }
 
@@ -179,6 +197,13 @@ export default function AgreementDetail({ defaultTab }) {
           </div>
         </div>
       )}
+
+      {user.role === "linkages" && driveAccess && <section className="panel drive-access-panel">
+        <div className="panel-head"><div><h2><ShieldCheck size={17} /> Google Drive access</h2><p>The document stays in one folder; workflow status controls direct access.</p></div>
+          {driveAccess.needs_repair && <button className="secondary-button" onClick={repairDriveAccess} disabled={repairingDriveAccess}><RefreshCw size={15} className={repairingDriveAccess ? "spin" : ""} /> {repairingDriveAccess ? "Repairing…" : "Repair access"}</button>}
+        </div>
+        <div className="drive-access-summary"><StatusBadge tone={driveAccess.needs_repair ? "orange" : "green"}>{driveAccess.needs_repair ? "Needs repair" : "Synchronized"}</StatusBadge>{driveAccess.inherited_permissions_present && <span className="helper-note">Inherited permissions are present and cannot be changed here.</span>}</div>
+      </section>}
 
       {focus && (
         <section className="panel focus-panel">
@@ -260,7 +285,7 @@ export default function AgreementDetail({ defaultTab }) {
       >
         {ACTION_HELP[action?.key] && <p className="helper-note">{ACTION_HELP[action.key]}</p>}
         {action?.key === "submit" && <>
-          <p className="helper-note">Submitting cuts off the external partner's access to the Google Doc and hands review to Linkages and Legal. Make sure the partner is done editing first.</p>
+          <p className="helper-note">Submitting cuts off the external partner&apos;s access to the Google Doc and hands review to Linkages. Legal receives access later when Linkages chooses &quot;Send to Legal.&quot; Make sure the partner is done editing first.</p>
           <label className="form-field checkbox-field">
             <input type="checkbox" checked={fieldsConfirmed} onChange={(event) => setFieldsConfirmed(event.target.checked)} />
             <span>I confirm all required fields in the document have been filled in.</span>
