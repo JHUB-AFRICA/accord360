@@ -1,7 +1,7 @@
 # Accord 360 In-App Notifications — Swarm Implementation Brief
 
-**Status:** implementation source of truth for the notification prototype  
-**Scope:** backend, frontend, mock mode, migrations, and tests for in-app notifications  
+**Status:** implementation source of truth for the notification prototype
+**Scope:** backend, frontend, mock mode, migrations, and tests for in-app notifications
 **Primary goal:** replace workflow email dependence with a dependable, role-aware task inbox for the prototype
 
 Agents must read this entire brief and the repository `AGENTS.md` before making changes. If code or an older working note conflicts with this brief, stop and ask the coordinator instead of silently choosing a direction.
@@ -432,4 +432,3 @@ The notification prototype is complete only when:
 - accessibility interactions work by keyboard;
 - backend tests, `npm run check`, and `git diff --check` pass; and
 - no unrelated behavior or files were changed.
-
