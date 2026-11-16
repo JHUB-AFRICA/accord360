@@ -1,0 +1,14 @@
+[Unit]
+Description=Accord 360 demo (API + frontend, SQLite, single process)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/apps/accord360/backend
+ExecStartPre=%h/apps/accord360/backend/.venv/bin/python -m alembic upgrade head
+ExecStart=%h/apps/accord360/backend/.venv/bin/python -m uvicorn serve:app --app-dir ../deploy/homelab --host 0.0.0.0 --port 8095 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+MemoryMax=400M
+
+[Install]
+WantedBy=default.target
