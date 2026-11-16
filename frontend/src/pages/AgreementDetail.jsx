@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import DocumentRepository from "../components/DocumentRepository.jsx";
@@ -48,6 +48,23 @@ const ACTION_LABELS = {
   start_signing: "Start signing"
 };
 
+// From Legal approval until the signed upload, the Doc is locked: the API
+// withholds its link, and "send_to_legal" means "send it back to Legal"
+// (only offered when the Doc changed after approval).
+const DOC_LOCKED_STATUSES = new Set(["approved_for_signing", "awaiting_signatures"]);
+
+function actionLabel(key, status) {
+  if (key === "send_to_legal" && DOC_LOCKED_STATUSES.has(status)) return "Send back to Legal";
+  return ACTION_LABELS[key] || humanize(key);
+}
+
+function actionHelp(key, status) {
+  if (key === "send_to_legal" && DOC_LOCKED_STATUSES.has(status)) {
+    return "The Google Doc changed after Legal approved it. This cancels the approval, gives Legal edit access again and notifies them to review it before signing.";
+  }
+  return ACTION_HELP[key];
+}
+
 // What each action does, shown in its confirm box so nobody has to guess.
 const ACTION_HELP = {
   send_to_legal: "Legal gets edit access to the Google Doc and is notified. You keep your access.",
@@ -65,7 +82,7 @@ function focusFor(role, status) {
   if (role === "linkages" && status === "linkages_review") return { title: "Review this agreement", text: "Open the Google Doc, make your edits, then come back and choose what happens next.", actions: ["send_to_legal", "return_to_researcher"] };
   if (role === "legal" && status === "legal_review") return { title: "Legal review", text: "Open the Google Doc and comment or edit as needed, then come back and approve it or return it to Linkages.", actions: ["approve", "return_to_linkages"] };
   if (role === "researcher" && status === "returned_to_researcher") return { title: "Changes requested", text: "Open the Google Doc, address the comments, then resubmit it to Linkages.", actions: ["resubmit"] };
-  if (role === "linkages" && status === "approved_for_signing") return { title: "Approved by Legal", text: "Legal has approved this agreement. Open the Doc if you want a last look, then start the signing process.", actions: ["start_signing"] };
+  if (role === "linkages" && status === "approved_for_signing") return { title: "Approved by Legal", text: "Legal has approved this agreement and the Google Doc is now locked. Start signing to download the approved signing copy.", actions: ["start_signing", "send_to_legal"] };
   return null;
 }
 
@@ -96,13 +113,14 @@ export default function AgreementDetail({ defaultTab }) {
   const load = useCallback(() => {
     setError("");
     getAgreement(id).then(setRecord).catch((requestError) => setError(requestError.message));
-    getDriveAccessStatus(id).then(setDriveAccess).catch(() => setDriveAccess(null));
-  }, [id]);
+    // Drive access status is Linkages-only (403 for everyone else).
+    if (user.role === "linkages") getDriveAccessStatus(id).then(setDriveAccess).catch(() => setDriveAccess(null));
+  }, [id, user.role]);
 
   useEffect(() => { load(); }, [load]);
 
   const availableActions = useMemo(
-    () => (record?.available_actions || []).map((key) => ({ key, label: ACTION_LABELS[key] || humanize(key), variant: key === "archive" ? "danger" : "primary" })),
+    () => (record?.available_actions || []).map((key) => ({ key, label: actionLabel(key, record.status), variant: key === "archive" ? "danger" : "primary" })),
     [record]
   );
 
@@ -119,6 +137,9 @@ export default function AgreementDetail({ defaultTab }) {
       setFieldsConfirmed(false);
     } catch (requestError) {
       setError(requestError.message);
+      // 409 = e.g. the Doc changed after approval; reload so the record and
+      // its available actions (like "Send back to Legal") are current.
+      if (requestError.status === 409) { setAction(null); load(); }
     } finally {
       setSubmitting(false);
     }
@@ -158,9 +179,15 @@ export default function AgreementDetail({ defaultTab }) {
   if (error && !record) return <><PageHeader eyebrow="Agreement workspace" title="Unable to open agreement" /><ErrorState message={error} onRetry={load} /></>;
   if (!record) return <LoadingState label="Loading agreement workspace" />;
 
+  const docLocked = DOC_LOCKED_STATUSES.has(record.status);
+  const docChanged = docLocked && record.doc_modified_after_approval === true;
+  // A changed Doc can't be signed as approved: the one way forward is the
+  // "Send back to Legal" button in the warning, so don't offer it twice or
+  // offer a "Start signing" that would only fail.
+  const sendBack = docChanged ? availableActions.find((item) => item.key === "send_to_legal") : undefined;
   const focus = focusFor(user.role, record.status);
-  const focusActions = focus ? availableActions.filter((item) => focus.actions.includes(item.key)) : [];
-  const headerActions = availableActions.filter((item) => !focusActions.includes(item));
+  const focusActions = focus ? availableActions.filter((item) => focus.actions.includes(item.key) && item !== sendBack && !(docChanged && item.key === "start_signing")) : [];
+  const headerActions = availableActions.filter((item) => !focusActions.includes(item) && item !== sendBack && !(docChanged && item.key === "start_signing"));
   const showTabs = !focus || showDetails;
   const activeTab = showTabs ? tab : null;
   const canSubmitProgress = user.role === "researcher" && ["fully_executed", "expired"].includes(record.status);
@@ -186,14 +213,23 @@ export default function AgreementDetail({ defaultTab }) {
         {record.expiry_alert_date && <InfoItem label="Expiry alert date">{formatDate(record.expiry_alert_date)}</InfoItem>}
       </section>
 
-      {record.status === "approved_for_signing" && record.approved_at && (
-        <div className={`inline-alert ${record.doc_modified_after_approval ? "warning" : "success"}`}>
+      {docChanged && (
+        <div className="inline-alert warning">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>The Google Doc changed after Legal approved it</strong>
+            <p>It can't be signed as approved. Send it back to Legal so they can review the changes and approve it again.</p>
+            {sendBack && <div className="focus-actions"><button className="primary-button" onClick={() => setAction(sendBack)}>{sendBack.label}</button></div>}
+          </div>
+        </div>
+      )}
+
+      {record.status === "approved_for_signing" && record.approved_at && !record.doc_modified_after_approval && (
+        <div className="inline-alert success">
           <CheckCircle2 size={18} />
           <div>
             <strong>Approved by Legal{record.approved_by_name ? ` — ${record.approved_by_name}` : ""} on {formatDateTime(record.approved_at)}</strong>
-            <p>{record.doc_modified_after_approval
-              ? "The Google Doc was modified after this approval. Review the Doc's version history before starting signing."
-              : user.role === "linkages" ? "This agreement is ready for you to start signing." : "This agreement is ready for signing."}</p>
+            <p>{user.role === "linkages" ? "This agreement is ready for you to start signing." : "This agreement is ready for signing."}</p>
           </div>
         </div>
       )}
@@ -210,9 +246,11 @@ export default function AgreementDetail({ defaultTab }) {
           <h2>{focus.title}</h2>
           <p>{focus.text}</p>
           <div className="focus-steps">
-            {record.template_copy_url
-              ? <div><a className="primary-button focus-doc-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={18} /> Open Google Doc</a></div>
-              : <p className="helper-note">No Google Doc is linked to this agreement.</p>}
+            {docLocked
+              ? <p className="helper-note"><Lock size={14} /> Google Doc locked after Legal approval.</p>
+              : record.template_copy_url
+                ? <div><a className="primary-button focus-doc-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={18} /> Open Google Doc</a></div>
+                : <p className="helper-note">No Google Doc is linked to this agreement.</p>}
             {focusActions.length > 0 && <div className="focus-actions">{focusActions.map((item) => <button key={item.key} className={item.key === focusActions[0].key ? "primary-button" : "secondary-button"} onClick={() => setAction(item)}>{item.label}</button>)}</div>}
           </div>
         </section>
@@ -248,7 +286,7 @@ export default function AgreementDetail({ defaultTab }) {
 
       {activeTab === "workflow" && <section className="panel workflow-panel"><div className="panel-head"><div><h2>Lifecycle</h2><p>The nine-status Accord 360 workflow.</p></div></div><WorkflowTimeline agreement={record} /></section>}
 
-      {activeTab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
+      {activeTab === "documents" && <DocumentRepository record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} onStale={load} />}
 
       {activeTab === "corrections" && <LegalReviewPanel record={record} user={user} onRecordChange={setRecord} onError={setError} onMessage={setMessage} />}
 
@@ -283,7 +321,7 @@ export default function AgreementDetail({ defaultTab }) {
         description={`${record.title} · ${humanize(record.status)}`}
         footer={<><button className="secondary-button" onClick={() => { setAction(null); setFieldsConfirmed(false); }}>Cancel</button><button className={action?.variant === "danger" ? "danger-button" : "primary-button"} disabled={submitting || (action?.key === "submit" && !fieldsConfirmed)} onClick={performAction}>{submitting ? "Processing…" : `Confirm ${action?.label || "action"}`}</button></>}
       >
-        {ACTION_HELP[action?.key] && <p className="helper-note">{ACTION_HELP[action.key]}</p>}
+        {actionHelp(action?.key, record.status) && <p className="helper-note">{actionHelp(action.key, record.status)}</p>}
         {action?.key === "submit" && <>
           <p className="helper-note">Submitting cuts off the external partner&apos;s access to the Google Doc and hands review to Linkages. Legal receives access later when Linkages chooses &quot;Send to Legal.&quot; Make sure the partner is done editing first.</p>
           <label className="form-field checkbox-field">

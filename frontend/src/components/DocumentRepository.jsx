@@ -1,4 +1,4 @@
-import { Download, ExternalLink, FileCheck2, UploadCloud } from "lucide-react";
+import { Download, ExternalLink, FileCheck2, Lock, UploadCloud } from "lucide-react";
 import { useState } from "react";
 import { downloadAgreementVersion, downloadSigningCopy, uploadAgreementDraft } from "../lib/backend.js";
 import { formatDateTime } from "../lib/format.js";
@@ -18,6 +18,8 @@ const DRAFTING_STATUSES = new Set([
   "approved_for_signing",
   "awaiting_signatures"
 ]);
+// From Legal approval until the signed upload the Doc is locked: the API
+// withholds its link and Linkages works from the exported signing copy.
 const SIGNING_COPY_STATUSES = new Set(["approved_for_signing", "awaiting_signatures"]);
 const MAX_SIGNED_FILE_BYTES = 25 * 1024 * 1024;
 
@@ -35,12 +37,13 @@ function fileType(version) {
   return "Signed document";
 }
 
-export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage }) {
+export default function DocumentRepository({ record, user, onRecordChange, onError, onMessage, onStale }) {
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState("");
   const isDrafting = DRAFTING_STATUSES.has(record.status);
-  const canDownloadSigningCopy = user.role === "linkages" && SIGNING_COPY_STATUSES.has(record.status);
+  const isLocked = SIGNING_COPY_STATUSES.has(record.status);
+  const canDownloadSigningCopy = user.role === "linkages" && isLocked;
   const canUpload = user.role === "linkages" && record.status === "awaiting_signatures";
   const versions = [...(record.versions || [])].reverse();
 
@@ -83,6 +86,9 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
       await downloadSigningCopy(record.id, format);
     } catch (error) {
       onError(error.message);
+      // 409 = the Doc changed after approval; reload so the
+      // "Send back to Legal" option appears.
+      if (error.status === 409) onStale?.();
     } finally {
       setExporting("");
     }
@@ -91,10 +97,14 @@ export default function DocumentRepository({ record, user, onRecordChange, onErr
   return (
     <section className="panel data-panel">
       {isDrafting && <div className="panel inset-panel">
-        <div className="panel-head"><div><h2>Drafting document</h2><p>This agreement is drafted directly in Google Docs. Everyone with access edits the same live document — nothing is uploaded to Accord 360 until it's signed.</p></div></div>
-        {record.template_copy_url
-          ? <a className="primary-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in Google Docs</a>
-          : <p className="empty-state">No drafting document is linked to this agreement.</p>}
+        {isLocked
+          ? <div className="panel-head"><div><h2>Legal-approved agreement</h2><p>Legal has approved this text. The Google Doc is locked until the signed version is uploaded, so it can't be opened or edited from here.</p></div></div>
+          : <div className="panel-head"><div><h2>Drafting document</h2><p>This agreement is drafted directly in Google Docs. Everyone with access edits the same live document — nothing is uploaded to Accord 360 until it's signed.</p></div></div>}
+        {isLocked
+          ? <p className="helper-note"><Lock size={14} /> Google Doc locked after Legal approval.</p>
+          : record.template_copy_url
+            ? <a className="primary-button" href={record.template_copy_url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in Google Docs</a>
+            : <p className="empty-state">No drafting document is linked to this agreement.</p>}
         {canDownloadSigningCopy && <div className="signing-copy-actions" aria-label="Download Legal-approved signing copy">
           <span>Legal-approved signing copy — download this file for physical signing:</span>
           <button className="secondary-button compact-button" disabled={Boolean(exporting)} onClick={() => downloadCopy("docx")}><Download size={15} /> {exporting === "docx" ? "Preparing Word…" : "Download Word"}</button>

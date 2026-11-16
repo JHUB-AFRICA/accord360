@@ -11,23 +11,41 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import lru_cache
+import threading
 
 from app.core.config import settings
 
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+# Seconds before a single Drive HTTP call gives up. The library default is 60,
+# which turned any stalled call into a minute-long page load.
+DRIVE_HTTP_TIMEOUT_SECONDS = 10
+
+# One Drive client per thread. FastAPI runs sync routes on a thread pool, and
+# the underlying httplib2 connection is not thread-safe: sharing one client
+# across threads made concurrent calls hang until the timeout, fail, or crash
+# the process with heap corruption.
+_thread_local = threading.local()
 
 
 class DriveError(RuntimeError):
     """Raised when a Drive API operation cannot be completed."""
 
 
-@lru_cache(maxsize=1)
 def _client():
+    client = getattr(_thread_local, "client", None)
+    if client is None:
+        client = _build_client()
+        _thread_local.client = client
+    return client
+
+
+def _build_client():
     if not settings.google_drive_enabled:
         raise DriveError("Google Drive integration is disabled")
     try:
+        import httplib2
         from google.oauth2 import service_account
+        from google_auth_httplib2 import AuthorizedHttp
         from googleapiclient.discovery import build
     except ImportError as exc:  # pragma: no cover - dependency wiring only
         raise DriveError("google-api-python-client is not installed") from exc
@@ -44,7 +62,8 @@ def _client():
 
     try:
         credentials = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
-        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+        http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=DRIVE_HTTP_TIMEOUT_SECONDS))
+        return build("drive", "v3", http=http, cache_discovery=False)
     except Exception as exc:  # pragma: no cover - defensive wrapper
         raise DriveError("Could not build the Google Drive client") from exc
 
@@ -209,14 +228,52 @@ def doc_url(doc_id: str) -> str:
     return f"https://docs.google.com/document/d/{doc_id}/edit"
 
 
-def get_modified_time(doc_id: str) -> str | None:
-    """Drive's `modifiedTime` for the Doc (RFC 3339 string), or None if it
-    cannot be read. Used to flag edits made after Legal's approval; callers
-    must treat None as "unknown", never as "unchanged".
+def get_file_modified_time(doc_id: str) -> str | None:
+    """Drive's file-level `modifiedTime` (RFC 3339), or None if unreadable.
+
+    Used for the approval snapshot. It is always at or after every content
+    revision that existed at that moment, so a revision Drive reports a little
+    late can never look like an edit made after approval.
     """
     try:
         response = _client().files().get(fileId=doc_id, fields="modifiedTime", supportsAllDrives=True).execute()
     except Exception:
+        logging.getLogger("accord360.drive").warning("Could not read file modifiedTime for doc %s", doc_id, exc_info=True)
+        return None
+    return response.get("modifiedTime") or None
+
+
+def get_modified_time(doc_id: str) -> str | None:
+    """When the Doc's *content* last changed (RFC 3339 string), or None if it
+    cannot be read. Used to flag edits made after Legal's approval; callers
+    must treat None as "unknown", never as "unchanged".
+
+    Uses the newest revision's time rather than the file's `modifiedTime`:
+    Drive also bumps `modifiedTime` on sharing changes, so the app's own
+    writer→reader switch at "start signing" looked like an edit and blocked
+    every signing-copy download. Falls back to `modifiedTime` (which can only
+    over-report a change, never hide one) if revisions can't be listed.
+    """
+    try:
+        files = _client().files()
+        latest = None
+        page_token = None
+        while True:
+            response = _client().revisions().list(
+                fileId=doc_id, pageSize=1000, pageToken=page_token,
+                fields="nextPageToken,revisions(modifiedTime)",
+            ).execute()
+            times = [item["modifiedTime"] for item in response.get("revisions", []) if item.get("modifiedTime")]
+            if times:
+                latest = max([latest, *times] if latest else times)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        if latest:
+            return latest
+        response = files.get(fileId=doc_id, fields="modifiedTime", supportsAllDrives=True).execute()
+    except Exception:
+        logging.getLogger("accord360.drive").warning("Could not read modification time for doc %s", doc_id, exc_info=True)
         return None
     return response.get("modifiedTime") or None
 

@@ -91,6 +91,9 @@ def _mock_drive(monkeypatch):
 
     monkeypatch.setattr(agreement_service.google_drive, "grant_permission", fake_grant_permission)
     monkeypatch.setattr(agreement_service.google_drive, "revoke_permission", fake_revoke_permission)
+    # Approval downgrades writers to readers; never let that reach real Drive.
+    monkeypatch.setattr(agreement_service.google_drive, "update_permission", lambda doc_id, permission_id, *, role="writer": None)
+    monkeypatch.setattr(agreement_service.google_drive, "get_file_modified_time", lambda doc_id: "2026-11-11T10:00:00.000Z")
 
 
 def test_status_notifications_use_the_phase3_recipient_table(monkeypatch):
@@ -248,6 +251,11 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
             return inner_grant(doc_id, email, role=role, notify=notify, message=message)
 
         monkeypatch.setattr(agreement_service.google_drive, "grant_permission", recording_grant)
+        downgrades = []
+        monkeypatch.setattr(
+            agreement_service.google_drive, "update_permission",
+            lambda doc_id, permission_id, *, role="writer": downgrades.append((permission_id, role)),
+        )
         suffix = uuid4().hex[:8]
         researcher = _user(db, "researcher", suffix)
         linkages = _user(db, "linkages", f"{suffix}-linkages")
@@ -303,6 +311,8 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
         assert "legal" not in active_roles()
         assert approved.approved_by_name == legal.full_name and approved.approved_at is not None
         assert "start_signing" in agreement_service.available_actions(linkages, db.get(Agreement, aid))
+        # From approval on, everyone left on the Doc is read-only.
+        assert downgrades and all(role == "reader" for _, role in downgrades)
 
 
 def test_revoking_one_role_keeps_a_shared_drive_permission(monkeypatch):

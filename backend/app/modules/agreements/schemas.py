@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.users.schemas import ORMModel, UserOut
 from app.modules.partners.schemas import PartnerOut
@@ -67,6 +67,10 @@ class ProgressUpdateCreate(BaseModel):
     notes: str = Field(min_length=1, max_length=20000)
 
 
+# Statuses in which the live Google Doc link is withheld from every API response.
+DOC_LINK_LOCKED_STATUSES = {"approved_for_signing", "awaiting_signatures"}
+
+
 class AgreementListOut(ORMModel):
     id: int
     title: str
@@ -90,6 +94,16 @@ class AgreementListOut(ORMModel):
     doc_modified_after_approval: bool | None = None
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _lock_doc_link_after_approval(self):
+        # Between Legal approval and the signed upload, nobody opens the Doc
+        # from Accord 360: the approved text is final, and Linkages works from
+        # the exported signing copy. The link returns once the signed version
+        # is uploaded.
+        if self.status in DOC_LINK_LOCKED_STATUSES:
+            self.template_copy_url = None
+        return self
 
 
 class AgreementDetailOut(AgreementListOut):

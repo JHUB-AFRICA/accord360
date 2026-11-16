@@ -100,12 +100,39 @@ TRANSITIONS: dict[tuple[str, str], tuple[str, set[str]]] = {
     ("legal_review", "approve"): ("approved_for_signing", {"legal"}),
     ("returned_to_researcher", "resubmit"): ("linkages_review", {"researcher"}),
     ("approved_for_signing", "start_signing"): ("awaiting_signatures", {"linkages"}),
+    # Safety valve: if the Doc's content changed after Legal approved it,
+    # Linkages sends it back through Legal review instead of being stuck on a
+    # "changed after approval" error. Only offered/allowed when a change is
+    # actually detected (see SEND_BACK_TO_LEGAL_STATUSES).
+    ("approved_for_signing", "send_to_legal"): ("legal_review", {"linkages"}),
+    ("awaiting_signatures", "send_to_legal"): ("legal_review", {"linkages"}),
     ("awaiting_signatures", "mark_fully_executed"): ("fully_executed", {"linkages"}),
     # TODO(spec): confirm exact renewal semantics with Linkages Office
     # (Section 2.5) — minimum implemented default: expired -> approved_for_signing.
     ("expired", "renew"): ("approved_for_signing", {"me"}),
     ("expired", "archive"): ("archived", {"me"}),
 }
+
+
+# From Legal approval onward nobody edits the Doc: everyone with direct access
+# is a reader, so the approved text cannot drift before signing.
+DRIVE_READ_ONLY_STATUSES = {"approved_for_signing", "awaiting_signatures", "fully_executed", "expired", "archived"}
+# Statuses where "send_to_legal" means "send back for re-review because the
+# approved Doc changed" and is gated on that change being detected.
+SEND_BACK_TO_LEGAL_STATUSES = {"approved_for_signing", "awaiting_signatures"}
+
+
+def _doc_changed_since_approval(agreement: Agreement) -> bool | None:
+    """True/False when the approved Doc's content did/didn't change since Legal
+    approval; None when unknown (no snapshot, no Doc, or Drive unreachable)."""
+    if agreement.status not in SEND_BACK_TO_LEGAL_STATUSES:
+        return None
+    if not (agreement.approved_doc_modified_at and agreement.template_copy_doc_id):
+        return None
+    current = google_drive.get_modified_time(agreement.template_copy_doc_id)
+    if not current:
+        return None
+    return current > agreement.approved_doc_modified_at
 
 
 def _transition_recipient_roles(to_status: str) -> set[str]:
@@ -222,7 +249,7 @@ def desired_drive_access(db: Session, agreement: Agreement, status: str | None =
     """
     status = status or agreement.status
     rows: list[dict[str, str]] = []
-    drive_role = "reader" if status in {"awaiting_signatures", "fully_executed", "expired", "archived"} else "writer"
+    drive_role = "reader" if status in DRIVE_READ_ONLY_STATUSES else "writer"
 
     researcher = agreement.researcher or db.get(User, agreement.researcher_id)
     if researcher and researcher.email:
@@ -401,7 +428,7 @@ def inspect_drive_access(db: Session, agreement: Agreement) -> dict:
         and not any(detail.get("inherited") for detail in (item.get("permissionDetails") or []))
     }
     missing = sorted(email for email in desired_emails if email not in direct)
-    expected_role = "reader" if agreement.status in {"awaiting_signatures", "fully_executed", "expired", "archived"} else "writer"
+    expected_role = "reader" if agreement.status in DRIVE_READ_ONLY_STATUSES else "writer"
     wrong_role = sorted(email for email in desired_emails if email in direct and direct[email].get("role") != expected_role)
     active = list(db.scalars(select(AgreementDrivePermission).where(
         AgreementDrivePermission.agreement_id == agreement.id,
@@ -583,11 +610,14 @@ def get_agreement_detail(db: Session, user: User, agreement_id: int) -> Agreemen
     if not can_view_agreement(user, agreement):
         raise HTTPException(status_code=404, detail="Agreement not found")
     result = AgreementDetailOut.model_validate(agreement)
-    result.available_actions = available_actions(user, agreement)
-    if agreement.status in {"approved_for_signing", "awaiting_signatures"} and agreement.approved_doc_modified_at and agreement.template_copy_doc_id:
-        current = google_drive.get_modified_time(agreement.template_copy_doc_id)
-        if current:
-            result.doc_modified_after_approval = current > agreement.approved_doc_modified_at
+    actions = available_actions(user, agreement)
+    # Only Linkages acts on the "changed after approval" check, so only their
+    # page load pays for the live Drive call.
+    if user.role == "linkages":
+        result.doc_modified_after_approval = _doc_changed_since_approval(agreement)
+    if agreement.status in SEND_BACK_TO_LEGAL_STATUSES and result.doc_modified_after_approval is not True:
+        actions = [item for item in actions if item != "send_to_legal"]
+    result.available_actions = actions
     return result
 
 
@@ -642,6 +672,12 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
 
     if payload.action == "start_signing" and agreement.template_copy_doc_id:
         _ensure_signing_copy_unchanged(agreement)
+    sending_back_to_legal = payload.action == "send_to_legal" and agreement.status in SEND_BACK_TO_LEGAL_STATUSES
+    if sending_back_to_legal and _doc_changed_since_approval(agreement) is not True:
+        raise HTTPException(
+            status_code=409,
+            detail="The Google Doc has not changed since Legal approval, so it does not need another Legal review.",
+        )
 
     from_status = agreement.status
     # Reconcile Drive before changing local status. If Drive fails, the
@@ -654,9 +690,16 @@ def transition_agreement(db: Session, user: User, agreement_id: int, payload: Tr
     if payload.action == "approve":
         agreement.approved_at = utc_now()
         agreement.approved_by_name = user.full_name
+        # Snapshot the file-level modifiedTime (taken after the reconcile above);
+        # later checks compare the newest *content* revision against it.
         agreement.approved_doc_modified_at = (
-            google_drive.get_modified_time(agreement.template_copy_doc_id) if agreement.template_copy_doc_id else None
+            google_drive.get_file_modified_time(agreement.template_copy_doc_id) if agreement.template_copy_doc_id else None
         )
+    if sending_back_to_legal:
+        # The old approval no longer covers the Doc; Legal must approve again.
+        agreement.approved_at = None
+        agreement.approved_by_name = None
+        agreement.approved_doc_modified_at = None
     agreement.status = to_status
     if to_status == "archived":
         agreement.archived = True
