@@ -1,4 +1,4 @@
-name: Backend CI/CD
+name: Accord360 CI/CD
 
 on:
   pull_request:
@@ -10,32 +10,30 @@ on:
       - "backend/Dockerfile"
       - "backend/.dockerignore"
       - "backend/alembic.ini"
-      - "backend/docker-compose.yml"
+      - "frontend/src/**"
+      - "frontend/scripts/**"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/Dockerfile"
+      - "frontend/.dockerignore"
+      - "frontend/nginx.conf"
+      - "frontend/.env.example"
       - ".github/workflows/backend-ci-cd.yml"
   push:
     branches:
       - main
-    paths:
-      - "backend/app/**"
-      - "backend/migrations/**"
-      - "backend/tests/**"
-      - "backend/requirements.txt"
-      - "backend/Dockerfile"
-      - "backend/.dockerignore"
-      - "backend/alembic.ini"
-      - "backend/docker-compose.yml"
-      - ".github/workflows/backend-ci-cd.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/accord360-backend
+concurrency:
+  group: accord360-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: Run backend tests
+  backend-test:
+    name: Test backend
     runs-on: ubuntu-latest
 
     steps:
@@ -62,10 +60,46 @@ jobs:
           SEED_DEMO_DATA: "true"
         run: python -m pytest -q
 
-  build:
-    name: Build backend image
-    needs: test
+  frontend-check:
+    name: Check frontend
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run verification gate
+        working-directory: frontend
+        run: npm run check
+
+  publish-images:
+    name: Publish ${{ matrix.app }} image
+    if: github.ref == 'refs/heads/main'
+    needs:
+      - backend-test
+      - frontend-check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: backend
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+          - app: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
 
     steps:
       - name: Check out repository
@@ -75,7 +109,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -85,18 +118,18 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/accord360-${{ matrix.app }}
           tags: |
             type=sha,format=long
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest
 
-      - name: Build image and publish to Docker Hub
+      - name: Build and publish image
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: ${{ github.ref == 'refs/heads/main' }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
