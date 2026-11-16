@@ -45,36 +45,40 @@ def test_template_library_publishes_lists_and_archives_versions():
     email = f"templates-{uuid4().hex[:8]}@accord360.app"
     _ensure_user(email, "linkages", password)
     headers = _login(email, password)
-    name = f"Prototype MoU {uuid4().hex[:8]}"
+    master_doc_id = f"prototype-mou-{uuid4().hex[:8]}"
 
     created = client.post(
         "/api/templates",
         headers=headers,
-        data={"name": name, "agreement_type": "MoU", "version": "1.0", "description": "Approved prototype template"},
+        data={"document_type": "MoU", "master_doc_id": master_doc_id},
         files={"file": ("prototype.docx", b"template bytes", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
     )
     assert created.status_code == 201
     template_id = created.json()["id"]
-    assert created.json()["status"] == "active"
-    assert created.json()["size_bytes"] == len(b"template bytes")
+    assert created.json()["is_active"] is False
+    assert created.json()["master_doc_id"] == master_doc_id
+    assert created.json()["file"].endswith(".docx")
 
-    listed = client.get("/api/templates?agreement_type=MoU", headers=headers)
+    listed = client.get("/api/templates?document_type=MoU", headers=headers)
     assert listed.status_code == 200
     assert any(item["id"] == template_id for item in listed.json())
 
-    archived = client.patch(f"/api/templates/{template_id}", headers=headers, json={"status": "archived"})
-    assert archived.status_code == 200
-    assert archived.json()["status"] == "archived"
-    assert not any(item["id"] == template_id for item in client.get("/api/templates", headers=headers).json())
+    activated = client.post(f"/api/templates/{template_id}/activate", headers=headers)
+    assert activated.status_code == 200
+    assert activated.json()["is_active"] is True
+
+    deactivated = client.post(f"/api/templates/{template_id}/deactivate", headers=headers)
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
 
 
-def test_configuration_writes_are_admin_only_and_reference_data_is_readable():
-    admin_password = "Admin@123"
-    admin_email = f"config-admin-{uuid4().hex[:8]}@accord360.app"
+def test_configuration_writes_are_linkages_only_and_reference_data_is_readable():
+    linkages_password = "Linkages@123"
+    linkages_email = f"config-linkages-{uuid4().hex[:8]}@accord360.app"
     researcher_email = f"config-researcher-{uuid4().hex[:8]}@accord360.app"
-    _ensure_user(admin_email, "admin", admin_password)
+    _ensure_user(linkages_email, "linkages", linkages_password)
     _ensure_user(researcher_email, "researcher", "Researcher@123")
-    admin = _login(admin_email, admin_password)
+    linkages = _login(linkages_email, linkages_password)
     researcher = _login(researcher_email, "Researcher@123")
 
     forbidden = client.get("/api/configuration", headers=researcher)
@@ -82,18 +86,18 @@ def test_configuration_writes_are_admin_only_and_reference_data_is_readable():
 
     created = client.post(
         "/api/configuration",
-        headers=admin,
+        headers=linkages,
         json={"key": f"prototype.sla.{uuid4().hex[:6]}", "category": "sla", "value": "10", "description": "Prototype SLA days"},
     )
     assert created.status_code == 201
     key = created.json()["key"]
-    updated = client.patch(f"/api/configuration/{key}", headers=admin, json={"value": "15"})
+    updated = client.patch(f"/api/configuration/{key}", headers=linkages, json={"value": "15"})
     assert updated.status_code == 200
     assert updated.json()["value"] == "15"
 
     reference = client.post(
         "/api/reference-data",
-        headers=admin,
+        headers=linkages,
         json={"category": "prototype", "code": uuid4().hex[:8], "label": "Prototype option", "value": "demo"},
     )
     assert reference.status_code == 201

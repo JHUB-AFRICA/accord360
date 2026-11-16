@@ -16,7 +16,7 @@ services:
       start_period: 5s
 
   backend:
-    image: ${DOCKERHUB_USERNAME}/accord360-backend:${RELEASE_TAG}
+    image: ${IMAGE_REPOSITORY}:backend-${RELEASE_TAG}
     restart: unless-stopped
     environment:
       APP_NAME: ${APP_NAME}
@@ -49,7 +49,7 @@ services:
       start_period: 30s
 
   frontend:
-    image: ${DOCKERHUB_USERNAME}/accord360-frontend:${RELEASE_TAG}
+    image: ${IMAGE_REPOSITORY}:frontend-${RELEASE_TAG}
     restart: unless-stopped
     depends_on:
       backend:

@@ -27,6 +27,10 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE_NAME: jhubafrica/accord360-app
+  RELEASE_VERSION: v1.0
+
 concurrency:
   group: accord360-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -118,10 +122,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/accord360-${{ matrix.app }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,format=long
-            type=raw,value=latest
+            type=sha,format=long,prefix=${{ matrix.app }}-sha-
+            type=raw,value=${{ matrix.app }}-${{ env.RELEASE_VERSION }}
+            type=raw,value=${{ matrix.app }}-latest
+            type=raw,value=${{ env.RELEASE_VERSION }},enable=${{ matrix.app == 'backend' }}
 
       - name: Build and publish image
         uses: docker/build-push-action@v6

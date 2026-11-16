@@ -7,22 +7,30 @@ This package runs the complete Accord 360 application on the owner's server:
 - `database` runs PostgreSQL with persistent storage.
 
 The application source code is not required on the server. Docker Compose pulls
-matching frontend and backend images from Docker Hub and connects all three
+matching frontend and backend tags from Docker Hub and connects all three
 services on its private default network.
 
 ## Release images
 
 Merges to `main` run the GitHub Actions workflow in
 `.github/workflows/backend-ci-cd.yml`. After the backend tests and frontend
-verification gate pass, the workflow publishes:
+verification gate pass, the workflow publishes both components into the single
+Docker Hub repository requested for the project:
 
 ```text
-<dockerhub-user>/accord360-backend:sha-<full-git-commit>
-<dockerhub-user>/accord360-frontend:sha-<full-git-commit>
+jhubafrica/accord360-app:backend-sha-<full-git-commit>
+jhubafrica/accord360-app:frontend-sha-<full-git-commit>
+jhubafrica/accord360-app:backend-v1.0
+jhubafrica/accord360-app:frontend-v1.0
 ```
 
-It also updates the `latest` tag for both images. Deploy the immutable `sha-...`
-tag rather than `latest` so the frontend and backend always come from the same
+It also updates `backend-latest` and `frontend-latest`. For compatibility with
+the original backend-only publishing command, `jhubafrica/accord360-app:v1.0`
+is updated as an alias of the backend image. A single Docker tag cannot contain
+both services, so the server Compose file uses the component-prefixed tags.
+
+Deploy the immutable `backend-sha-...` and `frontend-sha-...` pair rather than
+the mutable version/latest tags so both services always come from the same
 commit and a rollback remains predictable.
 
 The GitHub repository must define these Actions secrets:
@@ -32,10 +40,9 @@ DOCKERHUB_USERNAME
 DOCKERHUB_TOKEN
 ```
 
-Create `accord360-backend` and `accord360-frontend` under that Docker Hub user
-or organization first. Use a Docker Hub access token with read/write permission
-for both repositories. The token must not be committed to this deployment
-package.
+The `jhubafrica/accord360-app` Docker Hub repository must exist. Use a Docker
+Hub access token with read/write permission for it. The token must not be
+committed to this deployment package.
 
 ## Requirements
 
@@ -67,8 +74,10 @@ configuration:
 cp .env.example .env
 ```
 
-Edit `.env` and replace every placeholder. Set `DOCKERHUB_USERNAME` and set
-`RELEASE_TAG` to the `sha-...` tag shown by the successful GitHub Actions run.
+Edit `.env` and replace every placeholder. Keep `IMAGE_REPOSITORY` set to
+`jhubafrica/accord360-app` and set `RELEASE_TAG` to `sha-<full-git-commit>`
+from the successful GitHub Actions run. Compose automatically adds the
+`backend-` and `frontend-` prefixes.
 Also configure a strong `SECRET_KEY`, database password, public HTTPS origin,
 and object-storage credentials when object storage is enabled.
 

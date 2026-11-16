@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, timedelta
 from pathlib import Path
 
 # Never touch the developer's real database: tests always run on their own
@@ -43,13 +44,30 @@ def test_portfolio_report_and_generated_formats_use_authorized_scope():
     linkages_password = "Linkages@123"
     with SessionLocal() as db:
         researcher = User(full_name="Report Researcher", email=researcher_email, password_hash=hash_password(researcher_password), role="researcher")
+        other_researcher = User(full_name="Other Report Researcher", email=f"report-other-{suffix}@accord360.app", password_hash=hash_password(researcher_password), role="researcher")
         linkages = User(full_name="Report Linkages", email=linkages_email, password_hash=hash_password(linkages_password), role="linkages")
         partner = Partner(name=f"Report Partner {suffix}", sector="Technology", country="Kenya")
-        db.add_all([researcher, linkages, partner])
+        db.add_all([researcher, other_researcher, linkages, partner])
         db.flush()
         db.add_all([
-            Agreement(reference_number=f"REPORT-{suffix}-1", title="Researcher's report agreement", agreement_type="CRA", purpose="A sufficiently detailed research collaboration purpose.", department="Computing", stage="active", status="active", status_color="green", owner_id=researcher.id, partner_id=partner.id),
-            Agreement(reference_number=f"REPORT-{suffix}-2", title="Linkages report agreement", agreement_type="MoU", purpose="A sufficiently detailed institutional collaboration purpose.", department="Engineering", stage="legal_review", status="in_legal_review", status_color="orange", owner_id=linkages.id, partner_id=partner.id),
+            Agreement(
+                title="Researcher's report agreement",
+                department="Computing",
+                status="fully_executed",
+                researcher_id=researcher.id,
+                partner_id=partner.id,
+                start_date=date.today() - timedelta(days=30),
+                end_date=date.today() + timedelta(days=365),
+            ),
+            Agreement(
+                title="Other researcher's report agreement",
+                department="Engineering",
+                status="expired",
+                researcher_id=other_researcher.id,
+                partner_id=partner.id,
+                start_date=date.today() - timedelta(days=730),
+                end_date=date.today() - timedelta(days=1),
+            ),
         ])
         db.commit()
 
@@ -57,24 +75,16 @@ def test_portfolio_report_and_generated_formats_use_authorized_scope():
     linkages_headers = _login(linkages_email, linkages_password)
     researcher_report = client.get("/api/reports/portfolio", headers=researcher_headers)
     assert researcher_report.status_code == 200
-    assert researcher_report.json()["totals"]["total_partnerships"] == 1
+    assert researcher_report.json()["totals"]["total_agreements"] == 1
+    assert researcher_report.json()["totals"]["fully_executed"] == 1
 
     full_report = client.get("/api/reports/portfolio", headers=linkages_headers)
     assert full_report.status_code == 200
-    assert full_report.json()["totals"]["total_partnerships"] >= 2
-    assert full_report.json()["totals"]["at_risk"] >= 1
+    assert full_report.json()["totals"]["total_agreements"] >= 2
+    assert full_report.json()["totals"]["expired"] >= 1
 
-    pdf = client.get("/api/reports/export.pdf", headers=researcher_headers)
-    assert pdf.status_code == 200
-    assert pdf.headers["content-type"].startswith("application/pdf")
-    assert pdf.content.startswith(b"%PDF-")
-
-    excel = client.get("/api/reports/export.xlsx", headers=researcher_headers)
-    assert excel.status_code == 200
-    assert "spreadsheetml" in excel.headers["content-type"]
-    assert excel.content.startswith(b"PK")
-
-    summary = client.post("/api/reports/ai-summary", headers=researcher_headers, json={})
-    assert summary.status_code == 200
-    assert summary.json()["requires_human_review"] is True
-    assert "authorized portfolio" in summary.json()["summary"]
+    exported = client.get("/api/reports/agreements.csv", headers=researcher_headers)
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/csv")
+    assert "Researcher's report agreement" in exported.text
+    assert "Other researcher's report agreement" not in exported.text
