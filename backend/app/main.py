@@ -31,16 +31,47 @@ if settings.environment == "test":
     Base.metadata.create_all(bind=engine)
 if settings.seed_demo_data:
     seed(reset=False, demo=True)
+else:
+    # Form field definitions are configuration, not demo data: a clean database
+    # needs them before any agreement can be created. Idempotent.
+    try:
+        from .db.session import SessionLocal
+        from .seed import seed_field_definitions
+
+        with SessionLocal() as _db:
+            seed_field_definitions(_db)
+            _db.commit()
+    except Exception:  # tables not migrated yet; `alembic upgrade head` first
+        logger.warning("field_definitions_not_seeded", exc_info=True)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     from apscheduler.schedulers.background import BackgroundScheduler
 
+    if settings.storage_enabled:
+        from .utils.storage import StorageError, ensure_bucket
+
+        for attempt in range(1, 11):  # storage may still be starting alongside us
+            try:
+                ensure_bucket()
+                logger.info("object_storage_ready bucket=%s", settings.storage_bucket)
+                break
+            except StorageError:
+                logger.warning("object_storage_not_ready attempt=%s", attempt, exc_info=attempt == 10)
+                time.sleep(3)
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(run_daily_expiry_check, "interval", days=1, id="daily-expiry-check", replace_existing=True)
     scheduler.start()
     logger.info("daily_expiry_scheduler_started job_id=daily-expiry-check")
+    if settings.google_drive_enabled and settings.environment != "test" and settings.drive_access_sweep_minutes > 0:
+        from .modules.agreements.drive_sweep import run_drive_access_sweep
+
+        scheduler.add_job(
+            run_drive_access_sweep, "interval", minutes=settings.drive_access_sweep_minutes,
+            id="drive-access-sweep", replace_existing=True, max_instances=1, coalesce=True,
+        )
+        logger.info("drive_access_sweep_started every=%sm", settings.drive_access_sweep_minutes)
     try:
         yield
     finally:

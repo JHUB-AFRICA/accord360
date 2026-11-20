@@ -45,12 +45,19 @@ def update_partner(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles("linkages")),
 ):
+    existing = service.get_partner(db, partner_id)
+    old_contact = existing.contact_email if existing else None
     try:
         partner, old = service.update_partner(db, partner_id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     audit(db, actor, "update_partner", "partner", partner.id, request, old_value=old, new_value=partner.name)
     db.commit()
+    if (old_contact or "").strip().lower() != (partner.contact_email or "").strip().lower():
+        # The previous contact loses Doc access immediately.
+        from app.modules.agreements.service import reconcile_agreements_for_people
+
+        reconcile_agreements_for_people(db, emails={old_contact} if old_contact else set(), partner_id=partner.id, notify=True)
     db.refresh(partner)
     return partner
 

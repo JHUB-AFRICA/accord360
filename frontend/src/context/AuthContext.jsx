@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { USE_MOCK_API } from "../lib/api.js";
-import { getCurrentUser, loginRequest } from "../lib/backend.js";
+import { getCurrentUser, loginRequest, signupRequest } from "../lib/backend.js";
 
 const AuthContext = createContext(null);
 
@@ -55,6 +55,15 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  async function signup(details) {
+    setSessionMessage("");
+    const data = await signupRequest(details);
+    localStorage.setItem("accord360_token", data.access_token);
+    localStorage.setItem("accord360_user", JSON.stringify(data.user));
+    setUser(data.user);
+    return data.user;
+  }
+
   function clearSessionMessage() {
     setSessionMessage("");
   }
@@ -63,6 +72,7 @@ export function AuthProvider({ children }) {
     user,
     loading,
     login,
+    signup,
     logout,
     sessionMessage,
     clearSessionMessage,

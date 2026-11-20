@@ -28,6 +28,8 @@ class Settings:
     storage_region: str = os.getenv("AWS_REGION", "us-east-2")
     storage_bucket: str = os.getenv("AWS_BUCKET_NAME", "accord-360")
     seed_demo_data: bool = env_bool("SEED_DEMO_DATA", True)
+    # Open self-service signup (email + office, no verification). Demos only.
+    allow_demo_signup: bool = env_bool("ALLOW_DEMO_SIGNUP", False)
     log_level: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     email_enabled: bool = env_bool("EMAIL_ENABLED", False)
     email_provider: str = os.getenv("EMAIL_PROVIDER", "console").strip().lower()
@@ -56,6 +58,9 @@ class Settings:
     # real Drive API, so sharing/removal behavior is genuinely exercised.
     # Remove this once a Shared Drive is set up and real copying works.
     google_drive_demo_doc_id: str | None = os.getenv("GOOGLE_DRIVE_DEMO_DOC_ID") or None
+    # Minutes between sweeps that strip Drive access the workflow did not
+    # grant (shares added by hand inside Google Docs). 0 disables the job.
+    drive_access_sweep_minutes: int = int(os.getenv("DRIVE_ACCESS_SWEEP_MINUTES", "2"))
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"

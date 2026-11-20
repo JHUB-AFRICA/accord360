@@ -18,7 +18,7 @@ from io import BytesIO
 import re
 import zipfile
 from fastapi import HTTPException, Request
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 from uuid import uuid4
@@ -63,6 +63,7 @@ __all__ = [
     "desired_drive_access",
     "inspect_drive_access",
     "reconcile_drive_access",
+    "reconcile_agreements_for_people",
 ]
 
 MAX_SIGNED_FILE_SIZE = 25 * 1024 * 1024
@@ -229,6 +230,16 @@ def _revoke_drive_access(db: Session, agreement: Agreement, *, role: str) -> Non
         db.flush()
 
 
+def _canonical_email(email: str) -> str:
+    """Compare addresses the way Google does: Gmail ignores dots and +tags and
+    treats googlemail.com as gmail.com, and Drive reports the canonical form."""
+    value = (email or "").strip().lower()
+    local, _, domain = value.partition("@")
+    if domain in {"gmail.com", "googlemail.com"}:
+        return local.split("+", 1)[0].replace(".", "") + "@gmail.com"
+    return value
+
+
 def _staff_emails(db: Session, role: str) -> list[str]:
     return [m.email for m in db.scalars(select(User).where(User.role == role, User.is_active.is_(True))).all()]
 
@@ -252,7 +263,7 @@ def desired_drive_access(db: Session, agreement: Agreement, status: str | None =
     drive_role = "reader" if status in DRIVE_READ_ONLY_STATUSES else "writer"
 
     researcher = agreement.researcher or db.get(User, agreement.researcher_id)
-    if researcher and researcher.email:
+    if researcher and researcher.email and researcher.is_active:
         rows.append({"role": "researcher", "email": researcher.email, "drive_role": drive_role})
 
     partner = agreement.partner or db.get(Partner, agreement.partner_id)
@@ -266,23 +277,56 @@ def desired_drive_access(db: Session, agreement: Agreement, status: str | None =
     return rows
 
 
-def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str | None = None) -> dict:
+# Drive roles that come from owning or organising the Shared Drive itself.
+# They are never workflow grants and are never stripped from a Doc.
+PROTECTED_DRIVE_ROLES = {"owner", "organizer", "fileOrganizer"}
+
+
+def _is_inherited_permission(permission: dict | None) -> bool:
+    if not permission:
+        return False
+    details = permission.get("permissionDetails") or []
+    return any(detail.get("inherited") or detail.get("inheritedFrom") for detail in details)
+
+
+def _permission_label(permission: dict) -> str:
+    if permission.get("emailAddress"):
+        return permission["emailAddress"]
+    if permission.get("type") == "anyone":
+        return "anyone with the link"
+    if permission.get("domain"):
+        return f"domain:{permission['domain']}"
+    return f"{permission.get('type', 'unknown')}:{permission.get('id')}"
+
+
+def reconcile_drive_access(
+    db: Session, agreement: Agreement, target_status: str | None = None, *, notify: bool = True
+) -> dict:
     """Make direct Drive permissions match the status-driven access policy.
 
+    The policy is an allow-list: after the required access is in place, every
+    *direct* permission on the Doc that the policy did not ask for is removed
+    — workflow grants that are no longer needed, shares an editor added by
+    hand, "anyone with the link" and domain links alike.  Only inherited
+    access (Shared Drive membership), owner/organizer roles and the service
+    account itself are left alone.  Removals are re-checked against Drive
+    afterwards; a permission that survives raises DriveError so the caller
+    leaves the workflow status unchanged and the action can be retried.
+
     The operation is safe to retry: it adopts matching permissions already in
-    Drive, adds missing access before revoking stale access, and records the
-    permission IDs returned by Drive.  Unrelated and inherited permissions are
-    preserved.  Drive errors are allowed to propagate so callers can leave the
-    workflow status unchanged and return a retryable 502 response.
+    Drive and adds missing access before revoking anything, so a failed
+    hand-off never removes the only participant who can continue.
     """
     if not agreement.template_copy_doc_id:
         raise DriveError("Agreement has no Google Drive document to reconcile")
+    doc_id = agreement.template_copy_doc_id
     target_status = target_status or agreement.status
     desired = desired_drive_access(db, agreement, target_status)
     desired_by_key = {(item["role"], item["email"].strip().lower()): item for item in desired}
     desired_emails = {item["email"].strip().lower() for item in desired}
+    live = True
     try:
-        current = google_drive.list_permissions(agreement.template_copy_doc_id)
+        current = google_drive.list_permissions(doc_id)
     except DriveError:
         # Unit tests and local prototype mode often use the in-memory Drive
         # grant stubs with Drive disabled. Production always lists live Drive
@@ -290,29 +334,23 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
         # still surfacing errors when the integration is enabled.
         if settings.google_drive_enabled and settings.environment != "test":
             raise
+        live = False
         current = [
             {"id": grant.permission_id, "type": "user", "emailAddress": grant.email, "role": "writer"}
-            for grant in _active_grants(db, agreement, role="researcher")
-            + _active_grants(db, agreement, role="partner")
-            + _active_grants(db, agreement, role="linkages")
-            + _active_grants(db, agreement, role="legal")
+            for grant in db.scalars(select(AgreementDrivePermission).where(
+                AgreementDrivePermission.agreement_id == agreement.id,
+                AgreementDrivePermission.revoked_at.is_(None),
+            )).all()
         ]
 
-    def is_inherited(permission: dict | None) -> bool:
-        if not permission:
-            return False
-        details = permission.get("permissionDetails") or []
-        return any(detail.get("inherited") or detail.get("inheritedFrom") for detail in details)
-
     def direct_for_email(email: str) -> dict | None:
-        normalized = email.strip().lower()
+        normalized = _canonical_email(email)
         for permission in current:
             if permission.get("type") != "user" or not permission.get("emailAddress"):
                 continue
-            if permission["emailAddress"].strip().lower() != normalized:
+            if _canonical_email(permission["emailAddress"]) != normalized:
                 continue
-            details = permission.get("permissionDetails") or []
-            if any(detail.get("inherited") or detail.get("inheritedFrom") for detail in details):
+            if _is_inherited_permission(permission):
                 continue
             return permission
         return None
@@ -324,12 +362,17 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
         "upgraded": [],
         "removed": [],
         "unchanged": [],
-        "inherited_permissions_present": any(
-            any(detail.get("inherited") or detail.get("inheritedFrom") for detail in (permission.get("permissionDetails") or []))
-            for permission in current
-        ),
+        "inherited_permissions_present": any(_is_inherited_permission(permission) for permission in current),
+        "inherited_access_retained": [],
         "needs_repair": False,
     }
+
+    # Permission ids the policy wants on the Doc.  Matching by id (not by the
+    # email we typed) means an address Google normalises differently — case,
+    # Gmail dots, googlemail.com — is still recognised as the same person.
+    keep_ids: set[str] = set()
+    same_status = target_status == agreement.status
+    grant_errors: list[str] = []
 
     # Add/adopt first.  This ordering guarantees that a failed hand-off never
     # removes the only active participant who can continue the workflow.
@@ -339,24 +382,36 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
         key = (role, email.lower())
         permission = direct_for_email(email)
         if permission is None:
-            permission_id = google_drive.grant_permission(
-                agreement.template_copy_doc_id,
-                email,
-                role=item.get("drive_role", "writer"),
-                notify=role == "partner",
-            )
-            permission = {"id": permission_id, "type": "user", "emailAddress": email, "role": item.get("drive_role", "writer")}
-            current.append(permission)
+            try:
+                permission_id = google_drive.grant_permission(
+                    doc_id,
+                    email,
+                    role=item.get("drive_role", "writer"),
+                    notify=notify and role == "partner",
+                )
+            except DriveError as exc:
+                if not same_status:
+                    raise
+                # Re-applying the current status (sweep, deactivation): one
+                # address Google refuses must not stop the removals below.
+                grant_errors.append(str(exc))
+                continue
+            existing_permission = next((existing for existing in current if existing.get("id") == permission_id), None)
+            if existing_permission is not None:
+                # Drive handed back an account we already had (an alias we did not
+                # recognise): make sure its role matches the policy.
+                wanted_role = item.get("drive_role", "writer")
+                if existing_permission.get("role") != wanted_role and not _is_inherited_permission(existing_permission):
+                    google_drive.update_permission(doc_id, permission_id, role=wanted_role)
+                    existing_permission["role"] = wanted_role
+            else:
+                current.append({"id": permission_id, "type": "user", "emailAddress": email, "role": item.get("drive_role", "writer")})
             result["added"].append(email)
         else:
             permission_id = permission.get("id")
             expected_drive_role = item.get("drive_role", "writer")
             if permission.get("role") != expected_drive_role and permission_id:
-                google_drive.update_permission(
-                    agreement.template_copy_doc_id,
-                    permission_id,
-                    role=expected_drive_role,
-                )
+                google_drive.update_permission(doc_id, permission_id, role=expected_drive_role)
                 permission["role"] = expected_drive_role
                 result["upgraded"].append(email)
             existing_keys = {
@@ -367,6 +422,8 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
                 result["unchanged"].append(email)
             else:
                 result["adopted"].append(email)
+        if permission_id:
+            keep_ids.add(permission_id)
 
         active = _active_grants(db, agreement, role=role)
         matching = [grant for grant in active if grant.email.strip().lower() == email.lower()]
@@ -378,30 +435,82 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
             db.add(AgreementDrivePermission(agreement_id=agreement.id, role=role, email=email, permission_id=permission_id))
         db.flush()
 
-    # Remove stale managed grants only after every required grant exists.  A
-    # shared email that still has another desired role keeps its Drive access.
-    active_all = list(db.scalars(select(AgreementDrivePermission).where(
-        AgreementDrivePermission.agreement_id == agreement.id,
-        AgreementDrivePermission.revoked_at.is_(None),
-    )).all())
-    for grant in active_all:
-        key = (grant.role, grant.email.strip().lower())
-        if key in desired_by_key:
-            continue
+    # Retire local grants the policy no longer wants.  Their Drive permission
+    # is removed by the allow-list pass below unless the same person is still
+    # needed for another role (same permission id, so it is in keep_ids).
+    stale_grants = [
+        grant
+        for grant in db.scalars(select(AgreementDrivePermission).where(
+            AgreementDrivePermission.agreement_id == agreement.id,
+            AgreementDrivePermission.revoked_at.is_(None),
+        )).all()
+        if (grant.role, grant.email.strip().lower()) not in desired_by_key
+    ]
+    stale_ids = {grant.permission_id for grant in stale_grants}
+    for grant in stale_grants:
         grant.revoked_at = utc_now()
-        if grant.email.strip().lower() in desired_emails:
-            # Same person remains needed for another role; retain Drive access.
-            db.flush()
+    db.flush()
+
+    # Allow-list pass: strip every direct permission the policy did not ask
+    # for.  In demo mode every agreement shares one Doc, so only this
+    # agreement's own stale grants may be removed there.
+    service_account = google_drive.service_account_email()
+    demo_shared_doc = bool(settings.google_drive_demo_doc_id)
+    revoked_ids: set[str] = set()
+    for permission in list(current):
+        permission_id = permission.get("id")
+        if not permission_id or permission_id in keep_ids:
             continue
-        permission = next((item for item in current if item.get("id") == grant.permission_id), None)
-        inherited = is_inherited(permission)
-        if permission and not inherited:
-            google_drive.revoke_permission(agreement.template_copy_doc_id, grant.permission_id)
-            result["removed"].append(grant.email)
-        elif permission is None:
+        if _is_inherited_permission(permission) or permission.get("role") in PROTECTED_DRIVE_ROLES:
+            continue
+        email = (permission.get("emailAddress") or "").strip().lower()
+        if service_account and email == service_account:
+            continue
+        if demo_shared_doc and permission_id not in stale_ids:
+            continue
+        google_drive.revoke_permission(doc_id, permission_id)
+        revoked_ids.add(permission_id)
+        result["removed"].append(_permission_label(permission))
+    current_ids = {permission.get("id") for permission in current}
+    for grant in stale_grants:
+        if grant.permission_id not in current_ids and grant.email.strip().lower() not in desired_emails:
             # Drive already converged; the local row was stale.
             result["removed"].append(grant.email)
-        db.flush()
+
+    if live and (revoked_ids or stale_grants):
+        # Prove the removal stuck instead of trusting the delete call.
+        after = google_drive.list_permissions(doc_id)
+        survivors = [
+            permission for permission in after
+            if permission.get("id") in revoked_ids and not _is_inherited_permission(permission)
+        ]
+        if survivors:
+            raise DriveError(
+                "Google Drive still lists access for "
+                + ", ".join(sorted(_permission_label(permission) for permission in survivors))
+                + " after it was revoked; nothing was changed in Accord 360, please retry"
+            )
+        removed_emails = {grant.email.strip().lower() for grant in stale_grants} | {
+            (permission.get("emailAddress") or "").strip().lower()
+            for permission in current if permission.get("id") in revoked_ids
+        }
+        result["inherited_access_retained"] = sorted(
+            email for email in removed_emails - desired_emails - {""}
+            if any(
+                (permission.get("emailAddress") or "").strip().lower() == email and _is_inherited_permission(permission)
+                for permission in after
+            )
+        )
+
+    if result["removed"]:
+        audit(
+            db, None, "drive_access_revoked", "agreement", agreement.id,
+            old_value=", ".join(result["removed"])[:500], new_value=target_status,
+        )
+    if grant_errors:
+        # Removals above already happened in Drive; report the failed grants
+        # so the caller rolls back local bookkeeping and the sweep retries.
+        raise DriveError("; ".join(grant_errors))
 
     result["changed"] = bool(result["added"] or result["removed"] or result["adopted"] or result["upgraded"])
     # A successful reconciliation has already repaired any discrepancy.  The
@@ -410,6 +519,51 @@ def reconcile_drive_access(db: Session, agreement: Agreement, target_status: str
     result["synchronized"] = True
     result["checked_at"] = utc_now().isoformat()
     return result
+
+
+def reconcile_agreements_for_people(
+    db: Session,
+    *,
+    emails: set[str] | None = None,
+    researcher_id: int | None = None,
+    partner_id: int | None = None,
+    notify: bool = False,
+) -> None:
+    """Best-effort immediate reconcile after someone is deactivated, changes
+    role, or stops being a partner's contact.  Failures are logged, not
+    raised; the periodic Drive access sweep retries them."""
+    import logging
+
+    normalized = {email.strip().lower() for email in (emails or set()) if email}
+    clauses = []
+    if researcher_id is not None:
+        clauses.append(Agreement.researcher_id == researcher_id)
+    if partner_id is not None:
+        clauses.append(Agreement.partner_id == partner_id)
+    if normalized:
+        clauses.append(Agreement.id.in_(
+            select(AgreementDrivePermission.agreement_id).where(
+                AgreementDrivePermission.revoked_at.is_(None),
+                func.lower(AgreementDrivePermission.email).in_(normalized),
+            )
+        ))
+    if not clauses:
+        return
+    ids = db.scalars(
+        select(Agreement.id).where(Agreement.template_copy_doc_id.is_not(None), or_(*clauses))
+    ).all()
+    for agreement_id in ids:
+        try:
+            agreement = db.scalar(select(Agreement).where(Agreement.id == agreement_id).with_for_update())
+            if agreement is None:
+                continue
+            reconcile_drive_access(db, agreement, notify=notify)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logging.getLogger("accord360.drive").exception(
+                "Immediate Drive access reconcile failed for agreement %s; the periodic sweep will retry", agreement_id
+            )
 
 
 def inspect_drive_access(db: Session, agreement: Agreement) -> dict:
@@ -443,10 +597,21 @@ def inspect_drive_access(db: Session, agreement: Agreement) -> dict:
         any(detail.get("inherited") for detail in (item.get("permissionDetails") or []))
         for item in current
     )
+    # Direct access nobody in the workflow granted: hand-added shares,
+    # link sharing, domain sharing. Reconcile removes all of these.
+    service_account = google_drive.service_account_email()
+    unauthorized = sorted(
+        _permission_label(item)
+        for item in current
+        if not _is_inherited_permission(item)
+        and item.get("role") not in PROTECTED_DRIVE_ROLES
+        and (item.get("emailAddress") or "").strip().lower() not in desired_emails | {service_account or ""}
+    )
     return {
         "status": agreement.status,
-        "synchronized": not (missing or wrong_role or stale),
-        "needs_repair": bool(missing or wrong_role or stale or unrecorded),
+        "synchronized": not (missing or wrong_role or stale or unauthorized),
+        "needs_repair": bool(missing or wrong_role or stale or unrecorded or unauthorized),
+        "unauthorized": unauthorized,
         "inherited_permissions_present": inherited,
         "missing": missing,
         "wrong_role": wrong_role,
@@ -942,6 +1107,19 @@ def upload_final_signed_document(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="The signed agreement could not be recorded") from exc
+    if agreement.template_copy_doc_id:
+        # The executed Doc is read-only for everyone still on it. The signed
+        # scan is already stored, so a Drive hiccup is logged and left to the
+        # periodic access sweep rather than failing the upload.
+        try:
+            reconcile_drive_access(db, agreement, notify=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            import logging
+            logging.getLogger("accord360.drive").exception(
+                "Drive access reconcile after final scan failed for agreement %s; the sweep will retry", agreement.id
+            )
     return get_agreement_detail(db, user, agreement.id)
 
 

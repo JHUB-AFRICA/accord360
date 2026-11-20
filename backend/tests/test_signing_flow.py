@@ -163,18 +163,9 @@ def test_signing_stage_reconciliation_is_idempotent_read_only_and_preserves_inhe
         agreement = _agreement(db, researcher, "awaiting_signatures")
         db.commit()
 
-        all_linkages = db.scalars(select(User).where(User.role == "linkages", User.is_active.is_(True))).all()
         permissions = [
             {"id": "researcher-perm", "type": "user", "emailAddress": researcher.email, "role": "writer"},
-            *[
-                {
-                    "id": "linkages-perm" if actor.id == linkages.id else f"linkages-{actor.id}",
-                    "type": "user",
-                    "emailAddress": actor.email,
-                    "role": "writer",
-                }
-                for actor in all_linkages
-            ],
+            {"id": "linkages-perm", "type": "user", "emailAddress": linkages.email, "role": "writer"},
             {
                 "id": "inherited-perm",
                 "type": "user",

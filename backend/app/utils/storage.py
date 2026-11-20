@@ -28,6 +28,22 @@ def _client():
     )
 
 
+def ensure_bucket() -> None:
+    """Create the configured bucket when it does not exist yet (idempotent)."""
+    client = _client()
+    try:
+        client.head_bucket(Bucket=settings.storage_bucket)
+    except ClientError as exc:
+        if str(exc.response.get("Error", {}).get("Code")) not in {"404", "NoSuchBucket", "NotFound"}:
+            raise StorageError("Could not check the object-storage bucket") from exc
+        try:
+            client.create_bucket(Bucket=settings.storage_bucket)
+        except (BotoCoreError, ClientError) as create_exc:
+            raise StorageError("Could not create the object-storage bucket") from create_exc
+    except BotoCoreError as exc:
+        raise StorageError("Could not reach object storage") from exc
+
+
 def upload_file(fileobj: BinaryIO, object_key: str, content_type: str | None) -> None:
     try:
         extra_args = {"ContentType": content_type or mimetypes.guess_type(object_key)[0] or "application/octet-stream"}

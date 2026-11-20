@@ -50,6 +50,15 @@ export async function loginRequest(email, password) {
   return { ...response, user: normalizeUser(response.user) };
 }
 
+export async function getAuthConfig() {
+  return api("/auth/config");
+}
+
+export async function signupRequest({ email, password, role, department }) {
+  const response = await api("/auth/signup", { method: "POST", body: JSON.stringify({ email, password, role, department: department || null }) });
+  return { ...response, user: normalizeUser(response.user) };
+}
+
 export async function getCurrentUser() {
   return normalizeUser(await api("/auth/me"));
 }

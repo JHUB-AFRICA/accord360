@@ -8,6 +8,7 @@ import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Help from "./pages/Help.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import Login from "./pages/Login.jsx";
+import Signup from "./pages/Signup.jsx";
 import Monitoring from "./pages/Monitoring.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import Notifications from "./pages/Notifications.jsx";
@@ -39,6 +40,7 @@ export default function App() {
       </Route>
 
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/verify-email" element={<AccountState type="verify-email" />} />
       <Route path="/pending-review" element={<AccountState type="pending-review" />} />

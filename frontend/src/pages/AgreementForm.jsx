@@ -61,17 +61,18 @@ export default function AgreementForm() {
       if (!partner) {
         partner = await createPartner({ name, sector: "General", contact_email: email });
       }
+      const department = (user.department || "").trim() || "General";
       const start = isoDate(0);
       const end = isoDate(365);
       const values = Object.fromEntries(fields.filter((field) => field.required).map((field) => [field.field_name, "TBD"]));
       const created = await createAgreement({
         title,
         document_type: documentType,
-        department: "General",
+        department,
         partner_id: Number(partner.id),
         start_date: start,
         end_date: end,
-        field_values: { ...values, partner_name: partner.name, agreement_title: title, department: "General", start_date: start, end_date: end, researcher_name: user.full_name }
+        field_values: { ...values, partner_name: partner.name, agreement_title: title, department, start_date: start, end_date: end, researcher_name: user.full_name }
       });
       setMessage("Drafting document created and shared with the partner.");
       navigate(`/agreements/${created.id}`);

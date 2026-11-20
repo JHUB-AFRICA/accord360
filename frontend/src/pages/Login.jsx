@@ -2,6 +2,7 @@ import { Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { DEMO_ACCOUNTS } from "../data/mockData";
+import { getAuthConfig } from "../lib/backend.js";
 import { useAuth } from "../context/AuthContext";
 import { roleHome } from "../lib/roles";
 
@@ -14,7 +15,14 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [signupEnabled, setSignupEnabled] = useState(false);
+
   useEffect(() => () => clearSessionMessage(), [clearSessionMessage]);
+  useEffect(() => {
+    let active = true;
+    getAuthConfig().then((config) => active && setSignupEnabled(Boolean(config?.demo_signup_enabled))).catch(() => {});
+    return () => { active = false; };
+  }, []);
   if (user) return <Navigate to={roleHome(user.role)} replace />;
 
   async function submit(event) {
@@ -48,6 +56,7 @@ export default function Login() {
           <label className="auth-field"><span>Password</span><div><LockKeyhole size={18} /><input type={showPassword ? "text" : "password"} autoComplete="current-password" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Enter password" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
           <div className="auth-options"><label><input type="checkbox" /> Keep me signed in</label><Link to="/forgot-password">Forgot password?</Link></div>
           <button className="primary-button auth-submit" disabled={submitting}>{submitting ? <span className="button-spinner" /> : "Sign in to workspace"}</button>
+          {signupEnabled && <p className="auth-switch">New here? <Link to="/signup">Create an account</Link></p>}
 
           {isMockMode && <div className="demo-account-box"><div><strong>Demonstration accounts</strong><span>Select a role to fill its test credentials.</span></div><select aria-label="Select demonstration account" defaultValue="" onChange={(event) => { const selected = DEMO_ACCOUNTS.find((account) => account.email === event.target.value); if (selected) chooseAccount(selected); }}><option value="" disabled>Choose a role…</option>{DEMO_ACCOUNTS.map((account) => <option value={account.email} key={account.email}>{account.label}</option>)}</select><small>Demo mode is explicitly enabled through VITE_USE_MOCK_API. It is never used after a failed sign-in attempt.</small></div>}
         </form>

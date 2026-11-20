@@ -5,7 +5,7 @@ from ...db.session import get_db
 from ...deps import get_current_user, require_roles
 from . import service
 from .models import User
-from .schemas import LoginRequest, TokenResponse, UserCreate, UserOut, UserUpdate
+from .schemas import DemoSignupRequest, LoginRequest, TokenResponse, UserCreate, UserOut, UserUpdate
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -13,6 +13,19 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 @auth_router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     token, user = service.authenticate_user(db, payload)
+    return TokenResponse(access_token=token, user=UserOut.model_validate(user))
+
+
+@auth_router.get("/config")
+def auth_config():
+    from app.core.config import settings
+
+    return {"demo_signup_enabled": settings.allow_demo_signup}
+
+
+@auth_router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def signup(payload: DemoSignupRequest, request: Request, db: Session = Depends(get_db)):
+    token, user = service.signup_demo_user(db, payload, request)
     return TokenResponse(access_token=token, user=UserOut.model_validate(user))
 
 

@@ -50,22 +50,37 @@ def _build_client():
     except ImportError as exc:  # pragma: no cover - dependency wiring only
         raise DriveError("google-api-python-client is not installed") from exc
 
-    # Accepts either the raw JSON string or a path to the key file (local dev).
-    raw = (settings.google_service_account_json or "").strip()
-    try:
-        if not raw.startswith("{"):
-            with open(raw, encoding="utf-8") as fh:
-                raw = fh.read()
-        info = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DriveError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON or a readable key file path") from exc
-
+    info = _service_account_info()
     try:
         credentials = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
         http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=DRIVE_HTTP_TIMEOUT_SECONDS))
         return build("drive", "v3", http=http, cache_discovery=False)
     except Exception as exc:  # pragma: no cover - defensive wrapper
         raise DriveError("Could not build the Google Drive client") from exc
+
+
+def _service_account_info() -> dict:
+    # Accepts either the raw JSON string or a path to the key file (local dev).
+    raw = (settings.google_service_account_json or "").strip()
+    try:
+        if not raw.startswith("{"):
+            with open(raw, encoding="utf-8") as fh:
+                raw = fh.read()
+        return json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DriveError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON or a readable key file path") from exc
+
+
+def service_account_email() -> str | None:
+    """The Accord 360 service account's own address, which must never be
+    revoked from a Doc it manages. None when Drive is not configured."""
+    if not settings.google_service_account_json:
+        return None
+    try:
+        email = _service_account_info().get("client_email")
+    except DriveError:
+        return None
+    return email.strip().lower() if email else None
 
 
 def copy_template(master_doc_id: str, name: str) -> str:
@@ -94,7 +109,26 @@ def copy_template(master_doc_id: str, name: str) -> str:
     file_id = response.get("id")
     if not file_id:
         raise DriveError(f"Drive did not return a file id when copying template {master_doc_id!r}")
+    restrict_sharing(file_id)
     return file_id
+
+
+def restrict_sharing(doc_id: str) -> None:
+    """Only Accord 360 may grant access to the Doc, and non-editors cannot
+    download, print or copy it.
+
+    Each setting is applied on its own and is best effort: Google lets only a
+    Shared Drive Manager change `copyRequiresWriterPermission`, so a service
+    account that is just a Content manager still gets the share lock. The
+    access sweep remains the backstop either way.
+    """
+    for setting in ({"writersCanShare": False}, {"copyRequiresWriterPermission": True}):
+        try:
+            _client().files().update(fileId=doc_id, body=setting, supportsAllDrives=True, fields="id").execute()
+        except Exception as exc:
+            logging.getLogger("accord360.drive").warning(
+                "Could not apply %s on %s: %s", next(iter(setting)), doc_id, exc
+            )
 
 
 def grant_permission(doc_id: str, email: str, role: str = "writer", notify: bool = True, message: str | None = None) -> str:
@@ -210,7 +244,7 @@ def list_permissions(doc_id: str) -> list[dict]:
                 .list(
                     fileId=doc_id,
                     supportsAllDrives=True,
-                    fields="nextPageToken,permissions(id,type,emailAddress,role,permissionDetails(inherited,inheritedFrom))",
+                    fields="nextPageToken,permissions(id,type,emailAddress,domain,role,permissionDetails(inherited,inheritedFrom))",
                     pageSize=100,
                     **({"pageToken": page_token} if page_token else {}),
                 )

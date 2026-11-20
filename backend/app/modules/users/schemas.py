@@ -17,6 +17,12 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+class DemoSignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    role: Role
+    department: str | None = Field(default=None, max_length=160)
+
 class UserCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=160)
     email: EmailStr
