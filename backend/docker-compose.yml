@@ -17,51 +17,24 @@ services:
       retries: 12
       start_period: 5s
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  # S3-compatible storage (MinIO's public images were withdrawn; RustFS speaks the same S3 API).
+  objectstore:
+    image: rustfs/rustfs:1.0.6
+    restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-accord360}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-password}
+      RUSTFS_ACCESS_KEY: ${MINIO_ROOT_USER:-accord360}
+      RUSTFS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-this-minio-password}
     volumes:
-      - accord360_minio:/data
+      - accord360_objects:/data
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/minio/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/health >/dev/null || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 5s
-
-  minio-init:
-    image: minio/mc:latest
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-accord360}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-password}
-      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-accord-360}
-      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
-      EMAIL_FROM: ${EMAIL_FROM:-notifications@example.com}
-      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Accord 360}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
-      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com/emails}
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >-
-      /bin/sh -c
-      "mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\"
-      \"$${MINIO_ROOT_PASSWORD}\" &&
-      mc mb --ignore-existing local/$${AWS_BUCKET_NAME}"
 
   backend:
     build:
@@ -75,7 +48,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-accord360}:${POSTGRES_PASSWORD:-accord360_dev_password}@database:5432/${POSTGRES_DB:-accord360}
       UPLOAD_DIR: /app/uploads
       OBJECT_STORAGE_ENABLED: ${OBJECT_STORAGE_ENABLED:-true}
-      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://minio:9000}
+      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://objectstore:9000}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-accord360}}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-change-this-minio-password}}
       AWS_REGION: ${AWS_REGION:-us-east-2}
@@ -94,6 +67,11 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com/emails}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      GOOGLE_DRIVE_ENABLED: ${GOOGLE_DRIVE_ENABLED:-false}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      GOOGLE_DRIVE_DEMO_DOC_ID: ${GOOGLE_DRIVE_DEMO_DOC_ID:-}
+      DRIVE_ACCESS_SWEEP_MINUTES: ${DRIVE_ACCESS_SWEEP_MINUTES:-2}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -101,8 +79,8 @@ services:
     depends_on:
       database:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      objectstore:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
@@ -115,4 +93,4 @@ services:
 volumes:
   accord360_postgres:
   accord360_uploads:
-  accord360_minio:
+  accord360_objects:

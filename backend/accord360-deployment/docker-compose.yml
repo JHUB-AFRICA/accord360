@@ -1,3 +1,7 @@
+# Accord 360 — complete stack. Run `./install.sh` (or `docker compose up -d`).
+#
+#   browser -> reverse proxy -> frontend:80 --/api--> backend:8000 -> database:5432
+#                                                              \-> objectstore:9000
 services:
   database:
     image: postgres:16-alpine
@@ -15,6 +19,28 @@ services:
       retries: 12
       start_period: 5s
 
+  # S3-compatible storage for documents uploaded by the Linkages office.
+  # (MinIO's public images were withdrawn, so this uses RustFS, same S3 API.)
+  # Set OBJECT_STORAGE_ENABLED=false to keep uploads on the backend volume
+  # instead, or point AWS_ENDPOINT_URL_S3 and the keys at an external S3.
+  objectstore:
+    image: rustfs/rustfs:1.0.6
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${OBJECT_STORAGE_ROOT_USER}
+      RUSTFS_SECRET_KEY: ${OBJECT_STORAGE_ROOT_PASSWORD}
+    volumes:
+      - accord360_objects:/data
+    ports:
+      # Admin console, localhost only. The S3 API is reachable only by the backend.
+      - "127.0.0.1:${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
   backend:
     image: ${IMAGE_REPOSITORY}:backend-${RELEASE_TAG}
     restart: unless-stopped
@@ -25,13 +51,19 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
       UPLOAD_DIR: /app/uploads
-      OBJECT_STORAGE_ENABLED: ${OBJECT_STORAGE_ENABLED}
-      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_REGION: ${AWS_REGION}
-      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME}
+      OBJECT_STORAGE_ENABLED: ${OBJECT_STORAGE_ENABLED:-true}
+      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://objectstore:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${OBJECT_STORAGE_ROOT_USER}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${OBJECT_STORAGE_ROOT_PASSWORD}}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-accord-360}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA}
+      ALLOW_DEMO_SIGNUP: ${ALLOW_DEMO_SIGNUP:-false}
+      GOOGLE_DRIVE_ENABLED: ${GOOGLE_DRIVE_ENABLED:-false}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      GOOGLE_DRIVE_DEMO_DOC_ID: ${GOOGLE_DRIVE_DEMO_DOC_ID:-}
+      DRIVE_ACCESS_SWEEP_MINUTES: ${DRIVE_ACCESS_SWEEP_MINUTES:-2}
       CORS_ORIGINS: ${CORS_ORIGINS}
       LOG_LEVEL: ${LOG_LEVEL}
     volumes:
@@ -39,14 +71,16 @@ services:
     depends_on:
       database:
         condition: service_healthy
+      objectstore:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${BACKEND_PORT}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 30s
+      retries: 8
+      start_period: 40s
 
   frontend:
     image: ${IMAGE_REPOSITORY}:frontend-${RELEASE_TAG}
@@ -55,7 +89,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${FRONTEND_PORT}:80"
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT}:80"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
       interval: 10s
@@ -65,4 +99,5 @@ services:
 
 volumes:
   accord360_postgres:
+  accord360_objects:
   accord360_uploads:

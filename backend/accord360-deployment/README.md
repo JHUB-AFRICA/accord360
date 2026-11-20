@@ -1,155 +1,100 @@
-# Accord 360 deployment
+# Accord 360 — deployment package
 
-This package runs the complete Accord 360 application on the owner's server:
+Everything needed to run Accord 360 on one Linux server. No source code required:
+Docker pulls the images and wires the four containers together.
 
-- `frontend` serves the React application and proxies `/api` to the backend.
-- `backend` runs FastAPI and connects to PostgreSQL.
-- `database` runs PostgreSQL with persistent storage.
-
-The application source code is not required on the server. Docker Compose pulls
-matching frontend and backend tags from Docker Hub and connects all three
-services on its private default network.
-
-## Release images
-
-Merges to `main` run the GitHub Actions workflow in
-`.github/workflows/backend-ci-cd.yml`. After the backend tests and frontend
-verification gate pass, the workflow publishes both components into the single
-Docker Hub repository requested for the project:
+| Container | Image | Role |
+|---|---|---|
+| `frontend` | `jhubafrica/accord360-app:frontend-<tag>` | React app + nginx; proxies `/api` to the backend; accepts uploads up to 30 MB |
+| `backend` | `jhubafrica/accord360-app:backend-<tag>` | FastAPI; runs DB migrations on start; talks to Google Drive |
+| `database` | `postgres:16-alpine` | PostgreSQL (named volume `accord360_postgres`) |
+| `objectstore` | `rustfs/rustfs:1.0.6` | S3-compatible storage for signed agreements uploaded by Linkages (named volume `accord360_objects`) |
 
 ```text
-jhubafrica/accord360-app:backend-sha-<full-git-commit>
-jhubafrica/accord360-app:frontend-sha-<full-git-commit>
-jhubafrica/accord360-app:backend-v1.0
-jhubafrica/accord360-app:frontend-v1.0
+browser -> HTTPS reverse proxy -> frontend:80 --/api--> backend:8000 -> database:5432
+                                                                    \-> objectstore:9000
 ```
 
-It also updates `backend-latest` and `frontend-latest`. For compatibility with
-the original backend-only publishing command, `jhubafrica/accord360-app:v1.0`
-is updated as an alias of the backend image. A single Docker tag cannot contain
-both services, so the server Compose file uses the component-prefixed tags.
+## One-command install
 
-Deploy the immutable `backend-sha-...` and `frontend-sha-...` pair rather than
-the mutable version/latest tags so both services always come from the same
-commit and a rollback remains predictable.
+Requirements: Linux, Docker Engine with the Compose plugin, outbound access to Docker Hub.
 
-The GitHub repository must define these Actions secrets:
+```bash
+./install.sh
+```
+
+That creates `.env` with freshly generated secrets, pulls the images, starts all four
+containers in dependency order, waits until every one is healthy, and prints the URL.
+It is safe to re-run (an existing `.env` is kept; data lives in named volumes).
+
+Typical production invocation:
+
+```bash
+ACCORD360_PUBLIC_URL=https://accord360.jhubafrica.com \
+ACCORD360_GOOGLE_KEY_FILE=/path/to/service-account.json \
+ACCORD360_GOOGLE_FOLDER_ID=<shared-drive-folder-id> \
+./install.sh
+```
+
+Optional inputs: `ACCORD360_DEMO_SIGNUP=true` (email + office self-signup, demos only),
+`ACCORD360_RELEASE_TAG=sha-<commit>` (pin a release), `ACCORD360_IMAGE_REPOSITORY`,
+`ACCORD360_SKIP_PULL=1` (images already loaded with `docker load`).
+
+Then point the public domain's HTTPS reverse proxy at **`http://127.0.0.1:8080`** (the
+**frontend**). Do not point it at port 8000: that is the raw backend API and only shows
+`{"name":"Accord 360","status":"running",...}`.
+
+## Image tags
+
+GitHub Actions publishes both images to the single repository `jhubafrica/accord360-app`
+on every merge to `main`, always as a matching pair:
 
 ```text
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
+backend-sha-<full-commit>    frontend-sha-<full-commit>     immutable, preferred for production
+backend-v1.0                 frontend-v1.0                  moves with each release
+backend-latest               frontend-latest
+v1.0                         (alias of the backend image only — not the frontend)
 ```
 
-The `jhubafrica/accord360-app` Docker Hub repository must exist. Use a Docker
-Hub access token with read/write permission for it. The token must not be
-committed to this deployment package.
+`RELEASE_TAG` in `.env` selects the suffix for both (`v1.0` or `sha-<full-commit>`).
 
-## Requirements
+## First use
 
-- Linux server with Docker Engine and the Docker Compose plugin
-- A DNS name pointing to the server
-- HTTPS termination through Nginx, Caddy, Traefik, or an equivalent proxy
-- Access to Docker Hub, including `docker login` when the images are private
+1. Sign up (if `ALLOW_DEMO_SIGNUP=true`) or create staff with
+   `docker compose exec backend python -m app.bootstrap --email ... --name ... --role linkages`.
+2. As Linkages, open **Templates** and add each template's Google Doc ID, then activate it.
+   The Google Docs must be shared with the service account (its address is `client_email`
+   in the key file) as Editor, inside the Shared Drive in `GOOGLE_DRIVE_FOLDER_ID`.
+3. Researchers can now start agreements; the Doc is copied and shared automatically.
 
-## Service connections
-
-Docker Compose provides internal DNS based on service names:
-
-```text
-browser -> HTTPS reverse proxy -> frontend:80
-frontend /api -> backend:8000
-backend -> database:5432
-```
-
-PostgreSQL is not published on a host port. The frontend and backend are bound
-to localhost so they can be reached by the host reverse proxy and diagnostics,
-but not directly over the server's public network interface.
-
-## First installation
-
-Copy this directory to a stable location on the server, then create its private
-configuration:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and replace every placeholder. Keep `IMAGE_REPOSITORY` set to
-`jhubafrica/accord360-app` and set `RELEASE_TAG` to `sha-<full-git-commit>`
-from the successful GitHub Actions run. Compose automatically adds the
-`backend-` and `frontend-` prefixes.
-Also configure a strong `SECRET_KEY`, database password, public HTTPS origin,
-and object-storage credentials when object storage is enabled.
-
-If the Docker Hub repositories are private, authenticate once on the server:
-
-```bash
-docker login
-```
-
-Pull and start the release:
-
-```bash
-docker compose pull
-docker compose up -d
-docker compose ps
-curl --fail http://127.0.0.1:8000/health
-curl --fail http://127.0.0.1:8080/
-```
-
-The backend applies Alembic database migrations before serving traffic. The
-database and local uploads survive container replacement through named Docker
-volumes.
-
-Configure the host reverse proxy to send public HTTPS traffic to
-`http://127.0.0.1:8080`. The frontend container serves the SPA and forwards its
-`/api` traffic to the backend over the private Compose network.
-
-## Updating
-
-After the GitHub Actions run for a merge to `main` succeeds, change
-`RELEASE_TAG` in the server's `.env` to the new `sha-...` tag and run:
-
-```bash
-docker compose pull frontend backend
-docker compose up -d --remove-orphans
-docker compose ps
-docker compose logs --tail=100 backend frontend
-```
-
-The server now pulls both images from exactly the same Git commit. For a
-rollback, restore the previous `RELEASE_TAG` and run the same commands.
-
-## Backups
-
-Create a database backup from this directory:
-
-```bash
-mkdir -p backups
-docker compose exec -T database pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  | gzip > "backups/accord360-$(date +%Y%m%d-%H%M%S).sql.gz"
-```
-
-The command expects the variables from `.env` to be available in the shell:
-
-```bash
-set -a
-. ./.env
-set +a
-```
-
-If local uploads are enabled, back up the `accord360_uploads` volume as well,
-or use S3-compatible object storage and apply its retention/versioning policy.
-Copy backups off the application server and periodically test a restore in a
-separate environment.
+Notes:
+- The service account should be a **Manager** of the Shared Drive, otherwise Google refuses
+  the "viewers cannot copy/download" setting (logged as a warning; everything else works).
+- Shared Drive members can open every agreement Doc; review that membership.
+- Object storage replaces the old local-volume uploads. To keep local uploads, set
+  `OBJECT_STORAGE_ENABLED=false`; to use external S3, set the `AWS_*` variables in `.env`.
+- `SEED_DEMO_DATA` must stay `false` in production (the backend refuses to start otherwise).
 
 ## Operations
 
 ```bash
+docker compose ps
 docker compose logs -f backend frontend
-docker compose restart backend frontend
-docker compose down       # stops containers; keeps volumes
+docker compose pull && docker compose up -d --wait   # upgrade after changing RELEASE_TAG
+docker compose down                                   # stop, keep data
 ```
 
-Do not use `docker compose down -v` unless intentionally deleting the database
-and uploaded documents. Keep `SEED_DEMO_DATA=false` for production deployments.
+Never use `docker compose down -v` unless deleting the database, uploads and stored
+agreements is intended.
+
+Backup:
+
+```bash
+set -a; . ./.env; set +a
+mkdir -p backups
+docker compose exec -T database pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" | gzip > "backups/accord360-$(date +%Y%m%d-%H%M%S).sql.gz"
+docker run --rm -v "$(basename "$PWD")_accord360_objects:/data:ro" -v "$PWD/backups:/backup" alpine \
+  tar czf "/backup/objects-$(date +%Y%m%d-%H%M%S).tgz" -C /data .
+```
+
+Copy backups off the server and periodically test a restore.
