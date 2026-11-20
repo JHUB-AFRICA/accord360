@@ -82,8 +82,16 @@ def drive(monkeypatch):
     monkeypatch.setattr(gd, "update_permission", fake.update)
     monkeypatch.setattr(gd, "list_permissions", fake.list)
     monkeypatch.setattr(gd, "service_account_email", lambda: SERVICE_ACCOUNT)
-    assert not agreement_service.settings.google_drive_demo_doc_id
-    return fake
+    # Do not depend on the developer's backend/.env: the sweep only runs with Drive on.
+    settings = agreement_service.settings
+    previous = (settings.google_drive_enabled, settings.google_drive_demo_doc_id)
+    object.__setattr__(settings, "google_drive_enabled", True)
+    object.__setattr__(settings, "google_drive_demo_doc_id", None)
+    try:
+        yield fake
+    finally:
+        object.__setattr__(settings, "google_drive_enabled", previous[0])
+        object.__setattr__(settings, "google_drive_demo_doc_id", previous[1])
 
 
 def _setup(db, status="linkages_review", partner_email=None):
