@@ -24,7 +24,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("read_at", sa.DateTime(), nullable=True))
         batch.add_column(sa.Column("resolved_at", sa.DateTime(), nullable=True))
         batch.add_column(sa.Column("dedupe_key", sa.String(length=255), nullable=True))
-    op.execute(sa.text("UPDATE notifications SET read_at = created_at WHERE is_read = 1"))
+    op.execute(sa.text("UPDATE notifications SET read_at = created_at WHERE is_read IS TRUE"))
     op.create_index("uq_notifications_dedupe_key", "notifications", ["dedupe_key"], unique=True)
     op.create_index("ix_notifications_user_created_id", "notifications", ["user_id", "created_at", "id"])
     op.create_index("ix_notifications_user_read_created", "notifications", ["user_id", "is_read", "created_at"])

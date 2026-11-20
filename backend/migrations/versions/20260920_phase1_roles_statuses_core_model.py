@@ -53,6 +53,16 @@ def upgrade() -> None:
 
     if "workflow_events" in existing_tables:
         op.drop_table("workflow_events")
+
+    # notifications survives this rebuild but references agreements; PostgreSQL
+    # refuses to drop a table that a surviving FK points at (SQLite does not).
+    notifications_fk_dropped = False
+    if "notifications" in existing_tables and bind.dialect.name != "sqlite":
+        for fk in inspector.get_foreign_keys("notifications"):
+            if fk["referred_table"] == "agreements" and fk.get("name"):
+                op.drop_constraint(fk["name"], "notifications", type_="foreignkey")
+                notifications_fk_dropped = True
+
     if "agreements" in existing_tables:
         op.drop_table("agreements")
     if "templates" in existing_tables:
@@ -93,6 +103,15 @@ def upgrade() -> None:
     )
     op.create_index("ix_agreements_researcher_id", "agreements", ["researcher_id"])
     op.create_index("ix_agreements_status", "agreements", ["status"])
+
+    if notifications_fk_dropped:
+        op.create_foreign_key(
+            "notifications_agreement_id_fkey",
+            "notifications",
+            "agreements",
+            ["agreement_id"],
+            ["id"],
+        )
 
     op.create_table(
         "workflow_events",
