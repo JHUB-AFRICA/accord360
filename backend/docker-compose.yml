@@ -45,7 +45,11 @@ services:
       APP_NAME: ${APP_NAME:-Accord 360}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SECRET_KEY: ${SECRET_KEY:-change-this-before-production-use-at-least-32-characters}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-accord360}:${POSTGRES_PASSWORD:-accord360_dev_password}@database:5432/${POSTGRES_DB:-accord360}
+      DB_HOST: ${DB_HOST:-database}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-${POSTGRES_USER:-accord360}}
+      DB_PASSWORD: ${DB_PASSWORD:-${POSTGRES_PASSWORD:-accord360_dev_password}}
+      DB_NAME: ${DB_NAME:-${POSTGRES_DB:-accord360}}
       UPLOAD_DIR: /app/uploads
       OBJECT_STORAGE_ENABLED: ${OBJECT_STORAGE_ENABLED:-true}
       AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://objectstore:9000}

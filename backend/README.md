@@ -162,6 +162,7 @@ available values; never commit real credentials.
 | `ENVIRONMENT` | Runtime mode and production safety checks | `development` |
 | `SECRET_KEY` | JWT signing key | Development placeholder |
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///./accord360.db` |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | Split PostgreSQL settings, used when `DATABASE_URL` is unset; the password is URL-escaped automatically | unset |
 | `UPLOAD_DIR` | Local upload directory | `uploads` |
 | `OBJECT_STORAGE_ENABLED` | Enable S3-compatible document storage | `false` |
 | `AWS_ENDPOINT_URL_S3` | S3-compatible endpoint | unset |

@@ -49,7 +49,13 @@ services:
       ENVIRONMENT: ${ENVIRONMENT}
       SECRET_KEY: ${SECRET_KEY}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      # Split connection settings; the backend builds and escapes the URL itself,
+      # so passwords may contain @, :, / or %. They default to the bundled database.
+      DB_HOST: ${DB_HOST:-database}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-${POSTGRES_USER}}
+      DB_PASSWORD: ${DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      DB_NAME: ${DB_NAME:-${POSTGRES_DB}}
       UPLOAD_DIR: /app/uploads
       OBJECT_STORAGE_ENABLED: ${OBJECT_STORAGE_ENABLED:-true}
       AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://objectstore:9000}

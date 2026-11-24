@@ -13,13 +13,41 @@ def env_bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_database_url() -> str:
+    """Return the database URL from the environment.
+
+    Precedence: an explicit DATABASE_URL, then the split DB_HOST / DB_PORT /
+    DB_USER / DB_PASSWORD / DB_NAME variables (PostgreSQL), then local SQLite.
+    The split form is built with SQLAlchemy so passwords containing URL
+    characters such as ``@``, ``:``, ``/`` or ``%`` are escaped correctly.
+    """
+    explicit = os.getenv("DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+    host = os.getenv("DB_HOST", "").strip()
+    if not host:
+        return "sqlite:///./accord360.db"
+
+    from sqlalchemy.engine import URL
+
+    port = os.getenv("DB_PORT", "").strip()
+    return URL.create(
+        "postgresql+psycopg",
+        username=os.getenv("DB_USER") or None,
+        password=os.getenv("DB_PASSWORD") or None,
+        host=host,
+        port=int(port) if port else None,
+        database=os.getenv("DB_NAME") or None,
+    ).render_as_string(hide_password=False)
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "Accord 360")
     environment: str = os.getenv("ENVIRONMENT", "development").strip().lower()
     secret_key: str = os.getenv("SECRET_KEY", "dev-secret-change-me-use-at-least-32-characters")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./accord360.db")
+    database_url: str = resolve_database_url()
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
     object_storage_enabled: bool = env_bool("OBJECT_STORAGE_ENABLED", False)
     storage_endpoint_url: str | None = os.getenv("AWS_ENDPOINT_URL_S3")

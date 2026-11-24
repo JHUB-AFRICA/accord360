@@ -19,7 +19,11 @@ services:
       APP_NAME: Accord 360
       ENVIRONMENT: development
       SECRET_KEY: change-this-in-production-use-at-least-32-characters
-      DATABASE_URL: postgresql+psycopg://accord360:accord360_change_me@database:5432/accord360
+      DB_HOST: database
+      DB_PORT: "5432"
+      DB_USER: accord360
+      DB_PASSWORD: accord360_change_me
+      DB_NAME: accord360
       UPLOAD_DIR: /app/uploads
       CORS_ORIGINS: http://localhost:8080
       SEED_DEMO_DATA: "false"
