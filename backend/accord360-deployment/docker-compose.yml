@@ -1,6 +1,6 @@
 # Accord 360 — complete stack. Run `./install.sh` (or `docker compose up -d`).
 #
-#   browser -> reverse proxy -> frontend:80 --/api--> backend:8000 -> database:5432
+#   browser -> reverse proxy -> frontend:80 --/api--> accord-backend:8000 -> database:5432
 #                                                              \-> objectstore:9000
 services:
   database:
@@ -41,7 +41,7 @@ services:
       retries: 20
       start_period: 5s
 
-  backend:
+  accord-backend:
     image: ${IMAGE_REPOSITORY}:backend-${RELEASE_TAG}
     restart: unless-stopped
     environment:
@@ -92,7 +92,7 @@ services:
     image: ${IMAGE_REPOSITORY}:frontend-${RELEASE_TAG}
     restart: unless-stopped
     depends_on:
-      backend:
+      accord-backend:
         condition: service_healthy
     ports:
       - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT}:80"

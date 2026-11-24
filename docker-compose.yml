@@ -13,7 +13,7 @@ services:
       timeout: 5s
       retries: 10
 
-  backend:
+  accord-backend:
     build: ./backend
     environment:
       APP_NAME: Accord 360
@@ -41,7 +41,7 @@ services:
       args:
         VITE_API_URL: /api
     depends_on:
-      - backend
+      - accord-backend
     ports:
       - "8080:80"
 

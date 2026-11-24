@@ -11,7 +11,7 @@ Docker pulls the images and wires the four containers together.
 | `objectstore` | `rustfs/rustfs:1.0.6` | S3-compatible storage for signed agreements uploaded by Linkages (named volume `accord360_objects`) |
 
 ```text
-browser -> HTTPS reverse proxy -> frontend:80 --/api--> backend:8000 -> database:5432
+browser -> HTTPS reverse proxy -> frontend:80 --/api--> accord-backend:8000 -> database:5432
                                                                     \-> objectstore:9000
 ```
 
@@ -61,7 +61,7 @@ v1.0                         (alias of the backend image only — not the fronte
 ## First use
 
 1. Sign up (if `ALLOW_DEMO_SIGNUP=true`) or create staff with
-   `docker compose exec backend python -m app.bootstrap --email ... --name ... --role linkages`.
+   `docker compose exec accord-backend python -m app.bootstrap --email ... --name ... --role linkages`.
 2. As Linkages, open **Templates** and add each template's Google Doc ID, then activate it.
    The Google Docs must be shared with the service account (its address is `client_email`
    in the key file) as Editor, inside the Shared Drive in `GOOGLE_DRIVE_FOLDER_ID`.
@@ -79,7 +79,7 @@ Notes:
 
 ```bash
 docker compose ps
-docker compose logs -f backend frontend
+docker compose logs -f accord-backend frontend
 docker compose pull && docker compose up -d --wait   # upgrade after changing RELEASE_TAG
 docker compose down                                   # stop, keep data
 ```
