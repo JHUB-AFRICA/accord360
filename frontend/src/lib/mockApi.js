@@ -198,7 +198,7 @@ function emitNotification(state, eventType, agreement, actor, eventId = null) {
   const recipients = state.users.filter((candidate) => candidate.is_active && ((policy.owner && candidate.id === agreement.owner?.id) || (policy.roles || []).includes(candidate.role)) && candidate.id !== actor?.id);
   const roleSet = new Set([actor?.role].filter(Boolean));
   // Completing a workflow action resolves outstanding task notifications for the acting role.
-  state.notifications.filter((item) => item.agreement_id === agreement.id && item.requires_action && !item.resolved_at && (item.user_id === actor?.id || roleSet.has(state.users.find((u) => u.id === item.user_id)?.role))).forEach((item) => { item.resolved_at = now(); });
+  state.notifications.filter((item) => item.agreement_id === agreement.id && item.requires_action && !item.resolved_at && (item.user_id === actor?.id || roleSet.has(state.users.find((u) => u.id === item.user_id)?.role))).forEach((item) => { item.resolved_at = now(); item.is_read = true; item.read_at = item.read_at || item.resolved_at; });
   for (const recipient of recipients) {
     const dedupeKey = `${eventType}:${agreement.id}:${recipient.id}:${eventId || agreement.updated_at}`;
     if (state.notifications.some((item) => item.dedupe_key === dedupeKey)) continue;

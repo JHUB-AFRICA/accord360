@@ -71,6 +71,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_API_URL: ${RESEND_API_URL:-https://api.resend.com/emails}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      # This local/demo stack intentionally allows public signup for every demo role.
+      ALLOW_DEMO_SIGNUP: ${ALLOW_DEMO_SIGNUP:-true}
       GOOGLE_DRIVE_ENABLED: ${GOOGLE_DRIVE_ENABLED:-false}
       GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}

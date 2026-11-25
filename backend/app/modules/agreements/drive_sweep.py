@@ -38,7 +38,7 @@ def run_drive_access_sweep(db: Session | None = None) -> dict[str, int | bool]:
                 if agreement is None:
                     session.rollback()
                     continue
-                result = reconcile_drive_access(session, agreement, notify=False)
+                result = reconcile_drive_access(session, agreement, notify=True)
                 session.commit()
                 checked += 1
                 if result["removed"]:

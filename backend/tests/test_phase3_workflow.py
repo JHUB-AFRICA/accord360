@@ -278,7 +278,7 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
             return [m for e, notify, m in grants if e == email and notify]
 
         assert act(researcher, "submit").status == "linkages_review"
-        assert not emailed(linkages.email)
+        assert emailed(linkages.email) == [None]
         assert not emailed(legal.email)
         assert "legal" not in active_roles() and "linkages" in active_roles()
 
@@ -290,16 +290,17 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
 
         assert act(linkages, "send_to_legal").status == "legal_review"
         assert "legal" in active_roles()
-        assert not emailed(legal.email)
+        assert emailed(legal.email) == [None]
 
         before = len(emailed(linkages.email))
         assert act(legal, "return_to_linkages").status == "linkages_review"
         assert "legal" not in active_roles() and "linkages" in active_roles()
-        # Internal handoffs never re-send Google Drive emails.
+        # Reversing the handoff revokes Legal's access; the existing Linkages
+        # permission is retained and is not re-invited.
         assert len(emailed(linkages.email)) == before
 
         assert act(linkages, "return_to_researcher").status == "returned_to_researcher"
-        assert not emailed(researcher.email)
+        assert emailed(researcher.email) == [None]
         with pytest.raises(HTTPException):
             act(linkages, "send_to_legal")
         assert act(researcher, "resubmit").status == "linkages_review"
@@ -307,7 +308,7 @@ def test_linkages_legal_round_trip_drive_access_and_approval(monkeypatch):
         act(linkages, "send_to_legal")
         approved = act(legal, "approve")
         assert approved.status == "approved_for_signing"
-        assert not emailed(linkages.email)
+        assert len(emailed(linkages.email)) == before
         assert "legal" not in active_roles()
         assert approved.approved_by_name == legal.full_name and approved.approved_at is not None
         assert "start_signing" in agreement_service.available_actions(linkages, db.get(Agreement, aid))

@@ -27,6 +27,8 @@ services:
       UPLOAD_DIR: /app/uploads
       CORS_ORIGINS: http://localhost:8080
       SEED_DEMO_DATA: "false"
+      # The root compose stack is used for demos; expose the role-based signup flow.
+      ALLOW_DEMO_SIGNUP: "true"
     volumes:
       - accord360_uploads:/app/uploads
     depends_on:

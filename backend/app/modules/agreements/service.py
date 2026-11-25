@@ -185,12 +185,15 @@ def _grant_drive_access(
     Section 4. Every grant MUST be recorded here so revocation (below) can
     go through the stored permission_id instead of a permissions.list call.
     Idempotent: an existing active grant for the same role and email is kept.
-    Only the initial external-partner grant sends Google's sharing email;
-    internal workflow handoffs are delivered by in-app notifications.
+    Workflow handoffs also ask Google Drive to send its sharing email. The
+    database notification remains the in-app source of truth.
     """
     if any(g.email.lower() == email.lower() for g in _active_grants(db, agreement, role=role)):
         return
-    notify = role == "partner"
+    # For the demo, Google Drive is the email provider for both external
+    # participants and internal workflow handoffs. The recipient must have a
+    # Google account; invalid addresses are surfaced as DriveError.
+    notify = True
     permission_id = google_drive.grant_permission(
         agreement.template_copy_doc_id, email, role=drive_role,
         notify=notify, message=message if notify else None,
@@ -387,7 +390,7 @@ def reconcile_drive_access(
                     doc_id,
                     email,
                     role=item.get("drive_role", "writer"),
-                    notify=notify and role == "partner",
+                    notify=notify,
                 )
             except DriveError as exc:
                 if not same_status:
@@ -1112,7 +1115,7 @@ def upload_final_signed_document(
         # scan is already stored, so a Drive hiccup is logged and left to the
         # periodic access sweep rather than failing the upload.
         try:
-            reconcile_drive_access(db, agreement, notify=False)
+            reconcile_drive_access(db, agreement, notify=True)
             db.commit()
         except Exception:
             db.rollback()

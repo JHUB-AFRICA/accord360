@@ -32,6 +32,31 @@ DEFAULT_USERS = [
     ("M&E Officer", "me@accord360.app", "Measure@123", "me", "M&E"),
 ]
 
+# Accounts from the retired built-in demo fixture.  They are deliberately
+# deactivated in non-demo environments rather than deleted because old audit
+# records and agreements may still reference their user ids.
+LEGACY_DEMO_EMAILS = {
+    "admin@accord360.app",
+    "researcher@accord360.app",
+    "approver@accord360.app",
+    "linkages@accord360.app",
+    "director.linkages@accord360.app",
+    "legal@accord360.app",
+    "dvc.rpe@accord360.app",
+    "vc.office@accord360.app",
+    "executive@accord360.app",
+    "me@accord360.app",
+    "auditor@accord360.app",
+}
+
+
+def disable_legacy_demo_users(db) -> int:
+    """Retire the old hard-coded accounts without deleting their history."""
+    users = db.scalars(select(User).where(User.email.in_(LEGACY_DEMO_EMAILS), User.is_active.is_(True))).all()
+    for user in users:
+        user.is_active = False
+    return len(users)
+
 # Single source of truth for the Researcher's structured form fields and the
 # {{tag}} placeholders scanned during template validation (Phase 2).
 DEFAULT_FIELD_DEFINITIONS = [

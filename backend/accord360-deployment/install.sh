@@ -21,7 +21,9 @@ command -v docker >/dev/null 2>&1 || { echo "Docker is required: https://docs.do
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 (the 'docker compose' plugin) is required." >&2; exit 1; }
 
 set_var() { # set_var KEY VALUE  (no sed: values may contain any character)
-  { grep -v "^$1=" .env || true; printf '%s=%s\n' "$1" "$2"; } > .env.tmp && mv .env.tmp .env
+  { grep -v "^$1=" .env || true; printf '%s=%s\n' "$1" "$2"; } > .env.tmp
+  chmod 600 .env.tmp
+  mv .env.tmp .env
 }
 get_var() { grep "^$1=" .env | head -n1 | cut -d= -f2-; }
 random() { od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; }
@@ -31,6 +33,7 @@ if [ ! -f .env ]; then
   chmod 600 .env
   echo "Created .env with freshly generated secrets."
 fi
+
 for key in SECRET_KEY POSTGRES_PASSWORD OBJECT_STORAGE_ROOT_PASSWORD; do
   [ "$(get_var "$key")" = "__GENERATE__" ] && set_var "$key" "$(random)"
 done
@@ -46,6 +49,9 @@ if [ -n "${ACCORD360_GOOGLE_KEY_FILE:-}" ]; then
   set_var GOOGLE_DRIVE_ENABLED true
   [ -n "${ACCORD360_GOOGLE_FOLDER_ID:-}" ] && set_var GOOGLE_DRIVE_FOLDER_ID "$ACCORD360_GOOGLE_FOLDER_ID"
 fi
+
+# Keep existing deployments private too, including when no values were updated.
+chmod 600 .env
 
 if [ "$(get_var GOOGLE_DRIVE_ENABLED)" != "true" ]; then
   echo "NOTE: Google Drive is not configured; drafting documents and partner sharing will not work."

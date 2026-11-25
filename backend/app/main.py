@@ -36,11 +36,14 @@ else:
     # needs them before any agreement can be created. Idempotent.
     try:
         from .db.session import SessionLocal
-        from .seed import seed_field_definitions
+        from .seed import disable_legacy_demo_users, seed_field_definitions
 
         with SessionLocal() as _db:
             seed_field_definitions(_db)
+            retired = disable_legacy_demo_users(_db)
             _db.commit()
+            if retired:
+                logger.info("legacy_demo_users_disabled count=%s", retired)
     except Exception:  # tables not migrated yet; `alembic upgrade head` first
         logger.warning("field_definitions_not_seeded", exc_info=True)
 

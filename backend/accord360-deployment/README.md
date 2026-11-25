@@ -36,7 +36,11 @@ ACCORD360_GOOGLE_FOLDER_ID=<shared-drive-folder-id> \
 ./install.sh
 ```
 
-Optional inputs: `ACCORD360_DEMO_SIGNUP=true` (email + office self-signup, demos only),
+Signup is enabled by default for this demo deployment: anyone with the URL can create
+an account and choose a demo office/role. Set `ACCORD360_DEMO_SIGNUP=false` before
+using this package outside a controlled demo.
+
+Optional inputs: `ACCORD360_DEMO_SIGNUP=false` (disable email + office self-signup),
 `ACCORD360_RELEASE_TAG=sha-<commit>` (pin a release), `ACCORD360_IMAGE_REPOSITORY`,
 `ACCORD360_SKIP_PULL=1` (images already loaded with `docker load`).
 
@@ -60,7 +64,7 @@ v1.0                         (alias of the backend image only — not the fronte
 
 ## First use
 
-1. Sign up (if `ALLOW_DEMO_SIGNUP=true`) or create staff with
+1. Sign up (enabled by default for the demo) or create staff with
    `docker compose exec accord-backend python -m app.bootstrap --email ... --name ... --role linkages`.
 2. As Linkages, open **Templates** and add each template's Google Doc ID, then activate it.
    The Google Docs must be shared with the service account (its address is `client_email`

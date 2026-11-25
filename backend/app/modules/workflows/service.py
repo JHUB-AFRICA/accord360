@@ -87,6 +87,12 @@ def resolve_notifications(
     now = utc_now()
     for row in rows:
         row.resolved_at = now
+        # Completing the linked task is affirmative evidence that the user
+        # has encountered the event. Do not leave it in the unread badge just
+        # because the notification itself was never opened.
+        if not row.is_read:
+            row.is_read = True
+            row.read_at = now
     return len(rows)
 
 
