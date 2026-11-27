@@ -113,6 +113,27 @@ def copy_template(master_doc_id: str, name: str) -> str:
     return file_id
 
 
+def copy_file(master_file_id: str, name: str, *, expected_mime_type: str | None = None) -> str:
+    """Copy a real Drive file without the demo-document shortcut."""
+    if expected_mime_type:
+        metadata = get_file_metadata(master_file_id)
+        if metadata.get("trashed") or metadata.get("mimeType") != expected_mime_type:
+            raise DriveError(f"Google Drive file {master_file_id!r} is not an active {expected_mime_type} file")
+    try:
+        body = {"name": name}
+        if settings.google_drive_folder_id:
+            body["parents"] = [settings.google_drive_folder_id]
+        response = _client().files().copy(fileId=master_file_id, body=body, supportsAllDrives=True).execute()
+        file_id = response.get("id")
+        if not file_id:
+            raise DriveError("Google Drive did not return the copied file id")
+        return file_id
+    except DriveError:
+        raise
+    except Exception as exc:
+        raise DriveError(f"Could not copy Google Drive file {master_file_id!r}: {exc}") from exc
+
+
 def restrict_sharing(doc_id: str) -> None:
     """Only Accord 360 may grant access to the Doc, and non-editors cannot
     download, print or copy it.
@@ -262,6 +283,22 @@ def doc_url(doc_id: str) -> str:
     return f"https://docs.google.com/document/d/{doc_id}/edit"
 
 
+def spreadsheet_url(file_id: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+
+
+def get_file_metadata(file_id: str) -> dict:
+    """Return the small, stable metadata set used to validate a template."""
+    try:
+        return _client().files().get(
+            fileId=file_id,
+            supportsAllDrives=True,
+            fields="id,name,mimeType,trashed,modifiedTime",
+        ).execute()
+    except Exception as exc:
+        raise DriveError(f"Could not read Google Drive file {file_id!r}: {exc}") from exc
+
+
 def get_file_modified_time(doc_id: str) -> str | None:
     """Drive's file-level `modifiedTime` (RFC 3339), or None if unreadable.
 
@@ -324,3 +361,8 @@ def export_file(doc_id: str, mime_type: str) -> bytes:
     if not isinstance(payload, (bytes, bytearray)) or not payload:
         raise DriveError("Google Drive returned an empty signing-copy export")
     return bytes(payload)
+
+
+def export_spreadsheet_xlsx(file_id: str) -> bytes:
+    """Export a native Google Sheet as an XLSX audit snapshot."""
+    return export_file(file_id, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

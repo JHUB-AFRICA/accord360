@@ -5,7 +5,7 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
 import { activateTemplate, createTemplate, deactivateTemplate, downloadTemplate, listFieldDefinitions, listTemplates } from "../lib/backend.js";
 
-const DOCUMENT_TYPES = ["MoU", "CRA", "CA", "Other"];
+const DOCUMENT_TYPES = ["MoU", "CRA", "CA", "Progress Report", "Other"];
 
 // GOOGLE_DOCS_DRAFTING_BRIEF.md Section 4 — accepts either a bare Doc id or
 // a full docs.google.com/.../d/<id>/edit URL and pulls out the id.
@@ -45,7 +45,7 @@ export default function Templates() {
     const resolvedType = documentType === "Other" ? customType.trim() : documentType;
     if (!resolvedType) return setError("Enter a document type.");
     const master_doc_id = parseGoogleDocId(masterDocInput);
-    if (!master_doc_id) return setError("Paste the Google Doc link or id for the master template.");
+    if (!master_doc_id) return setError("Paste the Google Doc or Google Sheet link or id for the master template.");
     setSubmitting(true);
     setError("");
     try {
@@ -83,7 +83,7 @@ export default function Templates() {
   return <>
     <Toast message={message} onClose={() => setMessage("")} />
     <Toast message={error} type="error" onClose={() => setError("")} />
-    <PageHeader eyebrow="Templates" title="MoU, CA and CRA templates" description="Link a Google Doc master template, then activate it. Exactly one active template per document type is what Researchers copy to start a new agreement." />
+    <PageHeader eyebrow="Templates" title="Agreement and progress templates" description="Link a Google Doc or Google Sheet master template, then activate it. Progress Report templates must be Google Sheets." />
 
     <div className="detail-grid">
       <section className="panel detail-main-card">
@@ -96,7 +96,7 @@ export default function Templates() {
           </label>
           {documentType === "Other" && <label className="form-field"><span>Type name *</span><input value={customType} onChange={(event) => setCustomType(event.target.value)} placeholder="e.g. Research Collaboration Agreement" /></label>}
           <label className="form-field span-2">
-            <span>Google Doc master template *</span>
+            <span>Google Doc or Google Sheet master template *</span>
             <input
               value={masterDocInput}
               onChange={(event) => setMasterDocInput(event.target.value)}

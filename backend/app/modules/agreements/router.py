@@ -19,6 +19,9 @@ from .schemas import (
     AgreementUpdate,
     ProgressUpdateCreate,
     ProgressUpdateOut,
+    ProgressSubmissionCreate,
+    ProgressSubmissionOut,
+    ProgressWorkspaceOut,
 )
 from app.modules.workflows.schemas import TransitionRequest
 from . import service
@@ -194,6 +197,54 @@ def create_agreement_progress_update(
     return service.create_progress_update(db, user, agreement_id, payload, request)
 
 
+@progress_router.get("/agreements/{agreement_id}/progress-workspace", response_model=ProgressWorkspaceOut | None)
+def get_progress_workspace(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return service.get_progress_workspace(db, user, agreement_id)
+
+
+@progress_router.post("/agreements/{agreement_id}/progress-workspace/retry", response_model=ProgressWorkspaceOut)
+def retry_progress_workspace(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("linkages")),
+):
+    agreement = db.get(service.Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    from ...access import ensure_can_view_agreement
+    ensure_can_view_agreement(user, agreement)
+    workspace = service.provision_progress_workspace(db, agreement, retry=True)
+    if not workspace:
+        raise HTTPException(status_code=409, detail="No active Progress Report template is configured")
+    db.commit()
+    db.refresh(workspace)
+    return workspace
+
+
+@progress_router.post("/agreements/{agreement_id}/progress-submissions", response_model=ProgressSubmissionOut, status_code=status.HTTP_201_CREATED)
+def submit_progress(
+    agreement_id: int,
+    payload: ProgressSubmissionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return service.create_progress_submission(db, user, agreement_id, payload, request)
+
+
+@progress_router.get("/agreements/{agreement_id}/progress-submissions", response_model=list[ProgressSubmissionOut])
+def list_agreement_progress_submissions(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return service.list_progress_submissions(db, user, agreement_id)
+
+
 @progress_router.get("/progress-updates", response_model=list[ProgressUpdateOut])
 def list_all_progress_updates(
     agreement_id: int | None = None,
@@ -201,3 +252,29 @@ def list_all_progress_updates(
     user: User = Depends(get_current_user),
 ):
     return service.list_progress_updates(db, user, agreement_id)
+
+
+@progress_router.get("/progress-submissions", response_model=list[ProgressSubmissionOut])
+def list_all_progress_submissions(
+    agreement_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return service.list_progress_submissions(db, user, agreement_id)
+
+
+@progress_router.get("/progress-submissions/{submission_id}/snapshot")
+def download_progress_snapshot(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    submission = service.get_progress_submission(db, user, submission_id)
+    try:
+        return StreamingResponse(
+            storage.download_file(submission.snapshot_storage_key),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="progress-submission-{submission.id}.xlsx"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Progress snapshot is unavailable") from exc

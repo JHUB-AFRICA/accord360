@@ -73,11 +73,10 @@ services:
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       # This local/demo stack intentionally allows public signup for every demo role.
       ALLOW_DEMO_SIGNUP: ${ALLOW_DEMO_SIGNUP:-true}
-      GOOGLE_DRIVE_ENABLED: ${GOOGLE_DRIVE_ENABLED:-false}
+      GOOGLE_DRIVE_ENABLED: "true"
       GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
       GOOGLE_DRIVE_DEMO_DOC_ID: ${GOOGLE_DRIVE_DEMO_DOC_ID:-}
-      DRIVE_ACCESS_SWEEP_MINUTES: ${DRIVE_ACCESS_SWEEP_MINUTES:-2}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:

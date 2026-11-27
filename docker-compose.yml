@@ -29,6 +29,9 @@ services:
       SEED_DEMO_DATA: "false"
       # The root compose stack is used for demos; expose the role-based signup flow.
       ALLOW_DEMO_SIGNUP: "true"
+      # Local inspection can run without mounting developer Google credentials.
+      GOOGLE_DRIVE_ENABLED: "false"
+      GOOGLE_SERVICE_ACCOUNT_JSON: /tmp/local-inspection-placeholder.json
     volumes:
       - accord360_uploads:/app/uploads
     depends_on:

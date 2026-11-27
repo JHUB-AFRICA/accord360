@@ -140,6 +140,23 @@ export async function createProgressUpdate(agreementId, payload) {
   return api(`/agreements/${Number(agreementId)}/progress-updates`, { method: "POST", body: JSON.stringify(payload) });
 }
 
+export async function getProgressWorkspace(agreementId) {
+  return api(`/agreements/${Number(agreementId)}/progress-workspace`);
+}
+
+export async function retryProgressWorkspace(agreementId) {
+  return api(`/agreements/${Number(agreementId)}/progress-workspace/retry`, { method: "POST" });
+}
+
+export async function submitProgress(agreementId, payload) {
+  return api(`/agreements/${Number(agreementId)}/progress-submissions`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function listProgressSubmissions(agreementId = null) {
+  const path = agreementId ? `/agreements/${Number(agreementId)}/progress-submissions` : "/progress-submissions";
+  return api(path);
+}
+
 export async function listProgressUpdates(agreementId = null) {
   const query = cleanParams({ agreement_id: agreementId ? Number(agreementId) : undefined });
   return api(`/progress-updates${query ? `?${query}` : ""}`);

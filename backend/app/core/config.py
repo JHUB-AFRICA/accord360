@@ -72,7 +72,8 @@ class Settings:
     smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
     resend_api_key: str | None = os.getenv("RESEND_API_KEY") or None
     resend_api_url: str = os.getenv("RESEND_API_URL", "https://api.resend.com/emails")
-    google_drive_enabled: bool = env_bool("GOOGLE_DRIVE_ENABLED", False)
+    # Google Drive is a required integration for the demo and production flow.
+    google_drive_enabled: bool = True
     google_service_account_json: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or None
     # Optional Drive folder (shared with the service account as Editor) that
     # template copies are created in.
@@ -86,9 +87,6 @@ class Settings:
     # real Drive API, so sharing/removal behavior is genuinely exercised.
     # Remove this once a Shared Drive is set up and real copying works.
     google_drive_demo_doc_id: str | None = os.getenv("GOOGLE_DRIVE_DEMO_DOC_ID") or None
-    # Minutes between sweeps that strip Drive access the workflow did not
-    # grant (shares added by hand inside Google Docs). 0 disables the job.
-    drive_access_sweep_minutes: int = int(os.getenv("DRIVE_ACCESS_SWEEP_MINUTES", "2"))
     cors_origins: tuple[str, ...] = tuple(
         item.strip() for item in os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"

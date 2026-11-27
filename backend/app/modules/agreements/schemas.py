@@ -67,6 +67,38 @@ class ProgressUpdateCreate(BaseModel):
     notes: str = Field(min_length=1, max_length=20000)
 
 
+class ProgressSubmissionCreate(BaseModel):
+    reporting_period: str = Field(min_length=4, max_length=30)
+    note: str | None = Field(default=None, max_length=20000)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+
+
+class ProgressWorkspaceOut(ORMModel):
+    id: int
+    agreement_id: int
+    template_id: int
+    spreadsheet_file_id: str | None = None
+    spreadsheet_url: str | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProgressSubmissionOut(ORMModel):
+    id: int
+    agreement_id: int
+    workspace_id: int
+    reporting_period: str
+    sequence_number: int
+    submitted_by: UserOut
+    note: str | None = None
+    spreadsheet_modified_time: str | None = None
+    snapshot_storage_key: str | None = None
+    submitted_at: datetime
+    status: str
+
+
 # Statuses in which the live Google Doc link is withheld from every API response.
 DOC_LINK_LOCKED_STATUSES = {"approved_for_signing", "awaiting_signatures"}
 
@@ -109,5 +141,7 @@ class AgreementListOut(ORMModel):
 class AgreementDetailOut(AgreementListOut):
     versions: list[AgreementVersionOut] = []
     progress_updates: list[ProgressUpdateOut] = []
+    progress_workspace: ProgressWorkspaceOut | None = None
+    progress_submissions: list[ProgressSubmissionOut] = []
     workflow_events: list[WorkflowEventOut] = []
     available_actions: list[str] = []

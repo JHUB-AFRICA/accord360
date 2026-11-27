@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -74,6 +74,12 @@ class Agreement(Base, TimestampMixin):
     )
     progress_updates: Mapped[list["ProgressUpdate"]] = relationship(
         back_populates="agreement", cascade="all, delete-orphan", order_by="ProgressUpdate.created_at"
+    )
+    progress_workspace: Mapped["ProgressWorkspace | None"] = relationship(
+        back_populates="agreement", uselist=False, cascade="all, delete-orphan"
+    )
+    progress_submissions: Mapped[list["ProgressSubmission"]] = relationship(
+        back_populates="agreement", cascade="all, delete-orphan", order_by="ProgressSubmission.submitted_at.desc()"
     )
     workflow_events: Mapped[list["WorkflowEvent"]] = relationship(back_populates="agreement", cascade="all, delete-orphan")
     drive_permissions: Mapped[list["AgreementDrivePermission"]] = relationship(
@@ -146,3 +152,47 @@ class ProgressUpdate(Base):
 
     agreement: Mapped[Agreement] = relationship(back_populates="progress_updates")
     submitted_by: Mapped["User"] = relationship()
+
+
+class ProgressWorkspace(Base):
+    __tablename__ = "progress_workspaces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreements.id"), nullable=False, unique=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("templates.id"), nullable=False)
+    spreadsheet_file_id: Mapped[str | None] = mapped_column(String(120), unique=True)
+    spreadsheet_url: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    researcher_permission_id: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    agreement: Mapped[Agreement] = relationship(back_populates="progress_workspace")
+    template: Mapped["Template"] = relationship()
+    submissions: Mapped[list["ProgressSubmission"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan", order_by="ProgressSubmission.submitted_at.desc()"
+    )
+
+
+class ProgressSubmission(Base):
+    __tablename__ = "progress_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreements.id"), nullable=False, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("progress_workspaces.id"), nullable=False, index=True)
+    reporting_period: Mapped[str] = mapped_column(String(30), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    spreadsheet_modified_time: Mapped[str | None] = mapped_column(String(50))
+    snapshot_storage_key: Mapped[str | None] = mapped_column(String(500))
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="submitted", nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+
+    agreement: Mapped[Agreement] = relationship(back_populates="progress_submissions")
+    workspace: Mapped[ProgressWorkspace] = relationship(back_populates="submissions")
+    submitted_by: Mapped["User"] = relationship()
+
+    __table_args__ = (UniqueConstraint("agreement_id", "reporting_period", "sequence_number", name="uq_progress_submission_sequence"),)

@@ -32,7 +32,7 @@ from ...access import (
 from ...deps import audit
 from ...core.config import settings
 from ...timeutils import utc_now
-from .models import Agreement, AgreementDrivePermission, AgreementVersion, ProgressUpdate
+from .models import Agreement, AgreementDrivePermission, AgreementVersion, ProgressSubmission, ProgressUpdate, ProgressWorkspace
 from app.integrations import google_drive
 from app.integrations.google_drive import DriveError
 from app.utils import storage
@@ -41,7 +41,7 @@ from app.modules.users.models import User
 from app.modules.workflows.models import WorkflowEvent
 from app.modules.templates import service as template_service
 from app.modules.templates.models import Template
-from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, ProgressUpdateCreate
+from .schemas import AgreementCreate, AgreementDetailOut, AgreementUpdate, ProgressSubmissionCreate, ProgressUpdateCreate
 from app.modules.workflows.schemas import TransitionRequest
 from ..workflows.service import notify_roles, notify_user, resolve_notifications
 
@@ -76,6 +76,8 @@ LOAD_OPTIONS = (
     selectinload(Agreement.researcher),
     selectinload(Agreement.versions).selectinload(AgreementVersion.uploaded_by),
     selectinload(Agreement.progress_updates),
+    selectinload(Agreement.progress_workspace),
+    selectinload(Agreement.progress_submissions).selectinload(ProgressSubmission.submitted_by),
     selectinload(Agreement.workflow_events).selectinload(WorkflowEvent.actor),
 )
 
@@ -179,7 +181,8 @@ def _active_grants(db: Session, agreement: Agreement, *, role: str) -> list[Agre
 
 
 def _grant_drive_access(
-    db: Session, agreement: Agreement, *, role: str, email: str, drive_role: str = "writer", message: str | None = None
+    db: Session, agreement: Agreement, *, role: str, email: str, drive_role: str = "writer", message: str | None = None,
+    doc_id: str | None = None,
 ) -> None:
     """Grant Drive access and record it — GOOGLE_DOCS_DRAFTING_BRIEF.md
     Section 4. Every grant MUST be recorded here so revocation (below) can
@@ -195,7 +198,7 @@ def _grant_drive_access(
     # Google account; invalid addresses are surfaced as DriveError.
     notify = True
     permission_id = google_drive.grant_permission(
-        agreement.template_copy_doc_id, email, role=drive_role,
+        doc_id or agreement.template_copy_doc_id, email, role=drive_role,
         notify=notify, message=message if notify else None,
     )
     db.add(
@@ -1123,6 +1126,12 @@ def upload_final_signed_document(
             logging.getLogger("accord360.drive").exception(
                 "Drive access reconcile after final scan failed for agreement %s; the sweep will retry", agreement.id
             )
+    # Progress Sheet provisioning is deliberately best-effort: the signed
+    # agreement remains valid if the external copy/share call fails, and
+    # Linkages can retry from the progress workspace endpoint.
+    if agreement.status == "fully_executed":
+        provision_progress_workspace(db, agreement)
+        db.commit()
     return get_agreement_detail(db, user, agreement.id)
 
 
@@ -1173,6 +1182,147 @@ def create_progress_update(db: Session, user: User, agreement_id: int, payload: 
     db.commit()
     db.refresh(update)
     return update
+
+
+def _active_progress_template(db: Session) -> Template | None:
+    return db.scalar(select(Template).where(
+        Template.is_active.is_(True),
+        func.lower(Template.document_type).in_(("progress report", "progress", "progress template")),
+    ).order_by(Template.timestamp.desc()))
+
+
+def get_progress_workspace(db: Session, user: User, agreement_id: int) -> ProgressWorkspace | None:
+    agreement = db.get(Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    ensure_can_view_agreement(user, agreement)
+    return db.scalar(select(ProgressWorkspace).where(ProgressWorkspace.agreement_id == agreement_id))
+
+
+def provision_progress_workspace(db: Session, agreement: Agreement, *, retry: bool = False) -> ProgressWorkspace | None:
+    """Create exactly one agreement-specific progress Sheet; failures are retryable."""
+    template = _active_progress_template(db)
+    if not template or not template.master_doc_id:
+        return None
+    workspace = db.scalar(select(ProgressWorkspace).where(ProgressWorkspace.agreement_id == agreement.id))
+    if workspace and workspace.status == "ready" and not retry:
+        return workspace
+    if not workspace:
+        workspace = ProgressWorkspace(agreement_id=agreement.id, template_id=template.id, status="provisioning")
+        db.add(workspace)
+        db.flush()
+    else:
+        workspace.template_id = template.id
+        workspace.status = "provisioning"
+        workspace.error = None
+    try:
+        name = f"Progress – Agreement {agreement.id} – {agreement.title}"[:240]
+        file_id = google_drive.copy_file(template.master_doc_id, name, expected_mime_type="application/vnd.google-apps.spreadsheet")
+        researcher = agreement.researcher or db.get(User, agreement.researcher_id)
+        if not researcher or not researcher.is_active:
+            raise DriveError("The agreement researcher is unavailable for Sheet access")
+        permission_id = google_drive.grant_permission(
+            file_id, researcher.email, role="writer", notify=True,
+            message=f"You can update progress for {agreement.title} in this Google Sheet.",
+        )
+        workspace.spreadsheet_file_id = file_id
+        workspace.spreadsheet_url = google_drive.spreadsheet_url(file_id)
+        workspace.researcher_permission_id = permission_id
+        workspace.status = "ready"
+    except Exception as exc:
+        workspace.status = "failed"
+        workspace.error = str(exc)[:2000]
+    db.flush()
+    return workspace
+
+
+def create_progress_submission(db: Session, user: User, agreement_id: int, payload: ProgressSubmissionCreate, request: Request) -> ProgressSubmission:
+    agreement = db.get(Agreement, agreement_id)
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    if user.role != "researcher" or agreement.researcher_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the agreement's Researcher can submit progress")
+    if agreement.status not in {"fully_executed", "expired"}:
+        raise HTTPException(status_code=400, detail="Progress submissions are allowed only for executed agreements")
+    existing = db.scalar(select(ProgressSubmission).where(ProgressSubmission.idempotency_key == payload.idempotency_key))
+    if existing:
+        return existing
+    workspace = db.scalar(select(ProgressWorkspace).where(ProgressWorkspace.agreement_id == agreement_id))
+    if not workspace or workspace.status != "ready" or not workspace.spreadsheet_file_id:
+        raise HTTPException(status_code=409, detail="The agreement progress Sheet is not ready")
+    # The first submission is the access hand-off. Later submissions reuse the
+    # stored grants and never re-list or re-share the Sheet.
+    try:
+        for role in ("linkages", "me"):
+            for email in _staff_emails(db, role):
+                _grant_drive_access(
+                    db, agreement, role=role, email=email, drive_role="reader",
+                    message=f"A progress update is available for {agreement.title}.",
+                    doc_id=workspace.spreadsheet_file_id,
+                )
+    except DriveError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=f"Could not grant progress Sheet access: {exc}") from exc
+    try:
+        metadata = google_drive.get_file_metadata(workspace.spreadsheet_file_id)
+        snapshot_key = f"progress-submissions/{agreement_id}/{uuid4().hex}.xlsx"
+        snapshot = google_drive.export_spreadsheet_xlsx(workspace.spreadsheet_file_id)
+        if settings.storage_enabled:
+            storage.upload_file(BytesIO(snapshot), snapshot_key, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            snapshot_key = None
+    except (DriveError, storage.StorageError) as exc:
+        raise HTTPException(status_code=502, detail=f"Could not capture the progress Sheet: {exc}") from exc
+    previous = db.scalar(select(func.max(ProgressSubmission.sequence_number)).where(
+        ProgressSubmission.agreement_id == agreement_id,
+        ProgressSubmission.reporting_period == payload.reporting_period.strip(),
+    )) or 0
+    submission = ProgressSubmission(
+        agreement_id=agreement_id, workspace_id=workspace.id,
+        reporting_period=payload.reporting_period.strip(), sequence_number=previous + 1,
+        submitted_by_id=user.id, note=(payload.note or "").strip() or None,
+        spreadsheet_modified_time=metadata.get("modifiedTime"), snapshot_storage_key=snapshot_key,
+        status="submitted", idempotency_key=payload.idempotency_key,
+    )
+    db.add(submission)
+    db.flush()
+    audit(db, user, "progress_submitted", "progress_submission", submission.id, request, new_value=submission.reporting_period)
+    title = "New progress update submitted"
+    message = f"{user.full_name} submitted {submission.reporting_period}, submission {submission.sequence_number} for {agreement.title}."
+    notify_roles(
+        db, {"linkages", "me"}, title, message, agreement.id, "info",
+        event_type="progress.submitted", category="status_update", severity="info", actor=user,
+        action_url=f"/agreements/{agreement.id}?tab=progress&submission={submission.id}",
+        requires_action=False, dedupe_key=f"progress.submitted:{submission.id}",
+    )
+    db.commit()
+    db.refresh(submission)
+    return submission
+
+
+def list_progress_submissions(db: Session, user: User, agreement_id: int | None = None) -> list[ProgressSubmission]:
+    if user.role not in {"researcher", "linkages", "me"}:
+        raise HTTPException(status_code=403, detail="You are not allowed to view progress submissions")
+    statement = select(ProgressSubmission).options(selectinload(ProgressSubmission.submitted_by)).order_by(ProgressSubmission.submitted_at.desc())
+    if agreement_id is not None:
+        agreement = db.get(Agreement, agreement_id)
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+        ensure_can_view_agreement(user, agreement)
+        statement = statement.where(ProgressSubmission.agreement_id == agreement_id)
+    elif user.role == "researcher":
+        statement = statement.join(Agreement, Agreement.id == ProgressSubmission.agreement_id).where(Agreement.researcher_id == user.id)
+    return db.scalars(statement).all()
+
+
+def get_progress_submission(db: Session, user: User, submission_id: int) -> ProgressSubmission:
+    submission = db.scalar(select(ProgressSubmission).where(ProgressSubmission.id == submission_id))
+    if not submission:
+        raise HTTPException(status_code=404, detail="Progress submission not found")
+    ensure_can_view_agreement(user, submission.agreement)
+    if not submission.snapshot_storage_key:
+        raise HTTPException(status_code=404, detail="No snapshot is available for this submission")
+    return submission
 
 
 def list_progress_updates(db: Session, user: User, agreement_id: int | None = None) -> list[ProgressUpdate]:

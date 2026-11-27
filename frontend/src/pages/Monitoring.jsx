@@ -8,7 +8,7 @@ import LoadingState from "../components/LoadingState.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
-import { listAgreements, listProgressUpdates, transitionAgreement } from "../lib/backend.js";
+import { listAgreements, listProgressSubmissions, transitionAgreement } from "../lib/backend.js";
 import { formatDate, humanize } from "../lib/format.js";
 
 // M&E's workspace (REBUILD_BRIEF.md Section 5.1): all agreements' status/
@@ -26,7 +26,7 @@ export default function Monitoring() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const [agreements, updates] = await Promise.all([listAgreements(), listProgressUpdates()]);
+      const [agreements, updates] = await Promise.all([listAgreements(), listProgressSubmissions()]);
       setRecords(agreements);
       setProgressUpdates(updates);
     } catch (requestError) {
@@ -91,8 +91,8 @@ export default function Monitoring() {
     <section className="panel data-panel">
       <div className="panel-head"><div><h2>Quarterly progress updates</h2><p>Read-only submissions from Researchers on fully executed or expired agreements.</p></div></div>
       {progressUpdates.length
-        ? <div className="activity-timeline">{progressUpdates.map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{item.quarter}</strong><p>{item.notes}</p><small>{item.submitted_by?.full_name || "Unknown"} · {formatDate(item.created_at)}</small></div></article>)}</div>
-        : <p className="empty-state">No progress updates have been submitted yet.</p>}
+        ? <div className="activity-timeline">{progressUpdates.map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{item.reporting_period} · Submission {item.sequence_number}</strong><p>{item.note || "Progress Sheet submitted for review."}</p><small>{item.submitted_by?.full_name || "Unknown"} · {formatDate(item.submitted_at)}</small></div></article>)}</div>
+        : <p className="empty-state">No progress submissions have been submitted yet.</p>}
     </section>
   </>;
 }

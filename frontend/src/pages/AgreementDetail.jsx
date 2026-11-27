@@ -11,7 +11,7 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import Toast from "../components/Toast.jsx";
 import WorkflowTimeline from "../components/WorkflowTimeline.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { createProgressUpdate, getAgreement, getDriveAccessStatus, reconcileDriveAccess, transitionAgreement } from "../lib/backend.js";
+import { getAgreement, getDriveAccessStatus, reconcileDriveAccess, submitProgress, transitionAgreement } from "../lib/backend.js";
 import { formatDate, formatDateTime, humanize } from "../lib/format.js";
 
 const ALL_TABS = [
@@ -104,7 +104,7 @@ export default function AgreementDetail({ defaultTab }) {
   const [fieldsConfirmed, setFieldsConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [progressForm, setProgressForm] = useState({ quarter: "", notes: "" });
+  const [progressForm, setProgressForm] = useState({ reporting_period: "", note: "" });
   const navigate = useNavigate();
   const tabs = tabsForRole(user.role);
   const requestedTab = searchParams.get("tab") || defaultTab || roleDefaultTab(user.role, record?.status);
@@ -147,12 +147,16 @@ export default function AgreementDetail({ defaultTab }) {
 
   async function submitProgressUpdate(event) {
     event.preventDefault();
-    if (!progressForm.quarter.trim() || !progressForm.notes.trim()) return setError("Quarter and progress notes are required.");
+    if (!progressForm.reporting_period.trim()) return setError("Reporting period is required.");
     setSubmitting(true);
     try {
-      await createProgressUpdate(record.id, { quarter: progressForm.quarter.trim(), notes: progressForm.notes.trim() });
-      setProgressForm({ quarter: "", notes: "" });
-      setMessage("Quarterly progress update submitted.");
+      await submitProgress(record.id, {
+        reporting_period: progressForm.reporting_period.trim(),
+        note: progressForm.note.trim() || null,
+        idempotency_key: `${record.id}:${progressForm.reporting_period.trim()}:${Date.now()}`,
+      });
+      setProgressForm({ reporting_period: "", note: "" });
+      setMessage("Progress submitted. Linkages and M&E have been notified.");
       load();
     } catch (requestError) {
       setError(requestError.message);
@@ -292,18 +296,23 @@ export default function AgreementDetail({ defaultTab }) {
 
       {activeTab === "monitoring" && <div className="detail-grid">
         <section className="panel detail-main-card">
-          <div className="panel-head"><div><h2>Quarterly progress updates</h2><p>Submitted by the Researcher once this agreement is fully executed or expired.</p></div></div>
+          <div className="panel-head"><div><h2>Progress workspace</h2><p>Update the agreement-specific Google Sheet, then submit the reporting period here.</p></div></div>
+          {record.progress_workspace?.spreadsheet_url && <div className="inline-alert info"><div><strong>Agreement progress Sheet</strong><p><a href={record.progress_workspace.spreadsheet_url} target="_blank" rel="noreferrer">Open progress Sheet</a></p></div></div>}
+          {!record.progress_workspace && <p className="empty-state">The progress workspace will be prepared after the agreement is fully executed.</p>}
+          {record.progress_workspace?.status === "failed" && <div className="inline-alert warning"><div><strong>Progress Sheet setup failed</strong><p>{record.progress_workspace.error || "Linkages can retry the setup."}</p></div></div>}
+          <div className="panel-head"><div><h2>Submitted progress</h2></div></div>
           <div className="activity-timeline">
-            {(record.progress_updates || []).map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{item.quarter}</strong><p>{item.notes}</p><small>{item.submitted_by?.full_name || "Researcher"} · {formatDateTime(item.created_at)}</small></div></article>)}
-            {!(record.progress_updates || []).length && <p className="empty-state">No progress updates have been submitted yet.</p>}
+            {(record.progress_submissions || []).map((item) => <article key={item.id}><span className="timeline-dot" /><div><strong>{item.reporting_period} · Submission {item.sequence_number}</strong><p>{item.note || "Progress Sheet submitted for review."}</p><small>{item.submitted_by?.full_name || "Researcher"} · {formatDateTime(item.submitted_at)}</small></div></article>)}
+            {!(record.progress_submissions || []).length && <p className="empty-state">No progress submissions have been submitted yet.</p>}
           </div>
         </section>
         {canSubmitProgress && <aside className="panel detail-side-card">
           <div className="panel-head"><div><h2>Submit an update</h2></div></div>
+          {record.progress_workspace?.spreadsheet_url && <p className="helper-note"><ExternalLink size={14} /> Update the Sheet before submitting.</p>}
           <form className="form-grid single-column" onSubmit={submitProgressUpdate}>
-            <label className="form-field"><span>Quarter *</span><input value={progressForm.quarter} onChange={(event) => setProgressForm({ ...progressForm, quarter: event.target.value })} placeholder="2026-Q1" /></label>
-            <label className="form-field"><span>Notes *</span><textarea rows="4" value={progressForm.notes} onChange={(event) => setProgressForm({ ...progressForm, notes: event.target.value })} /></label>
-            <button className="primary-button" disabled={submitting} type="submit">{submitting ? "Submitting…" : "Submit progress update"}</button>
+            <label className="form-field"><span>Reporting period *</span><input value={progressForm.reporting_period} onChange={(event) => setProgressForm({ ...progressForm, reporting_period: event.target.value })} placeholder="2026-Q1" /></label>
+            <label className="form-field"><span>Submission note</span><textarea rows="4" value={progressForm.note} onChange={(event) => setProgressForm({ ...progressForm, note: event.target.value })} placeholder="Optional note for Linkages and M&E" /></label>
+            <button className="primary-button" disabled={submitting || record.progress_workspace?.status !== "ready"} type="submit">{submitting ? "Submitting…" : "Submit progress"}</button>
           </form>
         </aside>}
         {user.role === "researcher" && !canSubmitProgress && <aside className="panel detail-side-card">

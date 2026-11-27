@@ -21,6 +21,7 @@ from app.timeutils import utc_now
 
 from .models import FieldDefinition, Template
 from .schemas import TemplateCreate
+from app.integrations import google_drive
 
 MAX_TEMPLATE_BYTES = 25 * 1024 * 1024
 
@@ -90,6 +91,10 @@ def activate_template(db: Session, template_id: int, actor, request) -> Template
         raise LookupError("Template not found")
     if not template.master_doc_id:
         raise ValueError("Template must be linked to a Google Doc before it can be activated")
+    if template.document_type.strip().lower() in {"progress report", "progress", "progress template"}:
+        metadata = google_drive.get_file_metadata(template.master_doc_id)
+        if metadata.get("trashed") or metadata.get("mimeType") != "application/vnd.google-apps.spreadsheet":
+            raise ValueError("Progress Report templates must link to an active Google Sheet")
 
     db.execute(
         update(Template)

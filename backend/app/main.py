@@ -67,14 +67,6 @@ async def lifespan(_app: FastAPI):
     scheduler.add_job(run_daily_expiry_check, "interval", days=1, id="daily-expiry-check", replace_existing=True)
     scheduler.start()
     logger.info("daily_expiry_scheduler_started job_id=daily-expiry-check")
-    if settings.google_drive_enabled and settings.environment != "test" and settings.drive_access_sweep_minutes > 0:
-        from .modules.agreements.drive_sweep import run_drive_access_sweep
-
-        scheduler.add_job(
-            run_drive_access_sweep, "interval", minutes=settings.drive_access_sweep_minutes,
-            id="drive-access-sweep", replace_existing=True, max_instances=1, coalesce=True,
-        )
-        logger.info("drive_access_sweep_started every=%sm", settings.drive_access_sweep_minutes)
     try:
         yield
     finally:
