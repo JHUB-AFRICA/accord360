@@ -62,6 +62,7 @@ jobs:
           UPLOAD_DIR: ./ci_uploads
           ENVIRONMENT: test
           SEED_DEMO_DATA: "true"
+          GOOGLE_DRIVE_ENABLED: "false"
         run: python -m pytest -q
 
   frontend-check:

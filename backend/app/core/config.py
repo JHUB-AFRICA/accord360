@@ -72,7 +72,8 @@ class Settings:
     smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
     resend_api_key: str | None = os.getenv("RESEND_API_KEY") or None
     resend_api_url: str = os.getenv("RESEND_API_URL", "https://api.resend.com/emails")
-    google_drive_enabled: bool = env_bool("GOOGLE_DRIVE_ENABLED", False)
+    # Google Drive is required for the agreement and progress-workspace flow.
+    google_drive_enabled: bool = env_bool("GOOGLE_DRIVE_ENABLED", True)
     google_service_account_json: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or None
     # Optional Drive folder (shared with the service account as Editor) that
     # template copies are created in.
